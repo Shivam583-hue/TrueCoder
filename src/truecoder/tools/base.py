@@ -159,6 +159,11 @@ class ToolResult:
             if self.error is not None:
                 raise ValueError("An approval-required result cannot contain an error.")
 
+            if self.error_code is not None:
+                raise ValueError(
+                    "An approval-required result cannot contain an error code."
+                )
+
     @classmethod
     def success(
         cls,
@@ -222,8 +227,14 @@ class BaseTool(ABC, Generic[ArgumentsT]):
     def definition(self) -> ToolDefinition:
         """Build the definition supplied to the language model."""
 
-        if not issubclass(self.arguments_type, ToolArguments):
+        if not isinstance(self.arguments_type, type) or not issubclass(
+            self.arguments_type,
+            ToolArguments,
+        ):
             raise TypeError("arguments_type must inherit from ToolArguments.")
+
+        if not isinstance(self.approval, ToolApproval):
+            raise TypeError("approval must be a ToolApproval.")
 
         return ToolDefinition(
             name=self.name,

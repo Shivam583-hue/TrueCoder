@@ -162,206 +162,206 @@ class LLMClient:
                 )
                 return
 
-        async def _stream_response(
-            self,
-            client: AsyncOpenAI,
-            request: dict[str, Any],
-        ) -> AsyncGenerator[StreamEvent, None]:
-            response = cast(
-                AsyncStream[ChatCompletionChunk],
-                await client.chat.completions.create(
-                    **request,
-                    stream=True,
-                    stream_options={"include_usage": True},
-                ),
-            )
+    async def _stream_response(
+        self,
+        client: AsyncOpenAI,
+        request: dict[str, Any],
+    ) -> AsyncGenerator[StreamEvent, None]:
+        response = cast(
+            AsyncStream[ChatCompletionChunk],
+            await client.chat.completions.create(
+                **request,
+                stream=True,
+                stream_options={"include_usage": True},
+            ),
+        )
 
-            usage: TokenUsage | None = None
-            finish_reason: str | None = None
-            tool_call_buffers: dict[int, _ToolCallBuffer] = {}
+        usage: TokenUsage | None = None
+        finish_reason: str | None = None
+        tool_call_buffers: dict[int, _ToolCallBuffer] = {}
 
-            async with response:
-                async for chunk in response:
-                    if chunk.usage is not None:
-                        usage = self._to_token_usage(chunk.usage)
+        async with response:
+            async for chunk in response:
+                if chunk.usage is not None:
+                    usage = self._to_token_usage(chunk.usage)
 
-                    if not chunk.choices:
-                        continue
+                if not chunk.choices:
+                    continue
 
-                    choice = chunk.choices[0]
+                choice = chunk.choices[0]
 
-                    if choice.finish_reason is not None:
-                        finish_reason = choice.finish_reason
+                if choice.finish_reason is not None:
+                    finish_reason = choice.finish_reason
 
-                    if choice.delta.content:
+                if choice.delta.content:
+                    yield StreamEvent(
+                        type=EventType.TEXT_DELTA,
+                        text_delta=TextDelta(
+                            content=choice.delta.content,
+                        ),
+                    )
+
+                for fragment in choice.delta.tool_calls or []:
+                    index = fragment.index
+
+                    if not isinstance(index, int) or index < 0:
                         yield StreamEvent(
-                            type=EventType.TEXT_DELTA,
-                            text_delta=TextDelta(
-                                content=choice.delta.content,
+                            type=EventType.ERROR,
+                            error=(
+                                "The provider returned a tool-call fragment "
+                                "without a valid index."
                             ),
                         )
+                        return
 
-                    for fragment in choice.delta.tool_calls or []:
-                        index = fragment.index
+                    buffer = tool_call_buffers.setdefault(
+                        index,
+                        _ToolCallBuffer(),
+                    )
 
-                        if not isinstance(index, int) or index < 0:
+                    if fragment.id is not None:
+                        if (
+                            buffer.call_id is not None
+                            and buffer.call_id != fragment.id
+                        ):
                             yield StreamEvent(
                                 type=EventType.ERROR,
                                 error=(
-                                    "The provider returned a tool-call fragment "
-                                    "without a valid index."
+                                    f"Tool call at index {index} returned "
+                                    "conflicting call IDs."
                                 ),
                             )
                             return
 
-                        buffer = tool_call_buffers.setdefault(
-                            index,
-                            _ToolCallBuffer(),
-                        )
+                        buffer.call_id = fragment.id
 
-                        if fragment.id is not None:
-                            if (
-                                buffer.call_id is not None
-                                and buffer.call_id != fragment.id
-                            ):
-                                yield StreamEvent(
-                                    type=EventType.ERROR,
-                                    error=(
-                                        f"Tool call at index {index} returned "
-                                        "conflicting call IDs."
-                                    ),
-                                )
-                                return
+                    function = fragment.function
+                    name = function.name if function is not None else None
+                    arguments_fragment = (
+                        function.arguments if function is not None else None
+                    )
 
-                            buffer.call_id = fragment.id
+                    if name is not None:
+                        if buffer.name is not None and buffer.name != name:
+                            yield StreamEvent(
+                                type=EventType.ERROR,
+                                error=(
+                                    f"Tool call at index {index} returned "
+                                    "conflicting function names."
+                                ),
+                            )
+                            return
 
-                        function = fragment.function
-                        name = function.name if function is not None else None
-                        arguments_fragment = (
-                            function.arguments if function is not None else None
-                        )
+                        buffer.name = name
 
-                        if name is not None:
-                            if buffer.name is not None and buffer.name != name:
-                                yield StreamEvent(
-                                    type=EventType.ERROR,
-                                    error=(
-                                        f"Tool call at index {index} returned "
-                                        "conflicting function names."
-                                    ),
-                                )
-                                return
+                    if arguments_fragment is not None:
+                        buffer.argument_fragments.append(arguments_fragment)
 
-                            buffer.name = name
-
-                        if arguments_fragment is not None:
-                            buffer.argument_fragments.append(arguments_fragment)
-
-                        yield StreamEvent(
-                            type=EventType.TOOL_CALL_DELTA,
-                            tool_call_delta=ToolCallDelta(
-                                index=index,
-                                call_id=fragment.id,
-                                name=name,
-                                arguments_fragment=arguments_fragment,
-                            ),
-                        )
-
-            completed_tool_calls: list[ToolCall] = []
-
-            for index in sorted(tool_call_buffers):
-                buffer = tool_call_buffers[index]
-
-                if not buffer.call_id:
                     yield StreamEvent(
-                        type=EventType.ERROR,
-                        error=(
-                            f"Tool call at index {index} completed without a call ID."
+                        type=EventType.TOOL_CALL_DELTA,
+                        tool_call_delta=ToolCallDelta(
+                            index=index,
+                            call_id=fragment.id,
+                            name=name,
+                            arguments_delta=arguments_fragment or "",
                         ),
                     )
-                    return
 
-                if not buffer.name:
-                    yield StreamEvent(
-                        type=EventType.ERROR,
-                        error=(
-                            f"Tool call at index {index} completed without a function name."
-                        ),
-                    )
-                    return
+        completed_tool_calls: list[ToolCall] = []
 
-                arguments_json = "".join(buffer.argument_fragments)
+        for index in sorted(tool_call_buffers):
+            buffer = tool_call_buffers[index]
 
-                completed_tool_calls.append(
-                    ToolCall(
-                        call_id=buffer.call_id,
-                        name=buffer.name,
-                        arguments_json=arguments_json,
-                    )
+            if not buffer.call_id:
+                yield StreamEvent(
+                    type=EventType.ERROR,
+                    error=(
+                        f"Tool call at index {index} completed without a call ID."
+                    ),
                 )
+                return
 
-            yield StreamEvent(
-                type=EventType.MESSAGE_COMPLETE,
-                finish_reason=finish_reason,
+            if not buffer.name:
+                yield StreamEvent(
+                    type=EventType.ERROR,
+                    error=(
+                        f"Tool call at index {index} completed without a function name."
+                    ),
+                )
+                return
+
+            arguments_json = "".join(buffer.argument_fragments)
+
+            completed_tool_calls.append(
+                ToolCall(
+                    call_id=buffer.call_id,
+                    name=buffer.name,
+                    arguments_json=arguments_json,
+                )
+            )
+
+        yield StreamEvent(
+            type=EventType.MESSAGE_COMPLETE,
+            finish_reason=finish_reason,
+            usage=usage,
+            tool_calls=tuple(completed_tool_calls),
+        )
+
+    async def _non_stream_response(
+        self,
+        client: AsyncOpenAI,
+        request: dict[str, Any],
+    ) -> StreamEvent:
+        response = cast(
+            ChatCompletion,
+            await client.chat.completions.create(
+                **request,
+                stream=False,
+            ),
+        )
+
+        usage = self._to_token_usage(response.usage)
+
+        if not response.choices:
+            return StreamEvent(
+                type=EventType.ERROR,
+                error="The model returned a response without any choices.",
                 usage=usage,
-                tool_calls=tuple(completed_tool_calls),
             )
 
-        async def _non_stream_response(
-            self,
-            client: AsyncOpenAI,
-            request: dict[str, Any],
-        ) -> StreamEvent:
-            response = cast(
-                ChatCompletion,
-                await client.chat.completions.create(
-                    **request,
-                    stream=False,
-                ),
-            )
+        choice = response.choices[0]
 
-            usage = self._to_token_usage(response.usage)
+        text_delta = (
+            TextDelta(content=choice.message.content)
+            if choice.message.content
+            else None
+        )
 
-            if not response.choices:
+        tool_calls: list[ToolCall] = []
+
+        for sdk_call in choice.message.tool_calls or []:
+            try:
+                tool_call = ToolCall(
+                    call_id=sdk_call.id,
+                    name=sdk_call.function.name,
+                    arguments_json=sdk_call.function.arguments,
+                )
+            except (TypeError, ValueError) as error:
                 return StreamEvent(
                     type=EventType.ERROR,
-                    error="The model returned a response without any choices.",
+                    error=f"The provider returned an invalid tool call: {error}",
                     usage=usage,
                 )
 
-            choice = response.choices[0]
+            tool_calls.append(tool_call)
 
-            text_delta = (
-                TextDelta(content=choice.message.content)
-                if choice.message.content
-                else None
-            )
-
-            tool_calls: list[ToolCall] = []
-
-            for sdk_call in choice.message.tool_calls or []:
-                try:
-                    tool_call = ToolCall(
-                        call_id=sdk_call.id,
-                        name=sdk_call.function.name,
-                        arguments_json=sdk_call.function.arguments,
-                    )
-                except (TypeError, ValueError) as error:
-                    return StreamEvent(
-                        type=EventType.ERROR,
-                        error=f"The provider returned an invalid tool call: {error}",
-                        usage=usage,
-                    )
-
-                tool_calls.append(tool_call)
-
-            return StreamEvent(
-                type=EventType.MESSAGE_COMPLETE,
-                text_delta=text_delta,
-                tool_calls=tuple(tool_calls),
-                finish_reason=choice.finish_reason,
-                usage=usage,
-            )
+        return StreamEvent(
+            type=EventType.MESSAGE_COMPLETE,
+            text_delta=text_delta,
+            tool_calls=tuple(tool_calls),
+            finish_reason=choice.finish_reason,
+            usage=usage,
+        )
 
     @staticmethod
     def _to_token_usage(usage: CompletionUsage | None) -> TokenUsage | None:

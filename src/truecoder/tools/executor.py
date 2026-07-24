@@ -39,7 +39,7 @@ class ToolExecutor:
                 error_code="invalid_arguments",
             )
 
-        if tool.approval is ToolApproval.REQUIRED and not approved:
+        if tool.approval is ToolApproval.REQUIRED and approved is not True:
             return ToolResult.approval_required(
                 call_id=call.call_id,
                 tool_name=call.name,

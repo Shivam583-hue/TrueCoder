@@ -18,8 +18,10 @@ class ToolRegistry:
         self._tools: dict[str, BaseTool[Any]] = {}
 
     def register(self, tool: BaseTool[Any]) -> None:
+        if not isinstance(tool, BaseTool):
+            raise TypeError("tool must be a BaseTool.")
 
-        name = tool.name
+        name = tool.definition().name
 
         if name in self._tools:
             raise DuplicateToolError(f"A tool named '{name}' is already registered.")
@@ -27,23 +29,19 @@ class ToolRegistry:
         self._tools[name] = tool
 
     def get(self, name: str) -> BaseTool[Any]:
-
         try:
             return self._tools[name]
         except KeyError as error:
             raise ToolNotFoundError(f"No tool named '{name}' is registered.") from error
 
     def all(self) -> tuple[BaseTool[Any], ...]:
-
         return tuple(self._tools.values())
 
     def definitions(self) -> list[dict[str, Any]]:
-
         return [
             tool.definition().to_chat_completion_schema()
             for tool in self._tools.values()
         ]
 
     def __contains__(self, name: str) -> bool:
-
         return name in self._tools
