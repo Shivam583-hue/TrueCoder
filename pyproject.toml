@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     "openai>=2.46",
     "python-dotenv>=1.2",
+    "textual>=8.2,<9",
 ]
 
 [project.scripts]
@@ -18,3 +19,6 @@ truecoder = "truecoder.__main__:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+truecoder = ["tui/*.tcss"]

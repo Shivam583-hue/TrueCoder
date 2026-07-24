@@ -1,18 +1,8 @@
-import asyncio
-
-from truecoder.client.llm_client import LLMClient
-
-
-async def main():
-    messages = [{"role": "user", "content": "What's up"}]
-    async with LLMClient() as client:
-        async for event in client.chat_completion(messages, True):
-            print(event)
-    print("done")
+from truecoder.tui.app import TrueCoderApp
 
 
 def run() -> None:
-    asyncio.run(main())
+    TrueCoderApp().run()
 
 
 if __name__ == "__main__":

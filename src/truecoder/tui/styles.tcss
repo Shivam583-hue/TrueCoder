@@ -1,0 +1,424 @@
+$background: #090b0e;
+$surface: #0e1217;
+$surface-raised: #141920;
+$surface-hover: #1a2028;
+$line: #252c36;
+$line-strong: #333c48;
+$text: #d9e0e8;
+$text-soft: #a2acb8;
+$muted: #687380;
+$accent: #f2a65a;
+$accent-bright: #ffc27d;
+$assistant: #67c6d4;
+$success: #76c893;
+$danger: #ef6f78;
+
+Screen {
+    background: $background;
+    color: $text;
+    layout: vertical;
+}
+
+#topbar {
+    width: 100%;
+    height: 3;
+    padding: 0 2;
+    background: $surface;
+    border-bottom: solid $line;
+    content-align: left middle;
+}
+
+#brand-mark {
+    width: 3;
+    color: $accent;
+    text-style: bold;
+    content-align: left middle;
+}
+
+#brand-name {
+    width: auto;
+    color: $text;
+    text-style: bold;
+    content-align: left middle;
+}
+
+#view-label {
+    width: auto;
+    margin-left: 2;
+    padding: 0 1;
+    background: $surface-raised;
+    color: $muted;
+    text-style: bold;
+    content-align: center middle;
+}
+
+.bar-spacer,
+.header-spacer {
+    width: 1fr;
+}
+
+#model-name {
+    width: auto;
+    max-width: 40;
+    color: $text-soft;
+    content-align: right middle;
+    text-overflow: ellipsis;
+}
+
+#main {
+    width: 100%;
+    height: 1fr;
+    align-horizontal: center;
+}
+
+#transcript {
+    width: 100%;
+    height: 1fr;
+    padding: 1 2;
+    background: $background;
+    align-horizontal: center;
+    scrollbar-size: 1 1;
+    scrollbar-color: $line-strong;
+    scrollbar-color-hover: $muted;
+    scrollbar-background: $background;
+}
+
+#empty-state {
+    width: 100%;
+    height: 1fr;
+    min-height: 12;
+    align: center middle;
+    content-align: center middle;
+}
+
+#ascii-logo {
+    width: 55;
+    height: 7;
+    color: $text;
+    text-style: bold;
+    text-align: left;
+    content-align: left middle;
+}
+
+#compact-logo {
+    display: none;
+    width: 100%;
+    height: 3;
+    color: $text;
+    text-style: bold;
+    text-align: center;
+    content-align: center middle;
+}
+
+ChatMessage {
+    width: 100%;
+    height: auto;
+    min-height: 4;
+    margin-bottom: 1;
+    padding: 1 2;
+    background: transparent;
+    border: none;
+}
+
+ChatMessage.user {
+    min-height: 1;
+    padding: 0 2;
+    background: $surface-raised;
+    border-left: solid $accent;
+}
+
+ChatMessage.user .message-body MarkdownParagraph {
+    margin-bottom: 0;
+}
+
+ChatMessage.assistant {
+    background: transparent;
+    border: none;
+}
+
+ChatMessage.error {
+    background: #181115;
+    border-left: solid $danger;
+}
+
+ChatMessage.cancelled {
+    border-left: solid $muted;
+}
+
+.message-header {
+    width: 100%;
+    height: 1;
+    margin-bottom: 1;
+}
+
+.role-mark {
+    width: 2;
+    color: $accent;
+    text-style: bold;
+}
+
+ChatMessage.assistant .role-mark {
+    color: $assistant;
+}
+
+ChatMessage.error .role-mark {
+    color: $danger;
+}
+
+.role-label {
+    width: auto;
+    color: $text-soft;
+    text-style: bold;
+}
+
+.message-state {
+    width: auto;
+    color: $muted;
+    text-align: right;
+}
+
+ChatMessage.error .message-state {
+    color: $danger;
+}
+
+.message-body {
+    width: 100%;
+    height: auto;
+    padding: 0;
+    color: $text;
+    background: transparent;
+}
+
+.message-body MarkdownBlock {
+    color: $text;
+}
+
+.message-body MarkdownFence {
+    margin: 1 0;
+    padding: 0;
+    background: #080a0d;
+    border: solid $line;
+}
+
+.message-body MarkdownFence > Label {
+    padding: 1 2;
+}
+
+.message-body MarkdownBlock > .code_inline {
+    background: $surface-hover;
+    color: $accent-bright;
+}
+
+.message-body MarkdownH1,
+.message-body MarkdownH2,
+.message-body MarkdownH3 {
+    color: $text;
+    text-style: bold;
+}
+
+.message-footer {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+    color: $muted;
+    text-align: right;
+}
+
+#composer-shell {
+    width: 1fr;
+    height: auto;
+    max-height: 12;
+    margin: 0 5 1 5;
+    padding: 0 1;
+    background: $surface-raised;
+    border: solid $line-strong;
+}
+
+#composer-shell:focus-within {
+    border: solid $accent;
+}
+
+#composer-shell.busy {
+    border: solid $assistant;
+}
+
+#composer-label {
+    width: auto;
+    height: 1;
+    margin-left: 1;
+    color: $accent;
+    text-style: bold;
+}
+
+#composer-shell.busy #composer-label {
+    color: $assistant;
+}
+
+#composer-row {
+    width: 100%;
+    height: auto;
+    max-height: 8;
+    align-vertical: bottom;
+}
+
+PromptInput {
+    width: 1fr;
+    height: 3;
+    max-height: 8;
+    padding: 0 1;
+    background: transparent;
+    color: $text;
+    border: none;
+    scrollbar-size: 1 1;
+    scrollbar-color: $line-strong;
+    scrollbar-background: $surface-raised;
+}
+
+PromptInput:focus {
+    border: none;
+}
+
+PromptInput > .text-area--cursor-line {
+    background: transparent;
+}
+
+PromptInput > .text-area--cursor {
+    background: $accent;
+    color: $background;
+    text-style: bold;
+}
+
+PromptInput > .text-area--placeholder {
+    color: $muted;
+}
+
+#send-button {
+    width: 13;
+    min-width: 13;
+    height: 3;
+    margin: 0 0 0 1;
+    background: $accent;
+    color: $background;
+    border: none;
+    text-style: bold;
+}
+
+#send-button:hover,
+#send-button:focus {
+    background: $accent-bright;
+    color: $background;
+    text-style: bold;
+}
+
+#send-button:disabled {
+    background: $line;
+    color: $muted;
+    opacity: 70%;
+}
+
+#composer-help {
+    width: 100%;
+    height: 1;
+    padding-left: 1;
+    color: $muted;
+}
+
+#statusbar {
+    width: 100%;
+    height: 1;
+    padding: 0 2;
+    background: #07090b;
+    color: $muted;
+}
+
+#shortcut-hint {
+    width: auto;
+    color: $muted;
+    text-align: right;
+}
+
+Screen.empty-chat #topbar,
+Screen.empty-chat #statusbar {
+    display: none;
+}
+
+Screen.empty-chat #main {
+    align: center middle;
+}
+
+Screen.empty-chat #transcript {
+    width: 105;
+    height: 7;
+    padding: 0;
+    scrollbar-size: 0 0;
+}
+
+Screen.empty-chat #empty-state {
+    width: 100%;
+    height: 7;
+    min-height: 7;
+}
+
+Screen.empty-chat #composer-shell {
+    width: 105;
+    height: 5;
+    margin: 1 0 0 0;
+    padding: 0 1;
+    background: $surface-raised;
+    border: none;
+    border-left: solid $accent;
+}
+
+Screen.empty-chat #composer-label,
+Screen.empty-chat #composer-help,
+Screen.empty-chat #send-button {
+    display: none;
+}
+
+Screen.empty-chat #composer-row {
+    height: 5;
+    max-height: 5;
+    align-vertical: middle;
+}
+
+Screen.empty-chat PromptInput {
+    height: 4;
+    max-height: 4;
+    padding: 1;
+}
+
+Screen.-compact #transcript {
+    padding: 1 2;
+}
+
+Screen.-compact #composer-shell {
+    margin: 0 1 1 1;
+}
+
+Screen.-compact #view-label {
+    display: none;
+}
+
+Screen.-compact #shortcut-hint {
+    width: 100%;
+    text-align: center;
+}
+
+Screen.-compact #ascii-logo {
+    display: none;
+}
+
+Screen.-compact #compact-logo {
+    display: block;
+}
+
+Screen.-compact.empty-chat #transcript {
+    width: 90%;
+    padding: 0;
+}
+
+Screen.-compact.empty-chat #composer-shell {
+    width: 90%;
+    margin: 1 0 0 0;
+}

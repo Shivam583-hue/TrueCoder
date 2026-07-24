@@ -38,8 +38,6 @@ class LLMClient:
 
             client_options: dict[str, Any] = {
                 "api_key": api_key,
-                # Retries are handled by chat_completion so the two retry
-                # mechanisms do not stack.
                 "max_retries": 0,
             }
             base_url = os.getenv("BASE_URL")
@@ -222,8 +220,7 @@ class LLMClient:
         prompt_details = usage.prompt_tokens_details
         cached_tokens = (
             prompt_details.cached_tokens
-            if prompt_details is not None
-            and prompt_details.cached_tokens is not None
+            if prompt_details is not None and prompt_details.cached_tokens is not None
             else 0
         )
 
