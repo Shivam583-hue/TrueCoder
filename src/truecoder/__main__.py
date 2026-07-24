@@ -4,10 +4,10 @@ from truecoder.client.llm_client import LLMClient
 
 
 async def main():
-    client = LLMClient()
     messages = [{"role": "user", "content": "What's up"}]
-    async for event in client.chat_completion(messages, True):
-        print(event)
+    async with LLMClient() as client:
+        async for event in client.chat_completion(messages, True):
+            print(event)
     print("done")
 
 
