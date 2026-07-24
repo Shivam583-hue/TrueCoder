@@ -6,6 +6,7 @@ from truecoder.tools import (
     ToolApproval,
     ToolArguments,
     ToolCall,
+    ToolExecutionError,
     ToolExecutor,
     ToolRegistry,
     ToolResultStatus,
@@ -40,6 +41,16 @@ class FailingTool(RecordingTool):
 
     async def run(self, arguments: NumberArguments) -> int:
         raise RuntimeError(f"Cannot process {arguments.value}")
+
+
+class MissingFileTool(RecordingTool):
+    name = "missing_file"
+
+    async def run(self, arguments: NumberArguments) -> int:
+        raise ToolExecutionError(
+            "The requested file does not exist.",
+            code="file_not_found",
+        )
 
 
 class CancellingTool(RecordingTool):
@@ -137,6 +148,17 @@ class ToolExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, ToolResultStatus.ERROR)
         self.assertEqual(result.error_code, "execution_failed")
         self.assertEqual(result.error, "Cannot process 4")
+
+    async def test_domain_execution_failure_preserves_message_and_code(self):
+        self.registry.register(MissingFileTool())
+
+        result = await self.executor.execute(
+            ToolCall("call_1", "missing_file", '{"value": 4}'),
+        )
+
+        self.assertEqual(result.status, ToolResultStatus.ERROR)
+        self.assertEqual(result.error_code, "file_not_found")
+        self.assertEqual(result.error, "The requested file does not exist.")
 
     async def test_cancellation_is_not_converted_to_a_tool_error(self):
         self.registry.register(CancellingTool())

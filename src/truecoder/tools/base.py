@@ -32,6 +32,27 @@ class ToolArgumentError(ValueError):
     """Raised when tool arguments cannot be parsed or validated."""
 
 
+class ToolExecutionError(RuntimeError):
+    """An expected tool failure that is safe to return to the caller."""
+
+    def __init__(self, message: str, code: str) -> None:
+        if not isinstance(message, str):
+            raise TypeError("Tool execution error message must be a string.")
+
+        if not message.strip():
+            raise ValueError("Tool execution error message cannot be empty.")
+
+        if not isinstance(code, str):
+            raise TypeError("Tool execution error code must be a string.")
+
+        if not code.strip():
+            raise ValueError("Tool execution error code cannot be empty.")
+
+        self.message = message.strip()
+        self.code = code.strip()
+        super().__init__(self.message)
+
+
 @dataclass(frozen=True, slots=True)
 class ToolDefinition:
     name: str

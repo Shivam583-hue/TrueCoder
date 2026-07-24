@@ -4,6 +4,7 @@ from truecoder.tools.base import (
     ToolApproval,
     ToolArgumentError,
     ToolCall,
+    ToolExecutionError,
     ToolResult,
 )
 from truecoder.tools.registry import ToolNotFoundError, ToolRegistry
@@ -49,6 +50,13 @@ class ToolExecutor:
             output = await tool.run(arguments)
         except asyncio.CancelledError:
             raise
+        except ToolExecutionError as error:
+            return ToolResult.failure(
+                call_id=call.call_id,
+                tool_name=call.name,
+                error=error.message,
+                error_code=error.code,
+            )
         except Exception as error:
             return ToolResult.failure(
                 call_id=call.call_id,

@@ -5,6 +5,7 @@ from truecoder.tools.base import (
     ToolArguments,
     ToolCall,
     ToolDefinition,
+    ToolExecutionError,
     ToolResult,
     ToolResultStatus,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "ToolRegistry",
     "ToolExecutor",
     "ToolArgumentError",
+    "ToolExecutionError",
     "DuplicateToolError",
     "ToolNotFoundError",
 ]
