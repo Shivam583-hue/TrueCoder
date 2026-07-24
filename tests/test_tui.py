@@ -3,6 +3,7 @@ import os
 import unittest
 from unittest.mock import patch
 
+from truecoder.agent.agent import Agent
 from truecoder.client.response import (
     EventType,
     StreamEvent,
@@ -41,7 +42,7 @@ class BlockingLLMClient(FakeLLMClient):
 class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_app_mounts_with_prompt_focused(self):
         client = FakeLLMClient([])
-        app = TrueCoderApp(client)
+        app = TrueCoderApp(Agent(client))
 
         with patch.dict(os.environ, {"MODEL": "test-model"}):
             async with app.run_test(size=(120, 40)) as pilot:
@@ -82,7 +83,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ]
         )
-        app = TrueCoderApp(client)
+        app = TrueCoderApp(Agent(client))
 
         async with app.run_test(size=(120, 40)) as pilot:
             prompt = app.query_one(PromptInput)
@@ -133,7 +134,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_shift_enter_inserts_a_newline(self):
         client = FakeLLMClient([])
-        app = TrueCoderApp(client)
+        app = TrueCoderApp(Agent(client))
 
         async with app.run_test(size=(100, 30)) as pilot:
             prompt = app.query_one(PromptInput)
@@ -156,7 +157,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                 )
             ]
         )
-        app = TrueCoderApp(client)
+        app = TrueCoderApp(Agent(client))
 
         async with app.run_test(size=(120, 40)) as pilot:
             prompt = app.query_one(PromptInput)
@@ -179,7 +180,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                 StreamEvent(type=EventType.MESSAGE_COMPLETE),
             ]
         )
-        app = TrueCoderApp(client)
+        app = TrueCoderApp(Agent(client))
 
         async with app.run_test(size=(120, 40)) as pilot:
             prompt = app.query_one(PromptInput)
@@ -196,7 +197,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_new_chat_safely_cancels_an_active_response(self):
         client = BlockingLLMClient([])
-        app = TrueCoderApp(client)
+        app = TrueCoderApp(Agent(client))
 
         async with app.run_test(size=(120, 40)) as pilot:
             prompt = app.query_one(PromptInput)

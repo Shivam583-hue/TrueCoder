@@ -1,8 +1,4 @@
-from truecoder.tui.app import TrueCoderApp
-
-
-def run() -> None:
-    TrueCoderApp().run()
+from truecoder.agent.agent import run
 
 
 if __name__ == "__main__":
