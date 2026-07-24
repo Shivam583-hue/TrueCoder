@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from truecoder.agent.context import ContextBuilder
@@ -8,6 +9,8 @@ from truecoder.agent.events import AgentEvent
 from truecoder.agent.state import AgentState
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType, TokenUsage
+from truecoder.tools.builtin import ReadFileTool
+from truecoder.tools.registry import ToolRegistry
 
 
 class Agent:
@@ -16,6 +19,7 @@ class Agent:
         llm_client: LLMClient | None = None,
         state: AgentState | None = None,
         context_builder: ContextBuilder | None = None,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self.llm_client = llm_client if llm_client is not None else LLMClient()
         self.state = state if state is not None else AgentState()
@@ -23,6 +27,9 @@ class Agent:
             context_builder
             if context_builder is not None
             else ContextBuilder.from_environment()
+        )
+        self.tool_registry = (
+            tool_registry if tool_registry is not None else ToolRegistry()
         )
 
     @property
@@ -111,4 +118,9 @@ def run() -> None:
     """Launch the TrueCoder terminal application."""
     from truecoder.tui.app import TrueCoderApp
 
-    TrueCoderApp().run()
+    workspace_root = Path.cwd().resolve(strict=True)
+    tool_registry = ToolRegistry()
+    tool_registry.register(ReadFileTool(workspace_root))
+    agent = Agent(tool_registry=tool_registry)
+
+    TrueCoderApp(agent).run()
