@@ -1,9 +1,15 @@
 import os
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
-from openai import OpenAIError
+import httpx
+from openai import (
+    APIConnectionError,
+    APIError,
+    APITimeoutError,
+    RateLimitError,
+)
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion import Choice as CompletionChoice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
@@ -17,8 +23,13 @@ from truecoder.client.response import EventType
 
 
 class FakeStream:
-    def __init__(self, chunks: list[ChatCompletionChunk]) -> None:
+    def __init__(
+        self,
+        chunks: list[ChatCompletionChunk],
+        error: Exception | None = None,
+    ) -> None:
         self._chunks = chunks
+        self._error = error
         self.closed = False
 
     def __aiter__(self):
@@ -27,6 +38,8 @@ class FakeStream:
     async def _iterate(self):
         for chunk in self._chunks:
             yield chunk
+        if self._error is not None:
+            raise self._error
 
     async def __aenter__(self):
         return self
@@ -71,7 +84,60 @@ def make_chunk(
     )
 
 
+def make_completion(content: str = "Complete answer") -> ChatCompletion:
+    return ChatCompletion(
+        id="completion-id",
+        choices=[
+            CompletionChoice(
+                finish_reason="stop",
+                index=0,
+                logprobs=None,
+                message=ChatCompletionMessage(
+                    content=content,
+                    refusal=None,
+                    role="assistant",
+                ),
+            )
+        ],
+        created=0,
+        model="test-model",
+        object="chat.completion",
+        usage=CompletionUsage(
+            prompt_tokens=5,
+            completion_tokens=2,
+            total_tokens=7,
+            prompt_tokens_details=None,
+        ),
+    )
+
+
+def make_rate_limit_error() -> RateLimitError:
+    request = httpx.Request("POST", "https://api.example.com/chat/completions")
+    response = httpx.Response(429, request=request)
+    return RateLimitError(
+        "too many requests",
+        response=response,
+        body={"code": "rate_limit_exceeded"},
+    )
+
+
 class LLMClientTests(unittest.IsolatedAsyncioTestCase):
+    async def _collect_events(
+        self,
+        llm_client: LLMClient,
+        sdk_client,
+        *,
+        stream: bool,
+    ):
+        with (
+            patch.dict(os.environ, {"MODEL": "test-model"}),
+            patch.object(llm_client, "get_client", return_value=sdk_client),
+        ):
+            return [
+                event
+                async for event in llm_client.chat_completion([], stream=stream)
+            ]
+
     async def test_streaming_emits_deltas_then_completion_with_usage(self):
         usage = CompletionUsage(
             prompt_tokens=4,
@@ -121,31 +187,7 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_non_streaming_emits_one_complete_event(self):
-        response = ChatCompletion(
-            id="completion-id",
-            choices=[
-                CompletionChoice(
-                    finish_reason="stop",
-                    index=0,
-                    logprobs=None,
-                    message=ChatCompletionMessage(
-                        content="Complete answer",
-                        refusal=None,
-                        role="assistant",
-                    ),
-                )
-            ],
-            created=0,
-            model="test-model",
-            object="chat.completion",
-            usage=CompletionUsage(
-                prompt_tokens=5,
-                completion_tokens=2,
-                total_tokens=7,
-                prompt_tokens_details=None,
-            ),
-        )
-        sdk_client, create = make_client(response)
+        sdk_client, create = make_client(make_completion())
         llm_client = LLMClient()
         messages = [{"role": "user", "content": "Hi"}]
 
@@ -168,23 +210,136 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
             stream=False,
         )
 
-    async def test_sdk_errors_are_returned_as_error_events(self):
-        sdk_client, _ = make_client(None)
-        sdk_client.chat.completions.create.side_effect = OpenAIError("request failed")
+    async def test_rate_limit_retries_with_exponential_backoff(self):
+        sdk_client, create = make_client(None)
+        create.side_effect = [make_rate_limit_error() for _ in range(4)]
         llm_client = LLMClient()
 
-        with (
-            patch.dict(os.environ, {"MODEL": "test-model"}),
-            patch.object(llm_client, "get_client", return_value=sdk_client),
-        ):
-            events = [
-                event
-                async for event in llm_client.chat_completion([], stream=False)
-            ]
+        with patch(
+            "truecoder.client.llm_client.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as sleep:
+            events = await self._collect_events(
+                llm_client,
+                sdk_client,
+                stream=False,
+            )
 
+        self.assertEqual(create.await_count, 4)
+        sleep.assert_has_awaits([call(1), call(2), call(4)])
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].type, EventType.ERROR)
-        self.assertIn("request failed", events[0].error)
+        self.assertIn("Rate limit exceeded", events[0].error)
+
+    async def test_connection_error_retries_and_can_recover(self):
+        request = httpx.Request(
+            "POST",
+            "https://api.example.com/chat/completions",
+        )
+        sdk_client, create = make_client(None)
+        create.side_effect = [
+            APIConnectionError(request=request),
+            make_completion("Recovered"),
+        ]
+        llm_client = LLMClient()
+
+        with patch(
+            "truecoder.client.llm_client.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as sleep:
+            events = await self._collect_events(
+                llm_client,
+                sdk_client,
+                stream=False,
+            )
+
+        self.assertEqual(create.await_count, 2)
+        sleep.assert_awaited_once_with(1)
+        self.assertEqual(events[0].type, EventType.MESSAGE_COMPLETE)
+        self.assertEqual(events[0].text_delta.content, "Recovered")
+
+    async def test_timeout_has_a_specific_error_message(self):
+        request = httpx.Request(
+            "POST",
+            "https://api.example.com/chat/completions",
+        )
+        sdk_client, create = make_client(None)
+        create.side_effect = APITimeoutError(request=request)
+        llm_client = LLMClient()
+        llm_client._max_retries = 0
+
+        events = await self._collect_events(
+            llm_client,
+            sdk_client,
+            stream=False,
+        )
+
+        create.assert_awaited_once()
+        self.assertEqual(events[0].type, EventType.ERROR)
+        self.assertIn("Request timed out", events[0].error)
+
+    async def test_api_error_is_returned_without_retrying(self):
+        request = httpx.Request(
+            "POST",
+            "https://api.example.com/chat/completions",
+        )
+        sdk_client, create = make_client(None)
+        create.side_effect = APIError("bad response", request, body=None)
+        llm_client = LLMClient()
+
+        with patch(
+            "truecoder.client.llm_client.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as sleep:
+            events = await self._collect_events(
+                llm_client,
+                sdk_client,
+                stream=False,
+            )
+
+        create.assert_awaited_once()
+        sleep.assert_not_awaited()
+        self.assertEqual(events[0].type, EventType.ERROR)
+        self.assertIn("API error", events[0].error)
+
+    async def test_stream_error_after_a_delta_does_not_retry(self):
+        stream = FakeStream(
+            [make_chunk(content="Partial")],
+            error=make_rate_limit_error(),
+        )
+        sdk_client, create = make_client(stream)
+        llm_client = LLMClient()
+
+        with patch(
+            "truecoder.client.llm_client.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as sleep:
+            events = await self._collect_events(
+                llm_client,
+                sdk_client,
+                stream=True,
+            )
+
+        create.assert_awaited_once()
+        sleep.assert_not_awaited()
+        self.assertTrue(stream.closed)
+        self.assertEqual(
+            [event.type for event in events],
+            [EventType.TEXT_DELTA, EventType.ERROR],
+        )
+        self.assertIn("while streaming", events[1].error)
+
+    async def test_unexpected_errors_are_not_hidden(self):
+        sdk_client, create = make_client(None)
+        create.side_effect = ValueError("programming error")
+        llm_client = LLMClient()
+
+        with self.assertRaisesRegex(ValueError, "programming error"):
+            await self._collect_events(
+                llm_client,
+                sdk_client,
+                stream=False,
+            )
 
     async def test_context_manager_closes_an_initialized_client(self):
         sdk_client = SimpleNamespace(close=AsyncMock())

@@ -1,8 +1,16 @@
+import asyncio
 import os
 from typing import Any, AsyncGenerator, cast
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI, AsyncStream, OpenAIError
+from openai import (
+    APIConnectionError,
+    APIError,
+    APITimeoutError,
+    AsyncOpenAI,
+    AsyncStream,
+    RateLimitError,
+)
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.completion_usage import CompletionUsage
 
@@ -14,6 +22,7 @@ load_dotenv()
 class LLMClient:
     def __init__(self) -> None:
         self.__client: AsyncOpenAI | None = None
+        self._max_retries: int = 3
 
     async def __aenter__(self) -> "LLMClient":
         return self
@@ -27,7 +36,12 @@ class LLMClient:
             if not api_key:
                 raise RuntimeError("API_KEY must be set in the .env file")
 
-            client_options: dict[str, Any] = {"api_key": api_key}
+            client_options: dict[str, Any] = {
+                "api_key": api_key,
+                # Retries are handled by chat_completion so the two retry
+                # mechanisms do not stack.
+                "max_retries": 0,
+            }
             base_url = os.getenv("BASE_URL")
             if base_url:
                 client_options["base_url"] = base_url
@@ -56,14 +70,74 @@ class LLMClient:
             "messages": messages,
         }
 
-        try:
-            if stream:
-                async for event in self._stream_response(client, request):
-                    yield event
-            else:
-                yield await self._non_stream_response(client, request)
-        except OpenAIError as error:
-            yield StreamEvent(type=EventType.ERROR, error=str(error))
+        for attempt in range(self._max_retries + 1):
+            stream_started = False
+
+            try:
+                if stream:
+                    async for event in self._stream_response(client, request):
+                        stream_started = True
+                        yield event
+                else:
+                    yield await self._non_stream_response(client, request)
+                return
+            except RateLimitError as error:
+                if stream_started:
+                    yield StreamEvent(
+                        type=EventType.ERROR,
+                        error=f"Rate limit error while streaming: {error}",
+                    )
+                    return
+
+                if attempt < self._max_retries:
+                    await asyncio.sleep(2**attempt)
+                    continue
+
+                yield StreamEvent(
+                    type=EventType.ERROR,
+                    error=f"Rate limit exceeded: {error}",
+                )
+                return
+            except APITimeoutError as error:
+                if stream_started:
+                    yield StreamEvent(
+                        type=EventType.ERROR,
+                        error=f"Request timed out while streaming: {error}",
+                    )
+                    return
+
+                if attempt < self._max_retries:
+                    await asyncio.sleep(2**attempt)
+                    continue
+
+                yield StreamEvent(
+                    type=EventType.ERROR,
+                    error=f"Request timed out: {error}",
+                )
+                return
+            except APIConnectionError as error:
+                if stream_started:
+                    yield StreamEvent(
+                        type=EventType.ERROR,
+                        error=f"Connection error while streaming: {error}",
+                    )
+                    return
+
+                if attempt < self._max_retries:
+                    await asyncio.sleep(2**attempt)
+                    continue
+
+                yield StreamEvent(
+                    type=EventType.ERROR,
+                    error=f"Connection error: {error}",
+                )
+                return
+            except APIError as error:
+                yield StreamEvent(
+                    type=EventType.ERROR,
+                    error=f"API error: {error}",
+                )
+                return
 
     async def _stream_response(
         self,
