@@ -3,6 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from truecoder.tools.base import ToolCall
+
+
+@dataclass
+class ToolCallDelta:
+    index: int
+    call_id: str | None = None
+    name: str | None = None
+    arguments_delta: str = ""
+
 
 @dataclass
 class TextDelta:
@@ -15,6 +25,7 @@ class TextDelta:
 class EventType(str, Enum):
     TEXT_DELTA = "text_delta"
     MESSAGE_COMPLETE = "message_complete"
+    TOOL_CALL_DELTA = "tool_call_delta"
     ERROR = "error"
 
 
@@ -39,5 +50,7 @@ class StreamEvent:
     type: EventType
     text_delta: TextDelta | None = None
     error: str | None = None
+    tool_call_delta: ToolCallDelta | None = None
+    tool_calls: tuple[ToolCall, ...] = ()
     finish_reason: str | None = None
     usage: TokenUsage | None = None
