@@ -3,26 +3,47 @@ from __future__ import annotations
 import asyncio
 from typing import Any, AsyncGenerator
 
+from truecoder.agent.context import ContextBuilder
 from truecoder.agent.events import AgentEvent
+from truecoder.agent.state import AgentState
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType, TokenUsage
+from truecoder.tui.app import TrueCoderApp
 
 
 class Agent:
-    """Manage conversation state and turn LLM responses into agent events."""
+    def __init__(
+        self,
+        llm_client: LLMClient | None = None,
+        state: AgentState | None = None,
+        context_builder: ContextBuilder | None = None,
+    ) -> None:
+        self.llm_client = llm_client if llm_client is not None else LLMClient()
+        self.state = state if state is not None else AgentState()
+        self.context_builder = (
+            context_builder
+            if context_builder is not None
+            else ContextBuilder.from_environment()
+        )
 
-    def __init__(self, llm_client: LLMClient | None = None) -> None:
-        self.llm_client = llm_client or LLMClient()
-        self.messages: list[dict[str, Any]] = []
+    @property
+    def messages(self) -> list[dict[str, Any]]:
+        return self.state.messages
 
     async def run(self, prompt: str) -> AsyncGenerator[AgentEvent, None]:
-        """Run one conversational turn and stream high-level events."""
         prompt = prompt.strip()
         if not prompt:
             yield AgentEvent.agent_error("The prompt cannot be empty.")
             return
+        try:
+            self.state.begin_turn(prompt)
+        except (ValueError, RuntimeError) as error:
+            yield AgentEvent.agent_error(
+                str(error),
+                details={"exception_type": type(error).__name__},
+            )
+            return
 
-        self.messages.append({"role": "user", "content": prompt})
         yield AgentEvent.agent_start(prompt)
 
         try:
@@ -35,18 +56,15 @@ class Agent:
                 str(error),
                 details={"exception_type": type(error).__name__},
             )
+        finally:
+            self.state.abort_turn()
 
     async def _agentic_loop(self) -> AsyncGenerator[AgentEvent, None]:
-        """Execute the current agent turn.
-
-        This is a single model call for now. Keeping it as a separate loop leaves
-        a clear place to add tool calls and additional model steps later.
-        """
         response_parts: list[str] = []
         usage: TokenUsage | None = None
         finish_reason: str | None = None
         completed = False
-        request_messages = [message.copy() for message in self.messages]
+        request_messages = self.context_builder.build(self.state)
 
         async for event in self.llm_client.chat_completion(
             request_messages,
@@ -69,9 +87,7 @@ class Agent:
                 return
 
         if not completed:
-            yield AgentEvent.agent_error(
-                "The response stream ended before completion."
-            )
+            yield AgentEvent.agent_error("The response stream ended before completion.")
             return
 
         response = "".join(response_parts)
@@ -81,21 +97,19 @@ class Agent:
             )
             return
 
-        self.messages.append({"role": "assistant", "content": response})
+        # self.messages.append({"role": "assistant", "content": response})
+        self.state.complete_turn(response)
         yield AgentEvent.text_complete(response)
         yield AgentEvent.agent_end(response, usage, finish_reason)
 
     def reset(self) -> None:
-        """Clear all conversation history."""
-        self.messages.clear()
+        self.state.reset()
 
     async def close(self) -> None:
-        """Release resources held by the underlying LLM client."""
         await self.llm_client.close()
 
 
 def run() -> None:
     """Launch the TrueCoder terminal application."""
-    from truecoder.tui.app import TrueCoderApp
 
     TrueCoderApp().run()
