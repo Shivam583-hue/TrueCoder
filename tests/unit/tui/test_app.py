@@ -3,7 +3,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from truecoder.agent.agent import Agent
+from truecoder.agent import Agent, ContextBuilder
 from truecoder.client.response import (
     EventType,
     StreamEvent,
@@ -29,6 +29,22 @@ class FakeLLMClient:
         self.closed = True
 
 
+class FixedTokenCounter:
+    def count_message(self, message) -> int:
+        return 1
+
+
+def make_agent(client: FakeLLMClient) -> Agent:
+    return Agent(
+        llm_client=client,
+        context_builder=ContextBuilder(
+            system_prompt="test system",
+            max_input_tokens=100,
+            token_counter=FixedTokenCounter(),
+        ),
+    )
+
+
 class BlockingLLMClient(FakeLLMClient):
     async def chat_completion(self, messages, stream=True):
         self.calls.append((messages, stream))
@@ -42,7 +58,7 @@ class BlockingLLMClient(FakeLLMClient):
 class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_app_mounts_with_prompt_focused(self):
         client = FakeLLMClient([])
-        app = TrueCoderApp(Agent(client))
+        app = TrueCoderApp(make_agent(client))
 
         with patch.dict(os.environ, {"MODEL": "test-model"}):
             async with app.run_test(size=(120, 40)) as pilot:
@@ -83,7 +99,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ]
         )
-        app = TrueCoderApp(Agent(client))
+        app = TrueCoderApp(make_agent(client))
 
         async with app.run_test(size=(120, 40)) as pilot:
             prompt = app.query_one(PromptInput)
@@ -102,7 +118,15 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(
                 client.calls,
-                [([{"role": "user", "content": "Say hello"}], True)],
+                [
+                    (
+                        [
+                            {"role": "system", "content": "test system"},
+                            {"role": "user", "content": "Say hello"},
+                        ],
+                        True,
+                    )
+                ],
             )
             self.assertEqual(
                 app.messages,
@@ -134,7 +158,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_shift_enter_inserts_a_newline(self):
         client = FakeLLMClient([])
-        app = TrueCoderApp(Agent(client))
+        app = TrueCoderApp(make_agent(client))
 
         async with app.run_test(size=(100, 30)) as pilot:
             prompt = app.query_one(PromptInput)
@@ -157,7 +181,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                 )
             ]
         )
-        app = TrueCoderApp(Agent(client))
+        app = TrueCoderApp(make_agent(client))
 
         async with app.run_test(size=(120, 40)) as pilot:
             prompt = app.query_one(PromptInput)
@@ -180,7 +204,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                 StreamEvent(type=EventType.MESSAGE_COMPLETE),
             ]
         )
-        app = TrueCoderApp(Agent(client))
+        app = TrueCoderApp(make_agent(client))
 
         async with app.run_test(size=(120, 40)) as pilot:
             prompt = app.query_one(PromptInput)
@@ -197,7 +221,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_new_chat_safely_cancels_an_active_response(self):
         client = BlockingLLMClient([])
-        app = TrueCoderApp(Agent(client))
+        app = TrueCoderApp(make_agent(client))
 
         async with app.run_test(size=(120, 40)) as pilot:
             prompt = app.query_one(PromptInput)

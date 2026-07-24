@@ -8,7 +8,6 @@ from truecoder.agent.events import AgentEvent
 from truecoder.agent.state import AgentState
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType, TokenUsage
-from truecoder.tui.app import TrueCoderApp
 
 
 class Agent:
@@ -97,7 +96,6 @@ class Agent:
             )
             return
 
-        # self.messages.append({"role": "assistant", "content": response})
         self.state.complete_turn(response)
         yield AgentEvent.text_complete(response)
         yield AgentEvent.agent_end(response, usage, finish_reason)
@@ -111,5 +109,6 @@ class Agent:
 
 def run() -> None:
     """Launch the TrueCoder terminal application."""
+    from truecoder.tui.app import TrueCoderApp
 
     TrueCoderApp().run()
