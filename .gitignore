@@ -1,6 +1,7 @@
 .venv/*
 .env
 *.egg-info/
+/phases/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

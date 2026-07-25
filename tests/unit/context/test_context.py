@@ -1,14 +1,38 @@
 import os
 import unittest
+from collections.abc import Mapping, Sequence
+from typing import Any
 from unittest.mock import Mock, patch
 
 from truecoder.agent import AgentState, ContextBuilder, TiktokenTokenCounter
 from truecoder.agent.prompts import DEFAULT_SYSTEM_PROMPT
+from truecoder.tools import ToolCall
 
 
 class LengthTokenCounter:
     def count_message(self, message) -> int:
         return len(message["content"])
+
+
+class LeafLengthTokenCounter:
+    """Count characters across every string leaf, mirroring the real traversal."""
+
+    def count_message(self, message) -> int:
+        return self._count(message)
+
+    def _count(self, value) -> int:
+        if isinstance(value, str):
+            return len(value)
+        if value is None:
+            return 0
+        if isinstance(value, Mapping):
+            return sum(self._count(nested) for nested in value.values())
+        if isinstance(value, Sequence) and not isinstance(
+            value,
+            (str, bytes, bytearray),
+        ):
+            return sum(self._count(nested) for nested in value)
+        return 0
 
 
 def state_with_turns(
@@ -70,9 +94,8 @@ class ContextBuilderTests(unittest.TestCase):
         ]
 
         for arguments, expected_error in invalid_cases:
-            with self.subTest(arguments=arguments):
-                with self.assertRaises(expected_error):
-                    ContextBuilder(**arguments)
+            with self.subTest(arguments=arguments), self.assertRaises(expected_error):
+                ContextBuilder(**arguments)
 
     def test_build_requires_an_active_turn(self):
         with self.assertRaisesRegex(RuntimeError, "without an active turn"):
@@ -197,9 +220,9 @@ class ContextBuilderTests(unittest.TestCase):
         with (
             patch("truecoder.agent.context.load_dotenv"),
             patch.dict(os.environ, {}, clear=True),
+            self.assertRaisesRegex(ValueError, "MODEL"),
         ):
-            with self.assertRaisesRegex(ValueError, "MODEL"):
-                ContextBuilder.from_environment()
+            ContextBuilder.from_environment()
 
     def test_from_environment_rejects_non_integer_limit(self):
         with (
@@ -209,9 +232,196 @@ class ContextBuilderTests(unittest.TestCase):
                 {"MODEL": "test-model", "MAX_INPUT_TOKENS": "many"},
                 clear=True,
             ),
+            self.assertRaisesRegex(ValueError, "valid integer"),
         ):
-            with self.assertRaisesRegex(ValueError, "valid integer"):
-                ContextBuilder.from_environment()
+            ContextBuilder.from_environment()
+
+
+def _tool_call(
+    call_id: str,
+    name: str = "read_file",
+    arguments_json: str = '{"path": "main.py"}',
+) -> ToolCall:
+    return ToolCall(call_id=call_id, name=name, arguments_json=arguments_json)
+
+
+class ContextBuilderToolTests(unittest.TestCase):
+    def make_builder(self, max_input_tokens: int = 10_000) -> ContextBuilder:
+        return ContextBuilder(
+            system_prompt="S",
+            max_input_tokens=max_input_tokens,
+            token_counter=LeafLengthTokenCounter(),
+        )
+
+    def test_pending_tool_messages_appear_in_provider_order(self):
+        state = AgentState()
+        state.begin_turn("Read main.py")
+        state.record_tool_calls([_tool_call("call_1")])
+        state.record_tool_result("call_1", '{"content": "print(1)"}')
+
+        messages = self.make_builder().build(state)
+
+        self.assertEqual(
+            messages,
+            [
+                {"role": "system", "content": "S"},
+                {"role": "user", "content": "Read main.py"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": '{"path": "main.py"}',
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "content": '{"content": "print(1)"}',
+                },
+            ],
+        )
+
+    def test_build_rejects_unresolved_tool_calls(self):
+        state = AgentState()
+        state.begin_turn("Read main.py")
+        state.record_tool_calls([_tool_call("call_1")])
+
+        with self.assertRaisesRegex(RuntimeError, "unresolved"):
+            self.make_builder().build(state)
+
+    def test_completed_tool_turn_is_retained_as_a_whole(self):
+        state = AgentState()
+        state.begin_turn("q1")
+        state.record_tool_calls([_tool_call("call_1", arguments_json='{"path": "a"}')])
+        state.record_tool_result("call_1", "R1")
+        state.complete_turn("A1")
+        state.begin_turn("current")
+
+        messages = self.make_builder().build(state)
+
+        self.assertEqual(
+            messages,
+            [
+                {"role": "system", "content": "S"},
+                {"role": "user", "content": "q1"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": '{"path": "a"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "R1"},
+                {"role": "assistant", "content": "A1"},
+                {"role": "user", "content": "current"},
+            ],
+        )
+
+    def test_completed_tool_turn_is_removed_as_a_whole(self):
+        state = AgentState()
+        state.begin_turn("q1")
+        state.record_tool_calls([_tool_call("call_1")])
+        state.record_tool_result("call_1", "R1")
+        state.complete_turn("A1")
+        state.begin_turn("current")
+
+        counter = LeafLengthTokenCounter()
+        required = counter.count_message(
+            {"role": "system", "content": "S"}
+        ) + counter.count_message({"role": "user", "content": "current"})
+        builder = ContextBuilder(
+            system_prompt="S",
+            max_input_tokens=required,
+            token_counter=counter,
+        )
+
+        messages = builder.build(state)
+
+        self.assertEqual(
+            messages,
+            [
+                {"role": "system", "content": "S"},
+                {"role": "user", "content": "current"},
+            ],
+        )
+
+    def test_pending_tool_turn_is_retained_over_budget(self):
+        state = AgentState()
+        state.begin_turn("old")
+        state.complete_turn("old answer")
+        state.begin_turn("Read main.py")
+        state.record_tool_calls([_tool_call("call_1")])
+        state.record_tool_result("call_1", '{"content": "print(1)"}')
+
+        messages = self.make_builder(max_input_tokens=1).build(state)
+
+        self.assertEqual(
+            messages,
+            [
+                {"role": "system", "content": "S"},
+                {"role": "user", "content": "Read main.py"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": '{"path": "main.py"}',
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "content": '{"content": "print(1)"}',
+                },
+            ],
+        )
+
+    def test_returned_tool_messages_are_defensive_copies(self):
+        state = AgentState()
+        state.begin_turn("Read main.py")
+        state.record_tool_calls([_tool_call("call_1")])
+        state.record_tool_result("call_1", "result")
+
+        messages: list[Any] = self.make_builder().build(state)
+        messages[2]["tool_calls"][0]["function"]["arguments"] = "hacked"
+
+        self.assertEqual(
+            state.pending_messages[1],
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": '{"path": "main.py"}',
+                        },
+                    }
+                ],
+            },
+        )
 
 
 class TiktokenTokenCounterTests(unittest.TestCase):
@@ -253,9 +463,40 @@ class TiktokenTokenCounterTests(unittest.TestCase):
             {"role": "user", "content": None},
         ]
         for message in invalid_messages:
-            with self.subTest(message=message):
-                with self.assertRaises(TypeError):
-                    counter.count_message(message)
+            with self.subTest(message=message), self.assertRaises(TypeError):
+                counter.count_message(message)
+
+    def test_count_message_includes_tool_call_arguments_and_results(self):
+        encoding = Mock()
+        encoding.encode.side_effect = lambda value: list(value)
+
+        with patch(
+            "truecoder.agent.context.tiktoken.encoding_for_model",
+            return_value=encoding,
+        ):
+            counter = TiktokenTokenCounter("test-model")
+
+        tool_call_message = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "rf", "arguments": "ARGS"},
+                }
+            ],
+        }
+        # Leaves: assistant(9) + c1(2) + function(8) + rf(2) + ARGS(4) = 25, plus 4 overhead.
+        self.assertEqual(counter.count_message(tool_call_message), 25 + 4)
+
+        tool_result_message = {
+            "role": "tool",
+            "tool_call_id": "c1",
+            "content": "RESULT",
+        }
+        # Leaves: tool(4) + c1(2) + RESULT(6) = 12, plus 4 overhead.
+        self.assertEqual(counter.count_message(tool_result_message), 12 + 4)
 
 
 if __name__ == "__main__":
