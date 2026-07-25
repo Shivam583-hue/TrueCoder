@@ -15,6 +15,7 @@ from truecoder.tools.registry import (
     ToolNotFoundError,
     ToolRegistry,
 )
+from truecoder.tools.serialization import serialize_tool_result
 
 __all__ = [
     "BaseTool",
@@ -30,4 +31,5 @@ __all__ = [
     "ToolExecutionError",
     "DuplicateToolError",
     "ToolNotFoundError",
+    "serialize_tool_result",
 ]

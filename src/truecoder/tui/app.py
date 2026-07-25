@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -13,6 +12,7 @@ from textual.worker import Worker, WorkerCancelled
 
 from truecoder.agent.agent import Agent
 from truecoder.agent.events import AgentEventType
+from truecoder.agent.messages import ModelMessage
 from truecoder.client.response import TokenUsage
 from truecoder.tui.widgets import (
     ChatMessage,
@@ -44,7 +44,7 @@ class TrueCoderApp(App[None]):
         self._active_worker: Worker[None] | None = None
 
     @property
-    def messages(self) -> list[dict[str, Any]]:
+    def messages(self) -> list[ModelMessage]:
         """Expose conversation history for UI state inspection."""
         return self.agent.messages
 

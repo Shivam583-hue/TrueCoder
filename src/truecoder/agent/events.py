@@ -13,6 +13,8 @@ class AgentEventType(str, Enum):
     AGENT_ERROR = "agent_error"
     TEXT_DELTA = "text_delta"
     TEXT_COMPLETE = "text_complete"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,4 +70,29 @@ class AgentEvent:
         return cls(
             type=AgentEventType.TEXT_COMPLETE,
             data={"content": content},
+        )
+
+    @classmethod
+    def tool_call(cls, call_id: str, name: str, arguments: str) -> AgentEvent:
+        return cls(
+            type=AgentEventType.TOOL_CALL,
+            data={"call_id": call_id, "name": name, "arguments": arguments},
+        )
+
+    @classmethod
+    def tool_result(
+        cls,
+        call_id: str,
+        tool_name: str,
+        status: str,
+        content: str,
+    ) -> AgentEvent:
+        return cls(
+            type=AgentEventType.TOOL_RESULT,
+            data={
+                "call_id": call_id,
+                "tool_name": tool_name,
+                "status": status,
+                "content": content,
+            },
         )

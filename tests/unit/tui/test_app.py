@@ -20,7 +20,7 @@ class FakeLLMClient:
         self.calls: list[tuple[list[dict], bool]] = []
         self.closed = False
 
-    async def chat_completion(self, messages, stream=True):
+    async def chat_completion(self, messages, stream=True, tools=None):
         self.calls.append((messages, stream))
         for event in self.events:
             yield event
@@ -46,7 +46,7 @@ def make_agent(client: FakeLLMClient) -> Agent:
 
 
 class BlockingLLMClient(FakeLLMClient):
-    async def chat_completion(self, messages, stream=True):
+    async def chat_completion(self, messages, stream=True, tools=None):
         self.calls.append((messages, stream))
         yield StreamEvent(
             type=EventType.TEXT_DELTA,

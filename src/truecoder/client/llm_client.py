@@ -1,7 +1,8 @@
 import asyncio
 import os
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator, cast
+from typing import Any, cast
 
 from dotenv import load_dotenv
 from openai import (
@@ -70,7 +71,7 @@ class LLMClient:
 
     async def chat_completion(
         self,
-        messages: list[dict[str, Any]],
+        messages: Sequence[Mapping[str, Any]],
         stream: bool = True,
         *,
         tools: list[dict[str, Any]] | None = None,
