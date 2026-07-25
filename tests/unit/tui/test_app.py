@@ -13,7 +13,12 @@ from truecoder.client.response import (
 from truecoder.tools import ToolApproval, ToolArguments, ToolCall, ToolRegistry
 from truecoder.tools.base import BaseTool
 from truecoder.tui.app import TrueCoderApp
-from truecoder.tui.widgets import ApprovalCard, ChatMessage, EmptyState, PromptInput
+from truecoder.tui.widgets import (
+    ChatMessage,
+    EmptyState,
+    PromptInput,
+    ToolCallCard,
+)
 
 
 class FakeLLMClient:
@@ -73,7 +78,9 @@ def guarded_tool_call() -> ScriptedLLMClient:
                 ),
             ],
             [
-                StreamEvent(type=EventType.TEXT_DELTA, text_delta=TextDelta("All done")),
+                StreamEvent(
+                    type=EventType.TEXT_DELTA, text_delta=TextDelta("All done")
+                ),
                 StreamEvent(type=EventType.MESSAGE_COMPLETE, finish_reason="stop"),
             ],
         ]
@@ -85,7 +92,9 @@ class FixedTokenCounter:
         return 1
 
 
-def make_agent(client: FakeLLMClient, tool_registry: ToolRegistry | None = None) -> Agent:
+def make_agent(
+    client: FakeLLMClient, tool_registry: ToolRegistry | None = None
+) -> Agent:
     return Agent(
         llm_client=client,
         tool_registry=tool_registry,
@@ -126,12 +135,13 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(app.query_one(EmptyState).display)
                 self.assertTrue(app.screen.has_class("empty-chat"))
                 logo_lines = str(app.query_one("#ascii-logo").content).splitlines()
-                self.assertEqual(len(logo_lines), 7)
-                self.assertEqual(max(map(len, logo_lines)), 55)
+                self.assertEqual(len(logo_lines), 5)
+                self.assertEqual(max(map(len, logo_lines)), 54)
                 self.assertFalse(app.query_one("#topbar").display)
                 self.assertFalse(app.query_one("#statusbar").display)
                 self.assertEqual(len(app.query("#app-status")), 0)
-                self.assertEqual(len(app.query("#workspace-name")), 0)
+                self.assertEqual(len(app.query("#workspace-name")), 1)
+                self.assertTrue(app.query_one("#splash-context").display)
                 self.assertEqual(
                     app.query_one("#transcript").region.x,
                     app.query_one("#composer-shell").region.x,
@@ -204,15 +214,20 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
             )
             transcript_width = app.query_one("#transcript").content_region.width
             user_message, assistant_message = messages
-            self.assertEqual(user_message.region.width, transcript_width)
-            self.assertEqual(assistant_message.region.width, transcript_width)
+            self.assertLess(user_message.region.width, assistant_message.region.width)
+            self.assertLessEqual(assistant_message.region.width, transcript_width)
+            self.assertEqual(assistant_message.region.width, 104)
             self.assertEqual(user_message.styles.border_left[0], "solid")
             self.assertEqual(assistant_message.styles.border_left[0], "")
             self.assertEqual(assistant_message.styles.background.a, 0)
-            self.assertEqual(len(user_message.query(".message-header")), 0)
-            self.assertEqual(user_message.styles.padding.top, 0)
-            self.assertEqual(user_message.styles.padding.bottom, 0)
-            self.assertEqual(user_message.region.height, 1)
+            self.assertEqual(len(user_message.query(".message-header")), 1)
+            self.assertEqual(user_message.styles.padding.top, 1)
+            self.assertEqual(user_message.styles.padding.bottom, 1)
+            self.assertGreaterEqual(user_message.region.height, 4)
+            self.assertEqual(
+                str(assistant_message.query_one(".message-state").content),
+                "✓ completed",
+            )
 
     async def test_shift_enter_inserts_a_newline(self):
         client = FakeLLMClient([])
@@ -228,7 +243,19 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
             self.assertEqual(prompt.text, "first line\nsecond")
+            self.assertGreaterEqual(prompt.region.height, 4)
             self.assertEqual(client.calls, [])
+
+    async def test_composer_grows_for_soft_wrapped_content(self):
+        app = TrueCoderApp(make_agent(FakeLLMClient([])))
+
+        async with app.run_test(size=(48, 24)) as pilot:
+            prompt = app.query_one(PromptInput)
+            prompt.text = "inspect " * 18
+            await pilot.pause()
+
+            self.assertGreater(prompt.region.height, 3)
+            self.assertLessEqual(prompt.region.height, 8)
 
     async def test_error_event_is_rendered_in_the_transcript(self):
         client = FakeLLMClient(
@@ -289,6 +316,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertTrue(app._busy)
             self.assertEqual(len(list(app.query(ChatMessage))), 2)
+            self.assertEqual(str(app.query_one("#send-button").label), "Busy")
 
             await pilot.press("ctrl+l")
             await pilot.pause()
@@ -309,9 +337,26 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await pilot.pause()
 
-            cards = list(app.query(ApprovalCard))
+            cards = list(app.query(ToolCallCard))
             self.assertEqual(len(cards), 1)
-            self.assertEqual(cards[0].tool_name, "guarded")
+            card = cards[0]
+            self.assertEqual(card.tool_name, "guarded")
+            self.assertEqual(card.state, "awaiting-approval")
+            self.assertTrue(card.has_class("state-awaiting-approval"))
+            self.assertTrue(card.query_one(".tool-approval-actions").display)
+            self.assertEqual(
+                str(card.query_one(".tool-state-label").content),
+                "Awaiting approval",
+            )
+            self.assertIn(
+                "text=hi",
+                str(card.query_one(".tool-parameters").content),
+            )
+            self.assertTrue(
+                app.focused.has_class("approval-approve")
+                if app.focused is not None
+                else False
+            )
             self.assertEqual(tool.runs, 0)
 
             await pilot.click(".approval-approve")
@@ -319,7 +364,17 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
             self.assertEqual(tool.runs, 1)
-            self.assertEqual(list(app.query(ApprovalCard)), [])
+            self.assertEqual(len(list(app.query(ToolCallCard))), 1)
+            self.assertEqual(card.state, "completed")
+            self.assertFalse(card.query_one(".tool-approval-actions").display)
+            self.assertTrue(card.query_one(".tool-details-toggle").display)
+            await pilot.click(".tool-details-toggle")
+            await pilot.pause()
+            self.assertTrue(card.has_class("expanded"))
+            self.assertIn(
+                '"echoed": "hi"',
+                str(card.query_one(".tool-details-content").content),
+            )
             self.assertIsNone(app._pending_approval)
             assistant = list(app.query(ChatMessage))[-1]
             self.assertIn("All done", assistant.content_text)
@@ -338,7 +393,13 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
             self.assertEqual(tool.runs, 0)
-            self.assertEqual(list(app.query(ApprovalCard)), [])
+            cards = list(app.query(ToolCallCard))
+            self.assertEqual(len(cards), 1)
+            self.assertEqual(cards[0].state, "rejected")
+            self.assertIn(
+                "Rejected guarded",
+                str(cards[0].query_one(".tool-title").content),
+            )
             assistant = list(app.query(ChatMessage))[-1]
             self.assertIn("All done", assistant.content_text)
 
@@ -361,7 +422,9 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
                     ),
                 ],
                 [
-                    StreamEvent(type=EventType.TEXT_DELTA, text_delta=TextDelta("Done")),
+                    StreamEvent(
+                        type=EventType.TEXT_DELTA, text_delta=TextDelta("Done")
+                    ),
                     StreamEvent(type=EventType.MESSAGE_COMPLETE, finish_reason="stop"),
                 ],
             ]
@@ -373,7 +436,7 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await pilot.pause()
 
-            self.assertEqual(len(list(app.query(ApprovalCard))), 1)
+            self.assertEqual(len(list(app.query(ToolCallCard))), 1)
 
             await pilot.click(".approval-always")
             await app.workers.wait_for_complete()
@@ -381,7 +444,9 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(tool.runs, 2)
             self.assertIn("guarded", app._always_approved)
-            self.assertEqual(list(app.query(ApprovalCard)), [])
+            cards = list(app.query(ToolCallCard))
+            self.assertEqual(len(cards), 2)
+            self.assertTrue(all(card.state == "completed" for card in cards))
 
     async def test_new_chat_cancels_a_pending_approval(self):
         tool = GuardedTool()
@@ -392,16 +457,86 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await pilot.pause()
 
-            self.assertEqual(len(list(app.query(ApprovalCard))), 1)
+            self.assertEqual(len(list(app.query(ToolCallCard))), 1)
 
             await pilot.press("ctrl+l")
             await pilot.pause()
 
             self.assertEqual(tool.runs, 0)
-            self.assertEqual(list(app.query(ApprovalCard)), [])
+            self.assertEqual(list(app.query(ToolCallCard)), [])
             self.assertEqual(app.messages, [])
             self.assertIsNone(app._pending_approval)
             self.assertFalse(app._busy)
+
+    async def test_tool_card_variants_and_narrow_approval_layout(self):
+        app = TrueCoderApp(make_agent(FakeLLMClient([])))
+
+        async with app.run_test(size=(48, 30)) as pilot:
+            app.screen.remove_class("empty-chat")
+            app.query_one("#empty-state").styles.display = "none"
+            transcript = app.query_one("#transcript")
+            card = ToolCallCard(
+                "call_shell",
+                "run_shell",
+                {"command": "git status --short"},
+                state="queued",
+            )
+            await transcript.mount(card)
+            await pilot.pause()
+
+            self.assertTrue(card.has_class("risky"))
+            self.assertEqual(card.state, "queued")
+            card.set_state("running")
+            self.assertEqual(card.state, "running")
+            card.finish(
+                "error",
+                '{"error": "command failed", "status": "error"}',
+            )
+            self.assertEqual(card.state, "failed")
+            self.assertTrue(card.has_class("state-failed"))
+
+            approval = ToolCallCard(
+                "call_write",
+                "write_file",
+                {"path": "src/example.py", "content": "pass"},
+                state="awaiting-approval",
+            )
+            await transcript.mount(approval)
+            await pilot.pause()
+
+            approve = approval.query_one(".approval-approve")
+            always = approval.query_one(".approval-always")
+            reject = approval.query_one(".approval-reject")
+            self.assertLess(approve.region.y, always.region.y)
+            self.assertLess(always.region.y, reject.region.y)
+            self.assertEqual(
+                str(approval.query_one(".tool-target").content),
+                "src/example.py",
+            )
+
+            read_card = ToolCallCard(
+                "call_read",
+                "read_file",
+                {
+                    "path": "pyproject.toml",
+                    "start_line": 1,
+                    "line_count": 100,
+                },
+                state="running",
+            )
+            await transcript.mount(read_card)
+            await pilot.pause()
+            read_card.finish(
+                "success",
+                (
+                    '{"status":"success","output":{"path":"pyproject.toml",'
+                    '"start_line":1,"end_line":42}}'
+                ),
+            )
+            self.assertIn(
+                "Read pyproject.toml · 42 lines",
+                str(read_card.query_one(".tool-title").content),
+            )
 
 
 if __name__ == "__main__":

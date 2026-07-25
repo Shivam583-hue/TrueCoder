@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Static, TextArea
+from textual.containers import Vertical, VerticalScroll
+from textual.widgets import Button, TextArea
 from textual.worker import Worker, WorkerCancelled
 
 from truecoder.agent.agent import Agent
@@ -17,11 +18,12 @@ from truecoder.agent.events import AgentEventType
 from truecoder.agent.messages import ModelMessage
 from truecoder.client.response import TokenUsage
 from truecoder.tui.widgets import (
-    ApprovalCard,
     ChatMessage,
+    Composer,
     EmptyState,
     PromptInput,
     StatusBar,
+    ToolCallCard,
     TopBar,
 )
 
@@ -31,7 +33,7 @@ class _PendingApproval:
     call_id: str
     tool_name: str
     future: asyncio.Future[ApprovalDecision]
-    card: ApprovalCard
+    card: ToolCallCard
 
 
 class TrueCoderApp(App[None]):
@@ -40,9 +42,13 @@ class TrueCoderApp(App[None]):
     CSS_PATH = "styles.tcss"
     TITLE = "TrueCoder"
     ENABLE_COMMAND_PALETTE = False
-    HORIZONTAL_BREAKPOINTS = [(0, "-compact"), (108, "-wide")]
+    HORIZONTAL_BREAKPOINTS: ClassVar[list[tuple[int, str]]] = [
+        (0, "-narrow"),
+        (52, "-compact"),
+        (108, "-wide"),
+    ]
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("ctrl+q", "quit", "Quit", show=False, priority=True),
         Binding("ctrl+l", "new_chat", "New chat", show=False, priority=True),
         Binding("escape", "cancel_response", "Stop", show=False, priority=True),
@@ -54,8 +60,10 @@ class TrueCoderApp(App[None]):
         self.agent.approval_handler = self._request_tool_approval
         self._busy = False
         self._active_worker: Worker[None] | None = None
+        self._active_assistant: ChatMessage | None = None
         self._pending_approval: _PendingApproval | None = None
         self._always_approved: set[str] = set()
+        self._tool_cards: dict[str, ToolCallCard] = {}
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -64,29 +72,14 @@ class TrueCoderApp(App[None]):
 
     def compose(self) -> ComposeResult:
         model_name = os.getenv("MODEL") or "model not configured"
-        yield TopBar(model_name)
+        workspace = os.getcwd()
+        yield TopBar(model_name, workspace)
 
         with Vertical(id="main"):
             with VerticalScroll(id="transcript"):
                 yield EmptyState(id="empty-state")
 
-            with Vertical(id="composer-shell"):
-                yield Static("MESSAGE", id="composer-label", markup=False)
-                with Horizontal(id="composer-row"):
-                    yield PromptInput(
-                        id="prompt-input",
-                        placeholder="Ask TrueCoder anything…",
-                        soft_wrap=True,
-                        show_line_numbers=False,
-                        tab_behavior="focus",
-                        compact=True,
-                    )
-                    yield Button("Send  ↵", id="send-button", disabled=True)
-                yield Static(
-                    "Enter to send  ·  Shift+Enter for a new line",
-                    id="composer-help",
-                    markup=False,
-                )
+            yield Composer(model_name, workspace)
 
         yield StatusBar()
 
@@ -140,6 +133,7 @@ class TrueCoderApp(App[None]):
         user_message = ChatMessage("user", prompt)
         assistant_message = ChatMessage("assistant")
         await transcript.mount(user_message, assistant_message)
+        self._active_assistant = assistant_message
         self.call_after_refresh(
             transcript.scroll_end,
             animate=False,
@@ -171,6 +165,31 @@ class TrueCoderApp(App[None]):
                     response_text += content
                     await assistant_message.append_delta(content)
                     self._scroll_to_latest()
+                elif event.type == AgentEventType.TOOL_CALL:
+                    await self._show_tool_call(
+                        call_id=str(event.data.get("call_id", "")),
+                        tool_name=str(event.data.get("name", "tool")),
+                        arguments=str(event.data.get("arguments", "{}")),
+                        before=assistant_message,
+                    )
+                elif event.type == AgentEventType.APPROVAL_REQUESTED:
+                    call_id = str(event.data.get("call_id", ""))
+                    card = self._tool_cards.get(call_id)
+                    arguments = event.data.get("arguments")
+                    if card is not None and isinstance(arguments, dict):
+                        card.set_awaiting_approval(arguments)
+                        self._scroll_to_latest()
+                elif event.type == AgentEventType.TOOL_RESULT:
+                    self._finish_tool_call(
+                        call_id=str(event.data.get("call_id", "")),
+                        status=str(event.data.get("status", "error")),
+                        content=str(event.data.get("content", "")),
+                    )
+                elif event.type == AgentEventType.TOOL_REJECTED:
+                    self._reject_tool_call(
+                        call_id=str(event.data.get("call_id", "")),
+                        content=str(event.data.get("content", "")),
+                    )
                 elif event.type == AgentEventType.AGENT_END:
                     usage_data = event.data.get("usage")
                     usage = (
@@ -211,10 +230,12 @@ class TrueCoderApp(App[None]):
         except asyncio.CancelledError:
             await assistant_message.show_cancelled()
             outcome = "stopped"
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - render unexpected worker failures
             await assistant_message.show_error(str(error))
             outcome = "error"
         finally:
+            if self._active_assistant is assistant_message:
+                self._active_assistant = None
             self._set_busy(False)
             self._scroll_to_latest()
             self.query_one(PromptInput).focus()
@@ -224,12 +245,34 @@ class TrueCoderApp(App[None]):
         request: ApprovalRequest,
     ) -> ApprovalDecision:
         if request.tool_name in self._always_approved:
+            card = self._tool_cards.get(request.call_id)
+            if card is not None:
+                card.set_state("running")
             return ApprovalDecision.APPROVED
 
         future: asyncio.Future[ApprovalDecision] = (
             asyncio.get_running_loop().create_future()
         )
-        card = ApprovalCard(request.call_id, request.tool_name, request.arguments)
+        card = self._tool_cards.get(request.call_id)
+        if card is None:
+            card = ToolCallCard(
+                request.call_id,
+                request.tool_name,
+                request.arguments,
+                state="awaiting-approval",
+            )
+            self._tool_cards[request.call_id] = card
+            transcript = self.query_one("#transcript", VerticalScroll)
+            before = (
+                self._active_assistant
+                if self._active_assistant is not None
+                and self._active_assistant.is_mounted
+                else None
+            )
+            await transcript.mount(card, before=before)
+        else:
+            card.set_awaiting_approval(request.arguments)
+
         self._pending_approval = _PendingApproval(
             request.call_id,
             request.tool_name,
@@ -237,10 +280,13 @@ class TrueCoderApp(App[None]):
             card,
         )
 
-        transcript = self.query_one("#transcript", VerticalScroll)
-        await transcript.mount(card)
-        self._scroll_to_latest()
-        card.query_one(".approval-approve", Button).focus()
+        card.query_one(".approval-approve", Button).focus(scroll_visible=False)
+        self.call_after_refresh(
+            card.scroll_visible,
+            animate=False,
+            top=True,
+            immediate=True,
+        )
 
         try:
             return await future
@@ -259,14 +305,54 @@ class TrueCoderApp(App[None]):
 
         if always:
             self._always_approved.add(pending.tool_name)
+        pending.card.set_state(
+            "running" if decision is ApprovalDecision.APPROVED else "rejected"
+        )
         pending.future.set_result(decision)
         self._clear_pending_approval()
 
     def _clear_pending_approval(self) -> None:
-        pending = self._pending_approval
         self._pending_approval = None
-        if pending is not None and pending.card.is_mounted:
-            pending.card.remove()
+
+    async def _show_tool_call(
+        self,
+        *,
+        call_id: str,
+        tool_name: str,
+        arguments: str,
+        before: ChatMessage,
+    ) -> None:
+        card = ToolCallCard(
+            call_id,
+            tool_name,
+            arguments,
+            state="running",
+        )
+        self._tool_cards[call_id] = card
+        transcript = self.query_one("#transcript", VerticalScroll)
+        await transcript.mount(
+            card,
+            before=before if before.is_mounted else None,
+        )
+        self._scroll_to_latest()
+
+    def _finish_tool_call(
+        self,
+        *,
+        call_id: str,
+        status: str,
+        content: str,
+    ) -> None:
+        card = self._tool_cards.get(call_id)
+        if card is not None:
+            card.finish(status, content)
+            self._scroll_to_latest()
+
+    def _reject_tool_call(self, *, call_id: str, content: str) -> None:
+        card = self._tool_cards.get(call_id)
+        if card is not None:
+            card.reject(content)
+            self._scroll_to_latest()
 
     def _scroll_to_latest(self) -> None:
         transcript = self.query_one("#transcript", VerticalScroll)
@@ -278,7 +364,7 @@ class TrueCoderApp(App[None]):
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
-        self.query_one("#composer-shell").set_class(busy, "busy")
+        self.query_one(Composer).set_busy(busy)
         self._sync_send_button()
 
     def _sync_send_button(self) -> None:
@@ -296,7 +382,9 @@ class TrueCoderApp(App[None]):
         self.agent.reset()
         self._clear_pending_approval()
         await self.query(".chat-message").remove()
-        await self.query(".approval-card").remove()
+        await self.query(".tool-call-card").remove()
+        self._tool_cards.clear()
+        self._active_assistant = None
         self.query_one("#empty-state", EmptyState).styles.display = "block"
         self._set_busy(False)
         self.screen.add_class("empty-chat")
