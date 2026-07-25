@@ -1,8 +1,16 @@
 import asyncio
 import json
 import unittest
+from typing import Any
 
-from truecoder.agent import Agent, AgentEventType, AgentState, ContextBuilder
+from truecoder.agent import (
+    Agent,
+    AgentEventType,
+    AgentState,
+    ApprovalDecision,
+    ApprovalRequest,
+    ContextBuilder,
+)
 from truecoder.client.response import (
     EventType,
     StreamEvent,
@@ -34,9 +42,39 @@ class EchoTool(BaseTool[EchoArguments]):
         return {"echoed": arguments.text}
 
 
+class GuardedTool(BaseTool[EchoArguments]):
+    name = "guarded"
+    description = "Echo that requires approval before running."
+    arguments_type = EchoArguments
+    approval = ToolApproval.REQUIRED
+
+    def __init__(self) -> None:
+        self.ran = False
+
+    async def run(self, arguments: EchoArguments) -> dict[str, str]:
+        self.ran = True
+        return {"echoed": arguments.text}
+
+
+class RecordingApprovalHandler:
+    def __init__(self, decision: ApprovalDecision) -> None:
+        self.decision = decision
+        self.requests: list[ApprovalRequest] = []
+
+    async def __call__(self, request: ApprovalRequest) -> ApprovalDecision:
+        self.requests.append(request)
+        return self.decision
+
+
 def echo_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(EchoTool())
+    return registry
+
+
+def guarded_registry(tool: GuardedTool) -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register(tool)
     return registry
 
 
@@ -108,6 +146,7 @@ def make_agent(
     state: AgentState | None = None,
     tool_registry: ToolRegistry | None = None,
     max_iterations: int = 25,
+    approval_handler=None,
 ) -> Agent:
     return Agent(
         llm_client=client,
@@ -119,6 +158,7 @@ def make_agent(
         ),
         tool_registry=tool_registry,
         max_iterations=max_iterations,
+        approval_handler=approval_handler,
     )
 
 
@@ -548,6 +588,202 @@ class AgentToolLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("model requests", events[-1].data["error"])
         self.assertFalse(agent.state.turn_active)
         self.assertEqual(agent.messages, [])
+
+
+def _guarded_then_final(
+    call_id: str = "call_1",
+    arguments_json: str = '{"text": "hi"}',
+    usage: TokenUsage | None = None,
+) -> ScriptedLLMClient:
+    return ScriptedLLMClient(
+        [
+            [
+                StreamEvent(
+                    type=EventType.MESSAGE_COMPLETE,
+                    tool_calls=(ToolCall(call_id, "guarded", arguments_json),),
+                    finish_reason="tool_calls",
+                    usage=usage,
+                ),
+            ],
+            [
+                StreamEvent(type=EventType.TEXT_DELTA, text_delta=TextDelta("done")),
+                StreamEvent(type=EventType.MESSAGE_COMPLETE, finish_reason="stop"),
+            ],
+        ]
+    )
+
+
+class AgentApprovalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_approved_required_tool_runs(self):
+        tool = GuardedTool()
+        handler = RecordingApprovalHandler(ApprovalDecision.APPROVED)
+        agent = make_agent(
+            _guarded_then_final(),
+            tool_registry=guarded_registry(tool),
+            approval_handler=handler,
+        )
+
+        events = await collect(agent, "go")
+
+        self.assertEqual(
+            [event.type for event in events],
+            [
+                AgentEventType.AGENT_START,
+                AgentEventType.TOOL_CALL,
+                AgentEventType.APPROVAL_REQUESTED,
+                AgentEventType.TOOL_RESULT,
+                AgentEventType.TEXT_DELTA,
+                AgentEventType.TEXT_COMPLETE,
+                AgentEventType.AGENT_END,
+            ],
+        )
+        self.assertTrue(tool.ran)
+        self.assertEqual(len(handler.requests), 1)
+        self.assertEqual(handler.requests[0].call_id, "call_1")
+        self.assertEqual(handler.requests[0].arguments, {"text": "hi"})
+
+    async def test_approval_request_carries_validated_arguments(self):
+        handler = RecordingApprovalHandler(ApprovalDecision.APPROVED)
+        agent = make_agent(
+            _guarded_then_final(),
+            tool_registry=guarded_registry(GuardedTool()),
+            approval_handler=handler,
+        )
+
+        events = await collect(agent, "go")
+
+        request = next(
+            event
+            for event in events
+            if event.type == AgentEventType.APPROVAL_REQUESTED
+        )
+        self.assertEqual(request.data["tool_name"], "guarded")
+        self.assertEqual(request.data["call_id"], "call_1")
+        self.assertEqual(request.data["arguments"], {"text": "hi"})
+
+    async def test_rejected_required_tool_does_not_run(self):
+        tool = GuardedTool()
+        handler = RecordingApprovalHandler(ApprovalDecision.REJECTED)
+        agent = make_agent(
+            _guarded_then_final(),
+            tool_registry=guarded_registry(tool),
+            approval_handler=handler,
+        )
+
+        events = await collect(agent, "go")
+
+        self.assertFalse(tool.ran)
+        types = [event.type for event in events]
+        self.assertIn(AgentEventType.TOOL_REJECTED, types)
+        self.assertNotIn(AgentEventType.TOOL_RESULT, types)
+        self.assertEqual(events[-1].type, AgentEventType.AGENT_END)
+
+        rejected = next(
+            event for event in events if event.type == AgentEventType.TOOL_REJECTED
+        )
+        payload = json.loads(rejected.data["content"])
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error_code"], "approval_rejected")
+
+        tool_message: Any = agent.messages[2]
+        self.assertEqual(
+            json.loads(tool_message["content"])["error_code"],
+            "approval_rejected",
+        )
+
+    async def test_default_handler_rejects_required_tools(self):
+        tool = GuardedTool()
+        agent = make_agent(
+            _guarded_then_final(),
+            tool_registry=guarded_registry(tool),
+        )
+
+        events = await collect(agent, "go")
+
+        self.assertFalse(tool.ran)
+        self.assertIn(
+            AgentEventType.TOOL_REJECTED,
+            [event.type for event in events],
+        )
+
+    async def test_not_required_tool_never_asks_for_approval(self):
+        handler = RecordingApprovalHandler(ApprovalDecision.REJECTED)
+        client = ScriptedLLMClient(
+            [
+                [
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        tool_calls=(ToolCall("call_1", "echo", '{"text": "hi"}'),),
+                        finish_reason="tool_calls",
+                    ),
+                ],
+                [
+                    StreamEvent(type=EventType.TEXT_DELTA, text_delta=TextDelta("done")),
+                    StreamEvent(type=EventType.MESSAGE_COMPLETE, finish_reason="stop"),
+                ],
+            ]
+        )
+        agent = make_agent(
+            client,
+            tool_registry=echo_registry(),
+            approval_handler=handler,
+        )
+
+        events = await collect(agent, "go")
+
+        self.assertEqual(len(handler.requests), 0)
+        types = [event.type for event in events]
+        self.assertNotIn(AgentEventType.APPROVAL_REQUESTED, types)
+        self.assertNotIn(AgentEventType.TOOL_REJECTED, types)
+        self.assertIn(AgentEventType.TOOL_RESULT, types)
+
+    async def test_invalid_arguments_skip_approval_and_report_error(self):
+        tool = GuardedTool()
+        handler = RecordingApprovalHandler(ApprovalDecision.APPROVED)
+        agent = make_agent(
+            _guarded_then_final(arguments_json="not json"),
+            tool_registry=guarded_registry(tool),
+            approval_handler=handler,
+        )
+
+        events = await collect(agent, "go")
+
+        self.assertEqual(len(handler.requests), 0)
+        self.assertFalse(tool.ran)
+        result = next(
+            event for event in events if event.type == AgentEventType.TOOL_RESULT
+        )
+        self.assertEqual(
+            json.loads(result.data["content"])["error_code"],
+            "invalid_arguments",
+        )
+
+    async def test_usage_accumulates_across_requests(self):
+        client = ScriptedLLMClient(
+            [
+                [
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        tool_calls=(ToolCall("call_1", "echo", '{"text": "a"}'),),
+                        finish_reason="tool_calls",
+                        usage=TokenUsage(total_tokens=5),
+                    ),
+                ],
+                [
+                    StreamEvent(type=EventType.TEXT_DELTA, text_delta=TextDelta("done")),
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        finish_reason="stop",
+                        usage=TokenUsage(total_tokens=7),
+                    ),
+                ],
+            ]
+        )
+        agent = make_agent(client, tool_registry=echo_registry())
+
+        events = await collect(agent, "go")
+
+        self.assertEqual(events[-1].data["usage"]["total_tokens"], 12)
 
 
 if __name__ == "__main__":

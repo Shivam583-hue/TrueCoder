@@ -14,6 +14,8 @@ class AgentEventType(str, Enum):
     TEXT_DELTA = "text_delta"
     TEXT_COMPLETE = "text_complete"
     TOOL_CALL = "tool_call"
+    APPROVAL_REQUESTED = "approval_requested"
+    TOOL_REJECTED = "tool_rejected"
     TOOL_RESULT = "tool_result"
 
 
@@ -77,6 +79,38 @@ class AgentEvent:
         return cls(
             type=AgentEventType.TOOL_CALL,
             data={"call_id": call_id, "name": name, "arguments": arguments},
+        )
+
+    @classmethod
+    def approval_requested(
+        cls,
+        call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> AgentEvent:
+        return cls(
+            type=AgentEventType.APPROVAL_REQUESTED,
+            data={
+                "call_id": call_id,
+                "tool_name": tool_name,
+                "arguments": arguments,
+            },
+        )
+
+    @classmethod
+    def tool_rejected(
+        cls,
+        call_id: str,
+        tool_name: str,
+        content: str,
+    ) -> AgentEvent:
+        return cls(
+            type=AgentEventType.TOOL_REJECTED,
+            data={
+                "call_id": call_id,
+                "tool_name": tool_name,
+                "content": content,
+            },
         )
 
     @classmethod

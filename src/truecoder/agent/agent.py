@@ -3,7 +3,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, Sequence
 from pathlib import Path
+from typing import Any
 
+from truecoder.agent.approval import (
+    ApprovalDecision,
+    ApprovalHandler,
+    ApprovalRequest,
+    reject_all_tool_calls,
+)
 from truecoder.agent.context import ContextBuilder
 from truecoder.agent.events import AgentEvent
 from truecoder.agent.messages import ModelMessage
@@ -11,9 +18,15 @@ from truecoder.agent.state import AgentState
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType, TokenUsage
 from truecoder.tools import ToolExecutor, serialize_tool_result
-from truecoder.tools.base import ToolCall
+from truecoder.tools.base import (
+    BaseTool,
+    ToolApproval,
+    ToolArgumentError,
+    ToolCall,
+    ToolResult,
+)
 from truecoder.tools.builtin import ReadFileTool
-from truecoder.tools.registry import ToolRegistry
+from truecoder.tools.registry import ToolNotFoundError, ToolRegistry
 
 DEFAULT_MAX_ITERATIONS = 25
 
@@ -26,6 +39,7 @@ class Agent:
         context_builder: ContextBuilder | None = None,
         tool_registry: ToolRegistry | None = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        approval_handler: ApprovalHandler | None = None,
     ) -> None:
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
@@ -45,6 +59,9 @@ class Agent:
         )
         self.tool_executor = ToolExecutor(self.tool_registry)
         self.max_iterations = max_iterations
+        self.approval_handler: ApprovalHandler = (
+            approval_handler if approval_handler is not None else reject_all_tool_calls
+        )
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -80,6 +97,8 @@ class Agent:
             self.state.abort_turn()
 
     async def _agentic_loop(self) -> AsyncGenerator[AgentEvent, None]:
+        total_usage: TokenUsage | None = None
+
         for _ in range(self.max_iterations):
             request_messages = self.context_builder.build(self.state)
 
@@ -117,6 +136,9 @@ class Agent:
                 )
                 return
 
+            if usage is not None:
+                total_usage = usage if total_usage is None else total_usage + usage
+
             response = "".join(response_parts)
 
             if tool_calls:
@@ -133,7 +155,7 @@ class Agent:
 
             self.state.complete_turn(response)
             yield AgentEvent.text_complete(response)
-            yield AgentEvent.agent_end(response, usage, finish_reason)
+            yield AgentEvent.agent_end(response, total_usage, finish_reason)
             return
 
         yield AgentEvent.agent_error(
@@ -148,18 +170,58 @@ class Agent:
         for call in tool_calls:
             yield AgentEvent.tool_call(call.call_id, call.name, call.arguments_json)
 
-            # Interactive approval is a later phase; this phase auto-approves every
-            # tool call while keeping the executor's approval gate intact.
-            result = await self.tool_executor.execute(call, approved=True)
+            rejected = False
+            tool = self._lookup_tool(call.name)
+            if tool is not None and tool.approval is ToolApproval.REQUIRED:
+                arguments = self._display_arguments(tool, call)
+                if arguments is not None:
+                    request = ApprovalRequest(call.call_id, call.name, arguments)
+                    yield AgentEvent.approval_requested(
+                        request.call_id,
+                        request.tool_name,
+                        request.arguments,
+                    )
+                    decision = await self.approval_handler(request)
+                    rejected = decision is ApprovalDecision.REJECTED
+
+            if rejected:
+                result = ToolResult.failure(
+                    call.call_id,
+                    call.name,
+                    "The user rejected this tool call.",
+                    "approval_rejected",
+                )
+            else:
+                result = await self.tool_executor.execute(call, approved=True)
+
             content = serialize_tool_result(result)
             self.state.record_tool_result(call.call_id, content)
 
-            yield AgentEvent.tool_result(
-                call.call_id,
-                result.tool_name,
-                result.status.value,
-                content,
-            )
+            if rejected:
+                yield AgentEvent.tool_rejected(call.call_id, call.name, content)
+            else:
+                yield AgentEvent.tool_result(
+                    call.call_id,
+                    result.tool_name,
+                    result.status.value,
+                    content,
+                )
+
+    def _lookup_tool(self, name: str) -> BaseTool[Any] | None:
+        try:
+            return self.tool_registry.get(name)
+        except ToolNotFoundError:
+            return None
+
+    @staticmethod
+    def _display_arguments(
+        tool: BaseTool[Any],
+        call: ToolCall,
+    ) -> dict[str, Any] | None:
+        try:
+            return tool.parse_arguments(call.arguments_json).model_dump()
+        except ToolArgumentError:
+            return None
 
     def reset(self) -> None:
         self.state.reset()
