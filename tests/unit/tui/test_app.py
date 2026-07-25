@@ -15,8 +15,10 @@ from truecoder.tools.base import BaseTool
 from truecoder.tui.app import TrueCoderApp
 from truecoder.tui.widgets import (
     ChatMessage,
+    Composer,
     EmptyState,
     PromptInput,
+    StatusBar,
     ToolCallCard,
 )
 
@@ -131,20 +133,43 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
                 self.assertEqual(app.focused.id, "prompt-input")
-                self.assertEqual(app.query_one("#model-name").content, "test-model")
                 self.assertTrue(app.query_one(EmptyState).display)
                 self.assertTrue(app.screen.has_class("empty-chat"))
                 logo_lines = str(app.query_one("#ascii-logo").content).splitlines()
-                self.assertEqual(len(logo_lines), 5)
-                self.assertEqual(max(map(len, logo_lines)), 54)
-                self.assertFalse(app.query_one("#topbar").display)
-                self.assertFalse(app.query_one("#statusbar").display)
+                self.assertEqual(len(logo_lines), 3)
+                self.assertEqual({len(line) for line in logo_lines}, {27})
+                self.assertEqual(len(app.query("#splash-tagline")), 0)
+                self.assertEqual(len(app.query("#topbar")), 0)
+                self.assertTrue(app.query_one(StatusBar).display)
                 self.assertEqual(len(app.query("#app-status")), 0)
-                self.assertEqual(len(app.query("#workspace-name")), 1)
-                self.assertTrue(app.query_one("#splash-context").display)
+                metadata = str(app.query_one("#composer-metadata").content)
+                self.assertIn("Build", metadata)
+                self.assertIn("test-model", metadata)
+                self.assertIn("xhigh", metadata)
+                self.assertNotIn("Enter to start", metadata)
+                self.assertTrue(app.query_one("#launcher-shortcuts").display)
+                shortcuts = str(app.query_one("#launcher-shortcuts").content)
+                self.assertIn(
+                    "tab agents",
+                    shortcuts,
+                )
+                self.assertIn(
+                    "ctrl+p commands",
+                    shortcuts,
+                )
+                self.assertIn("ctrl+q quit", shortcuts)
+                self.assertTrue(app.query_one("#launcher-tip").display)
+                self.assertIn("Tip", str(app.query_one("#launcher-tip").content))
+                composer_shell = app.query_one("#composer-shell")
+                prompt_input = app.query_one(PromptInput)
+                self.assertEqual(composer_shell.region.height, 5)
+                self.assertEqual(
+                    prompt_input.region.y,
+                    composer_shell.region.y + 1,
+                )
                 self.assertEqual(
                     app.query_one("#transcript").region.x,
-                    app.query_one("#composer-shell").region.x,
+                    composer_shell.region.x,
                 )
 
         self.assertTrue(client.closed)
@@ -204,29 +229,38 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                 ],
             )
             self.assertEqual(prompt.text, "")
-            self.assertTrue(app.query_one("#send-button").disabled)
             self.assertFalse(app.screen.has_class("empty-chat"))
-            self.assertTrue(app.query_one("#topbar").display)
-            self.assertTrue(app.query_one("#statusbar").display)
+            self.assertEqual(len(app.query("#topbar")), 0)
+            self.assertTrue(app.query_one(StatusBar).display)
             self.assertGreater(
                 app.query_one("#composer-shell").region.y,
                 app.screen.region.height * 2 // 3,
             )
             transcript_width = app.query_one("#transcript").content_region.width
             user_message, assistant_message = messages
-            self.assertLess(user_message.region.width, assistant_message.region.width)
+            self.assertEqual(user_message.region.width, assistant_message.region.width)
             self.assertLessEqual(assistant_message.region.width, transcript_width)
-            self.assertEqual(assistant_message.region.width, 104)
+            self.assertEqual(assistant_message.region.width, transcript_width)
             self.assertEqual(user_message.styles.border_left[0], "solid")
             self.assertEqual(assistant_message.styles.border_left[0], "")
             self.assertEqual(assistant_message.styles.background.a, 0)
-            self.assertEqual(len(user_message.query(".message-header")), 1)
+            self.assertEqual(len(user_message.query(".message-header")), 0)
             self.assertEqual(user_message.styles.padding.top, 1)
             self.assertEqual(user_message.styles.padding.bottom, 1)
             self.assertGreaterEqual(user_message.region.height, 4)
-            self.assertEqual(
-                str(assistant_message.query_one(".message-state").content),
-                "✓ completed",
+            footer = str(assistant_message.query_one(".message-footer").content)
+            self.assertIn("Build", footer)
+            self.assertIn(app._model_name, footer)
+            self.assertIn("xhigh", footer)
+            self.assertFalse(app.query_one("#launcher-shortcuts").display)
+            self.assertFalse(app.query_one("#launcher-tip").display)
+            self.assertIn(
+                "ctrl+p commands",
+                str(app.query_one("#footer-status").content),
+            )
+            self.assertIn(
+                "ctrl+q quit",
+                str(app.query_one("#footer-status").content),
             )
 
     async def test_shift_enter_inserts_a_newline(self):
@@ -243,7 +277,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
             self.assertEqual(prompt.text, "first line\nsecond")
-            self.assertGreaterEqual(prompt.region.height, 4)
+            self.assertGreaterEqual(prompt.region.height, 3)
             self.assertEqual(client.calls, [])
 
     async def test_composer_grows_for_soft_wrapped_content(self):
@@ -316,7 +350,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertTrue(app._busy)
             self.assertEqual(len(list(app.query(ChatMessage))), 2)
-            self.assertEqual(str(app.query_one("#send-button").label), "Busy")
+            self.assertTrue(app.query_one(Composer).has_class("busy"))
 
             await pilot.press("ctrl+l")
             await pilot.pause()
@@ -325,9 +359,69 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(list(app.query(ChatMessage)), [])
             self.assertEqual(app.messages, [])
             self.assertTrue(app.query_one(EmptyState).display)
+            self.assertFalse(app.query_one(Composer).has_class("busy"))
 
 
 class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_text_tool_and_final_response_keep_stream_order(self):
+        tool = GuardedTool()
+        client = ScriptedLLMClient(
+            [
+                [
+                    StreamEvent(
+                        type=EventType.TEXT_DELTA,
+                        text_delta=TextDelta("I'll inspect it."),
+                    ),
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        tool_calls=(
+                            ToolCall("call_1", "guarded", '{"text": "hi"}'),
+                        ),
+                        finish_reason="tool_calls",
+                    ),
+                ],
+                [
+                    StreamEvent(
+                        type=EventType.TEXT_DELTA,
+                        text_delta=TextDelta("The file is ready."),
+                    ),
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        finish_reason="stop",
+                    ),
+                ],
+            ]
+        )
+        app = TrueCoderApp(make_agent(client, registry_with(tool)))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.query_one(PromptInput).text = "inspect it"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            transcript = app.query_one("#transcript")
+            timeline = [
+                widget
+                for widget in transcript.children
+                if isinstance(widget, (ChatMessage, ToolCallCard))
+            ]
+            self.assertEqual(
+                [type(widget) for widget in timeline],
+                [ChatMessage, ChatMessage, ToolCallCard, ChatMessage],
+            )
+            preamble = timeline[1]
+            self.assertIsInstance(preamble, ChatMessage)
+            self.assertEqual(preamble.content_text, "I'll inspect it.")
+            self.assertFalse(preamble.query_one(".message-footer").display)
+
+            await pilot.click(".approval-approve")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            final_response = timeline[-1]
+            self.assertIsInstance(final_response, ChatMessage)
+            self.assertEqual(final_response.content_text, "The file is ready.")
+
     async def test_required_tool_waits_then_runs_when_approved(self):
         tool = GuardedTool()
         app = TrueCoderApp(make_agent(guarded_tool_call(), registry_with(tool)))
@@ -344,6 +438,9 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(card.state, "awaiting-approval")
             self.assertTrue(card.has_class("state-awaiting-approval"))
             self.assertTrue(card.query_one(".tool-approval-actions").display)
+            self.assertLessEqual(card.region.width, 104)
+            self.assertEqual(card.styles.padding.left, 2)
+            self.assertEqual(card.styles.padding.right, 2)
             self.assertEqual(
                 str(card.query_one(".tool-state-label").content),
                 "Awaiting approval",

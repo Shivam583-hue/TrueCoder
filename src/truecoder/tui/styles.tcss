@@ -1,90 +1,30 @@
-/* TrueCoder semantic color system */
-$background: #090b0e;
-$surface: #0e1217;
-$surface-raised: #141920;
-$surface-hover: #1a2028;
-$border: #252c36;
-$border-strong: #37414d;
-$text: #dbe2e9;
-$text-secondary: #a7b1bc;
-$text-muted: #7c8794;
-$muted-border: #7c8794;
-$orange: #f2a65a;
-$orange-bright: #ffc27d;
-$cyan: #67c6d4;
-$green: #76c893;
-$red: #ef6f78;
+/* OpenCode-inspired terminal palette */
+$tc-background: #0b0b0b;
+$tc-surface: #141414;
+$tc-surface-raised: #1e1e1e;
+$tc-surface-hover: #272727;
+$tc-border: #2d2d2d;
+$tc-border-strong: #444444;
+$tc-text: #dddddd;
+$tc-text-secondary: #a2a2a2;
+$tc-text-muted: #707070;
+$tc-blue: #4da3ff;
+$tc-orange: #f2a33a;
+$tc-green: #67c587;
+$tc-red: #ef6f78;
 
 Screen {
     layout: vertical;
-    background: $background;
-    color: $text;
-}
-
-/* Header */
-#topbar {
-    width: 100%;
-    height: 2;
-    padding: 0 3;
-    background: $surface;
-    border-bottom: solid $border;
-    content-align: left middle;
-}
-
-#brand-mark {
-    width: 2;
-    color: $orange;
-    text-style: bold;
-    content-align: left middle;
-}
-
-#brand-name {
-    width: auto;
-    color: $text;
-    text-style: bold;
-    content-align: left middle;
-}
-
-#mode-badge {
-    width: auto;
-    margin-left: 2;
-    padding: 0 1;
-    background: $surface-raised;
-    color: $text-secondary;
-    text-style: bold;
-    content-align: center middle;
+    background: $tc-background;
+    color: $tc-text;
 }
 
 .bar-spacer,
-.header-spacer,
 .tool-spacer {
     width: 1fr;
 }
 
-#workspace-name {
-    width: auto;
-    max-width: 34;
-    height: 1;
-    margin-right: 2;
-    color: $text-muted;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-    content-align: right middle;
-}
-
-#model-name {
-    width: auto;
-    max-width: 28;
-    height: 1;
-    padding: 0 1;
-    background: $surface-raised;
-    color: $text-secondary;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-    content-align: right middle;
-}
-
-/* Main timeline */
+/* Transcript */
 #main {
     width: 100%;
     height: 1fr;
@@ -94,30 +34,24 @@ Screen {
 #transcript {
     width: 100%;
     height: 1fr;
-    padding: 1 4;
-    background: $background;
+    padding: 1 2;
+    background: $tc-background;
     align-horizontal: center;
     scrollbar-size: 1 1;
-    scrollbar-color: $border-strong;
-    scrollbar-color-hover: $text-muted;
-    scrollbar-background: $background;
+    scrollbar-color: $tc-border-strong;
+    scrollbar-color-hover: $tc-text-muted;
+    scrollbar-background: $tc-background;
 }
 
 #empty-state {
     width: 100%;
-    max-width: 72;
-    height: 1fr;
-    min-height: 8;
+    height: 7;
     align: center middle;
-    content-align: center middle;
 }
 
 #ascii-logo {
-    width: 55;
-    height: 5;
-    color: $text-secondary;
-    opacity: 88%;
-    text-style: bold;
+    width: 27;
+    height: 3;
     text-align: left;
     content-align: left middle;
 }
@@ -126,113 +60,56 @@ Screen {
     display: none;
     width: 100%;
     height: 1;
-    color: $text;
+    color: $tc-text;
     text-style: bold;
     text-align: center;
     content-align: center middle;
 }
 
-#splash-tagline {
-    width: 100%;
-    height: 1;
-    margin-top: 1;
-    color: $text-muted;
-    text-align: center;
-}
-
 ChatMessage,
 ToolCallCard {
     width: 100%;
-    max-width: 104;
     height: auto;
 }
 
 ChatMessage {
     min-height: 3;
-    margin-bottom: 1;
-    padding: 0 1;
+    margin-bottom: 0;
+    padding: 1 3;
     background: transparent;
     border: none;
 }
 
 ChatMessage.user {
-    width: 88%;
-    max-width: 88;
-    padding: 1 2;
-    background: $surface-raised;
-    border-left: solid $orange;
+    min-height: 4;
+    background: $tc-surface;
+    border-left: solid $tc-blue;
 }
 
 ChatMessage.assistant {
-    padding: 1 2;
+    padding-top: 1;
+    padding-bottom: 1;
 }
 
 ChatMessage.error {
-    background: #181115;
-    border-left: solid $red;
+    background: #171113;
+    border-left: solid $tc-red;
 }
 
 ChatMessage.cancelled {
-    border-left: solid $muted-border;
-}
-
-.message-header {
-    width: 100%;
-    height: 1;
-    margin-bottom: 1;
-}
-
-.role-mark {
-    width: 2;
-    color: $orange;
-    text-style: bold;
-}
-
-ChatMessage.assistant .role-mark,
-ChatMessage.assistant .role-label {
-    color: $cyan;
-}
-
-ChatMessage.error .role-mark,
-ChatMessage.error .role-label {
-    color: $red;
-}
-
-.role-label {
-    width: auto;
-    color: $orange-bright;
-    text-style: bold;
-}
-
-.message-state {
-    width: auto;
-    color: $text-muted;
-    text-align: right;
-}
-
-ChatMessage.streaming .message-state {
-    color: $cyan;
-}
-
-ChatMessage.completed .message-state {
-    color: $green;
-}
-
-ChatMessage.error .message-state,
-ChatMessage.cancelled .message-state {
-    color: $red;
+    border-left: solid #707070;
 }
 
 .message-body {
     width: 100%;
     height: auto;
     padding: 0;
-    color: $text;
+    color: $tc-text;
     background: transparent;
 }
 
 .message-body MarkdownBlock {
-    color: $text;
+    color: $tc-text;
 }
 
 .message-body MarkdownParagraph {
@@ -242,8 +119,8 @@ ChatMessage.cancelled .message-state {
 .message-body MarkdownFence {
     margin: 1 0;
     padding: 0;
-    background: #07090b;
-    border: solid $border;
+    background: #080808;
+    border: solid $tc-border;
 }
 
 .message-body MarkdownFence > Label {
@@ -251,14 +128,14 @@ ChatMessage.cancelled .message-state {
 }
 
 .message-body MarkdownBlock > .code_inline {
-    background: $surface-hover;
-    color: $orange-bright;
+    background: $tc-surface-hover;
+    color: #e9b96e;
 }
 
 .message-body MarkdownH1,
 .message-body MarkdownH2,
 .message-body MarkdownH3 {
-    color: $text;
+    color: $tc-text;
     text-style: bold;
 }
 
@@ -266,23 +143,23 @@ ChatMessage.cancelled .message-state {
     width: 100%;
     height: 1;
     margin-top: 1;
-    color: $text-muted;
-    text-align: right;
+    color: $tc-text-muted;
+    text-align: left;
 }
 
-/* Persistent tool event */
+/* Persistent tool activity */
 ToolCallCard {
     min-height: 3;
     margin-bottom: 1;
-    padding: 1 2;
-    background: $surface;
+    padding: 1 3;
+    background: transparent;
     border: none;
-    border-left: solid $cyan;
+    border-left: solid $tc-blue;
 }
 
 ToolCallCard.risky {
-    background: #171214;
-    border-left: solid $red;
+    background: #171113;
+    border-left: solid $tc-red;
 }
 
 .tool-heading {
@@ -292,22 +169,21 @@ ToolCallCard.risky {
 
 .tool-state-glyph {
     width: 2;
-    color: $cyan;
+    color: $tc-blue;
     text-style: bold;
 }
 
 .tool-title {
     width: auto;
     max-width: 70%;
-    color: $text;
-    text-style: bold;
+    color: $tc-text-secondary;
     text-overflow: ellipsis;
 }
 
 .tool-state-label {
     width: auto;
     margin-left: 1;
-    color: $text-secondary;
+    color: $tc-text-muted;
     text-align: right;
 }
 
@@ -321,14 +197,14 @@ ToolCallCard.risky {
 .tool-target {
     width: auto;
     max-width: 62%;
-    color: $orange-bright;
+    color: #e9b96e;
     text-style: bold;
     text-overflow: ellipsis;
 }
 
 .tool-parameters {
     width: 1fr;
-    color: $text-secondary;
+    color: $tc-text-secondary;
     text-overflow: ellipsis;
 }
 
@@ -344,6 +220,12 @@ ToolCallCard.state-awaiting-approval .tool-approval-actions {
     display: block;
 }
 
+ToolCallCard.state-awaiting-approval {
+    max-width: 104;
+    padding: 1 2;
+    background: $tc-surface;
+}
+
 .tool-approval-actions Button {
     height: 3;
     margin-left: 1;
@@ -353,67 +235,59 @@ ToolCallCard.state-awaiting-approval .tool-approval-actions {
 
 .approval-approve {
     min-width: 11;
-    background: $orange;
-    color: $background;
+    background: $tc-blue;
+    color: $tc-background;
     text-style: bold;
 }
 
 .approval-always {
     min-width: 16;
-    background: $surface-hover;
-    color: $text;
+    background: $tc-surface-hover;
+    color: $tc-text;
 }
 
 .approval-reject {
     min-width: 10;
     background: transparent;
-    color: $text-secondary;
-    border: tall $border-strong;
+    color: $tc-text-secondary;
+    border: tall $tc-border-strong;
 }
 
 .tool-approval-actions Button:focus {
-    background: $orange-bright;
-    color: $background;
+    background: #8fc5ff;
+    color: $tc-background;
     text-style: bold;
 }
 
 ToolCallCard.risky .tool-state-glyph,
 ToolCallCard.risky .tool-state-label {
-    color: $red;
+    color: $tc-red;
 }
 
 ToolCallCard.risky .approval-reject {
-    color: $red;
-    border: tall $red;
+    color: $tc-red;
+    border: tall $tc-red;
 }
 
 ToolCallCard.state-completed,
 ToolCallCard.state-rejected,
 ToolCallCard.state-failed {
     min-height: 1;
-    padding: 0 1;
-}
-
-ToolCallCard.state-completed {
+    padding-top: 0;
+    padding-bottom: 0;
     background: transparent;
-    border-left: solid $green;
+    border-left: none;
 }
 
-ToolCallCard.state-completed .tool-state-glyph,
-ToolCallCard.state-completed .tool-state-label {
-    color: $green;
-}
-
-ToolCallCard.state-rejected,
-ToolCallCard.state-failed {
-    border-left: solid $red;
+ToolCallCard.state-completed .tool-state-glyph {
+    color: $tc-blue;
 }
 
 ToolCallCard.state-rejected .tool-state-glyph,
 ToolCallCard.state-rejected .tool-state-label,
 ToolCallCard.state-failed .tool-state-glyph,
 ToolCallCard.state-failed .tool-state-label {
-    color: $red;
+    color: $tc-red;
 }
 
 ToolCallCard.no-summary .tool-summary,
@@ -431,7 +305,7 @@ ToolCallCard.state-failed .tool-summary {
     margin-left: 2;
     padding: 0 1;
     background: transparent;
-    color: $text-secondary;
+    color: $tc-text-muted;
     border: none;
 }
 
@@ -442,8 +316,8 @@ ToolCallCard.state-failed .tool-details-toggle {
 }
 
 .tool-details-toggle:focus {
-    background: $surface-hover;
-    color: $orange-bright;
+    background: $tc-surface-hover;
+    color: #e9b96e;
     text-style: bold;
 }
 
@@ -454,11 +328,11 @@ ToolCallCard.state-failed .tool-details-toggle {
     max-height: 12;
     margin-top: 1;
     padding: 1 2;
-    background: #07090b;
-    border-top: solid $border;
+    background: #080808;
+    border-top: solid $tc-border;
     scrollbar-size: 1 1;
-    scrollbar-color: $border-strong;
-    scrollbar-background: #07090b;
+    scrollbar-color: $tc-border-strong;
+    scrollbar-background: #080808;
 }
 
 ToolCallCard.expanded .tool-details {
@@ -468,43 +342,38 @@ ToolCallCard.expanded .tool-details {
 .tool-details-content {
     width: 100%;
     height: auto;
-    color: $text-secondary;
+    color: $tc-text-secondary;
 }
 
-/* Compact composer */
-#composer-shell {
-    width: 96%;
-    max-width: 104;
-    height: auto;
-    max-height: 11;
-    margin-bottom: 1;
-    padding: 0 1;
-    background: $surface-raised;
-    border: solid $border-strong;
-}
-
-#composer-shell:focus-within {
-    border: solid $orange;
-}
-
-#composer-row {
+/* Prompt composer */
+#composer {
     width: 100%;
     height: auto;
-    max-height: 8;
-    align-vertical: bottom;
+    padding: 0 2;
+}
+
+#composer-shell {
+    width: 100%;
+    height: auto;
+    min-height: 5;
+    max-height: 11;
+    padding: 1 2 0 2;
+    background: $tc-surface-raised;
+    border: none;
+    border-left: solid $tc-blue;
 }
 
 PromptInput {
-    width: 1fr;
-    height: 3;
-    max-height: 8;
-    padding: 0 1;
+    width: 100%;
+    height: 2;
+    max-height: 7;
+    padding: 0;
     background: transparent;
-    color: $text;
+    color: $tc-text;
     border: none;
     scrollbar-size: 1 1;
-    scrollbar-color: $border-strong;
-    scrollbar-background: $surface-raised;
+    scrollbar-color: $tc-border-strong;
+    scrollbar-background: $tc-surface-raised;
 }
 
 PromptInput:focus {
@@ -516,163 +385,130 @@ PromptInput > .text-area--cursor-line {
 }
 
 PromptInput > .text-area--cursor {
-    background: $orange;
-    color: $background;
+    background: #dddddd;
+    color: $tc-background;
     text-style: bold;
 }
 
 PromptInput > .text-area--placeholder {
-    color: $text-secondary;
+    color: $tc-surface-raised;
 }
 
-#send-button {
-    width: 10;
-    min-width: 10;
-    height: 3;
-    margin-left: 1;
-    padding: 0 1;
-    background: $orange;
-    color: $background;
-    border: none;
-    text-style: bold;
-}
-
-#send-button:hover,
-#send-button:focus {
-    background: $orange-bright;
-    color: $background;
-    text-style: bold;
-}
-
-#send-button:disabled {
-    background: $border;
-    color: $text-muted;
-    opacity: 85%;
-}
-
-#composer-shell.busy #send-button:disabled {
-    color: $cyan;
-}
-
-#composer-help,
-#splash-context {
+#composer-metadata {
     width: 100%;
     height: 1;
-    padding-left: 1;
-    color: $text-muted;
+    color: $tc-text-muted;
+    text-overflow: ellipsis;
 }
 
-#splash-context {
+#launcher-shortcuts,
+#launcher-tip {
     display: none;
-    padding: 0 1;
-    text-align: center;
-    text-overflow: ellipsis;
 }
 
 /* Footer */
 #statusbar {
     width: 100%;
     height: 1;
-    padding: 0 3;
-    background: #07090b;
-    color: $text-muted;
+    padding: 0 2;
+    background: #080808;
+    color: $tc-text-muted;
 }
 
-#shortcut-hint {
+#footer-workspace {
     width: auto;
-    color: $text-muted;
+    max-width: 65%;
+    height: 1;
+    color: $tc-text-muted;
+    text-overflow: ellipsis;
 }
 
-#shortcut-hint {
+#footer-status {
+    width: auto;
+    height: 1;
+    color: $tc-text-muted;
     text-align: right;
 }
 
-/* Focused first-run composition */
-Screen.empty-chat #topbar,
-Screen.empty-chat #statusbar {
-    display: none;
-}
-
+/* Centered first-run composition */
 Screen.empty-chat #main {
     align: center middle;
 }
 
 Screen.empty-chat #transcript {
-    width: 72;
-    height: 8;
+    width: 76;
+    height: 7;
     padding: 0;
     scrollbar-size: 0 0;
 }
 
 Screen.empty-chat #empty-state {
     width: 100%;
-    height: 8;
-    min-height: 8;
+    height: 7;
 }
 
-Screen.empty-chat #composer-shell {
-    width: 72;
-    max-width: 90%;
-    margin: 1 0 0 0;
-    background: $surface-raised;
-    border: solid $border-strong;
+Screen.empty-chat #composer {
+    width: 76;
+    padding: 0;
 }
 
-Screen.empty-chat #composer-shell:focus-within {
-    border: solid $orange;
+Screen.empty-chat PromptInput > .text-area--placeholder {
+    color: $tc-text-muted;
 }
 
-Screen.empty-chat #composer-help,
-Screen.empty-chat #send-button {
-    display: none;
-}
-
-Screen.empty-chat #splash-context {
+Screen.empty-chat #launcher-shortcuts {
     display: block;
+    width: 100%;
+    height: 1;
+    margin-top: 0;
+    color: $tc-text-muted;
+    text-align: left;
+}
+
+Screen.empty-chat #launcher-tip {
+    display: block;
+    width: 100%;
+    height: 1;
+    margin-top: 3;
+    color: $tc-text-muted;
+    text-align: center;
 }
 
 /* Medium terminals */
-Screen.-compact #workspace-name {
-    display: none;
-}
-
 Screen.-compact #transcript {
-    padding: 1 2;
-}
-
-/* Narrow terminals */
-Screen.-narrow #topbar {
-    padding: 0 1;
-}
-
-Screen.-narrow #mode-badge,
-Screen.-narrow #workspace-name {
-    display: none;
-}
-
-Screen.-narrow #model-name {
-    max-width: 18;
-}
-
-Screen.-narrow #transcript {
     padding: 1;
 }
 
-Screen.-narrow ChatMessage.user {
-    width: 100%;
+Screen.-compact #composer {
+    padding: 0 1;
 }
 
-Screen.-narrow #composer-shell {
-    width: 96%;
+Screen.-compact.empty-chat #transcript,
+Screen.-compact.empty-chat #composer {
+    width: 72;
+    padding: 0;
+}
+
+/* Narrow terminals */
+Screen.-narrow #transcript {
+    padding: 0;
+}
+
+Screen.-narrow ChatMessage {
+    padding-left: 1;
+    padding-right: 1;
+}
+
+Screen.-narrow #composer {
+    padding: 0;
 }
 
 Screen.-narrow #statusbar {
     padding: 0 1;
 }
 
-Screen.-narrow #shortcut-hint {
-    width: 100%;
-    text-align: center;
+Screen.-narrow #footer-workspace {
+    max-width: 55%;
 }
 
 Screen.-narrow .tool-title {
@@ -707,20 +543,20 @@ Screen.-narrow #compact-logo {
     display: block;
 }
 
-Screen.-narrow #splash-tagline {
-    margin-top: 2;
-}
-
 Screen.-narrow.empty-chat #transcript {
     width: 92%;
-    height: 5;
+    height: 4;
 }
 
 Screen.-narrow.empty-chat #empty-state {
-    height: 5;
-    min-height: 5;
+    height: 4;
 }
 
-Screen.-narrow.empty-chat #composer-shell {
+Screen.-narrow.empty-chat #composer {
     width: 92%;
+}
+
+Screen.-narrow.empty-chat #launcher-tip {
+    height: auto;
+    margin-top: 2;
 }

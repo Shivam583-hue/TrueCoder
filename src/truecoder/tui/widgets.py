@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from pathlib import Path
 from time import monotonic
 from typing import Any, ClassVar
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -16,12 +15,70 @@ from textual.widgets import Button, Markdown, Static, TextArea
 from truecoder.client.response import TokenUsage
 
 ASCII_LOGO = (
-    "█████ ████  █   █ █████  ███   ███  ████  █████ ████",
-    " ░█░░░█░░░█ █░  █░█░░░░░█ ░░░ █ ░░█ █░░░█ █░░░░░█░░░█",
-    "  █░░░████░░█░░ █░████░░█░ ░░░█░ ░█░█░░░█░████░░████░░",
-    "  █░░ █░░█░ █░░ █░█░░░░ █░░   █░░ █░█░░ █░█░░░░ █░░█░",
-    "  █░░ █░░░█░ ███ ░█████░ ███   ███ ░████ ░█████░█░░░█░",
+    "╺┳╸┏━┓╻ ╻┏━╸┏━╸┏━┓╺┳┓┏━╸┏━┓",
+    " ┃ ┣┳┛┃ ┃┣╸ ┃  ┃ ┃ ┃┃┣╸ ┣┳┛",
+    " ╹ ╹┗╸┗━┛┗━╸┗━╸┗━┛╺┻┛┗━╸╹┗╸",
 )
+_LOGO_NAME_BREAK = 12
+
+
+def _logo_text() -> Text:
+    """Render the wordmark with the two-tone treatment used by the launcher."""
+    logo = Text()
+    for index, line in enumerate(ASCII_LOGO):
+        logo.append(line[:_LOGO_NAME_BREAK], style="#777777")
+        logo.append(line[_LOGO_NAME_BREAK:], style="bold #dddddd")
+        if index < len(ASCII_LOGO) - 1:
+            logo.append("\n")
+    return logo
+
+
+def _session_metadata(
+    model_name: str,
+    *,
+    elapsed: float | None = None,
+    state: str | None = None,
+) -> Text:
+    """Build the shared composer/turn metadata without markup interpolation."""
+    metadata = Text()
+    if state is not None:
+        glyph = {
+            "error": "■",
+            "stopped": "■",
+        }.get(state, "▣")
+        color = "#ef6f78" if state in {"error", "stopped"} else "#4da3ff"
+        metadata.append(f"{glyph}  ", style=color)
+    metadata.append("Build", style="bold #4da3ff")
+    metadata.append("  ·  ", style="#666666")
+    metadata.append(model_name, style="bold #d6d6d6")
+    metadata.append("  ·  ", style="#666666")
+    metadata.append("xhigh", style="bold #f2a33a")
+    if elapsed is not None:
+        metadata.append("  ·  ", style="#666666")
+        metadata.append(f"{elapsed:.1f}s", style="#777777")
+    return metadata
+
+
+def _launcher_shortcuts() -> Text:
+    shortcuts = Text()
+    shortcuts.append("tab", style="#c8c8c8")
+    shortcuts.append(" agents    ", style="#707070")
+    shortcuts.append("ctrl+p", style="#c8c8c8")
+    shortcuts.append(" commands    ", style="#707070")
+    shortcuts.append("ctrl+q", style="#c8c8c8")
+    shortcuts.append(" quit", style="#707070")
+    return shortcuts
+
+
+def _launcher_tip() -> Text:
+    tip = Text()
+    tip.append("●  ", style="#f2a33a")
+    tip.append("Tip", style="bold #f2a33a")
+    tip.append(
+        " Use numeric xterm color codes 0-255 in custom theme JSON",
+        style="#686868",
+    )
+    return tip
 
 _TOOL_STATE_LABELS = {
     "queued": "Queued",
@@ -89,82 +146,63 @@ class PromptInput(TextArea):
         if event.text_area is self:
             explicit_lines = self.text.count("\n") + 1
             visual_lines = max(explicit_lines, self.wrapped_document.height)
-            self.styles.height = min(8, max(3, visual_lines + 2))
-
-
-class TopBar(Horizontal):
-    """Compact session identity and context."""
-
-    def __init__(
-        self,
-        model_name: str,
-        workspace: str,
-        mode_name: str = "AGENT",
-    ) -> None:
-        self.model_name = model_name
-        self.workspace = Path(workspace).name or workspace
-        self.mode_name = mode_name
-        super().__init__(id="topbar")
-
-    def compose(self) -> ComposeResult:
-        yield Static("◆", id="brand-mark", markup=False)
-        yield Static("TRUECODER", id="brand-name", markup=False)
-        yield Static(self.mode_name, id="mode-badge", markup=False)
-        yield Static("", classes="bar-spacer")
-        yield Static(f"⌁ {self.workspace}", id="workspace-name", markup=False)
-        yield Static(self.model_name, id="model-name", markup=False)
+            self.styles.height = min(7, max(2, visual_lines + 1))
 
 
 class EmptyState(Vertical):
-    """Restrained glitch wordmark for an empty session."""
+    """Centered two-tone wordmark for an empty session."""
 
     def compose(self) -> ComposeResult:
-        yield Static("\n".join(ASCII_LOGO), id="ascii-logo", markup=False)
-        yield Static("◆  T R U E C O D E R", id="compact-logo", markup=False)
-        yield Static(
-            "A coding agent for the work in front of you.",
-            id="splash-tagline",
-            markup=False,
-        )
+        yield Static(_logo_text(), id="ascii-logo", markup=False)
+        yield Static("truecoder", id="compact-logo", markup=False)
 
 
 class Composer(Vertical):
-    """Compact, auto-growing prompt composer."""
+    """OpenCode-inspired prompt composer used in both layout states."""
 
-    def __init__(self, model_name: str, workspace: str) -> None:
-        short_workspace = Path(workspace).name or workspace
-        self.context = f"{short_workspace}  ·  {model_name}  ·  Enter to start"
-        super().__init__(id="composer-shell")
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+        super().__init__(id="composer")
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="composer-row"):
+        with Vertical(id="composer-shell"):
             yield PromptInput(
                 id="prompt-input",
-                placeholder="Ask TrueCoder to inspect, explain, or change code…",
+                placeholder='Ask anything...  "Fix broken tests"',
                 soft_wrap=True,
                 show_line_numbers=False,
                 tab_behavior="focus",
                 compact=True,
             )
-            yield Button("Send ↵", id="send-button", disabled=True)
+            yield Static(
+                _session_metadata(self.model_name),
+                id="composer-metadata",
+                markup=False,
+            )
         yield Static(
-            "Enter send  ·  Shift+Enter newline",
-            id="composer-help",
+            _launcher_shortcuts(),
+            id="launcher-shortcuts",
             markup=False,
         )
-        yield Static(self.context, id="splash-context", markup=False)
+        yield Static(_launcher_tip(), id="launcher-tip", markup=False)
 
     def set_busy(self, busy: bool) -> None:
         self.set_class(busy, "busy")
-        self.query_one("#send-button", Button).label = "Busy" if busy else "Send ↵"
 
 
 class ChatMessage(Vertical):
     """A user or assistant entry in the chronological timeline."""
 
-    def __init__(self, role: str, content: str = "") -> None:
+    def __init__(
+        self,
+        role: str,
+        content: str = "",
+        *,
+        model_name: str = "model",
+    ) -> None:
         self.role = role
         self.content_text = content
+        self.model_name = model_name
         self.started_at = monotonic()
         classes = f"chat-message {role}"
         super().__init__(classes=classes)
@@ -174,41 +212,24 @@ class ChatMessage(Vertical):
         if self.role == "assistant" and not initial_content:
             initial_content = "_Thinking…_"
 
-        with Horizontal(classes="message-header"):
-            yield Static(
-                "◆" if self.role == "user" else "◇",
-                classes="role-mark",
-                markup=False,
-            )
-            yield Static(
-                "YOU" if self.role == "user" else "TRUECODER",
-                classes="role-label",
-                markup=False,
-            )
-            yield Static("", classes="header-spacer")
-            if self.role == "assistant":
-                yield Static(
-                    "thinking",
-                    classes="message-state",
-                    markup=False,
-                )
-            else:
-                yield Static(
-                    datetime.now(tz=timezone.utc).astimezone().strftime("%H:%M"),
-                    classes="message-state",
-                    markup=False,
-                )
-
         yield Markdown(initial_content, classes="message-body")
         if self.role == "assistant":
-            yield Static("", classes="message-footer", markup=False)
+            yield Static(
+                _session_metadata(self.model_name, state="running"),
+                classes="message-footer",
+                markup=False,
+            )
 
     async def append_delta(self, delta: str) -> None:
         if not self.content_text:
-            self.query_one(".message-state", Static).update("● streaming")
             self.set_class(True, "streaming")
         self.content_text += delta
         await self.query_one(".message-body", Markdown).update(self.content_text)
+
+    def finish_segment(self) -> None:
+        """Leave intermediate model text in place before a tool activity row."""
+        self.remove_class("streaming")
+        self.query_one(".message-footer", Static).styles.display = "none"
 
     def finish(
         self,
@@ -218,33 +239,33 @@ class ChatMessage(Vertical):
         elapsed = monotonic() - self.started_at
         self.remove_class("streaming")
         self.add_class("completed")
-        self.query_one(".message-state", Static).update("✓ completed")
-
-        details = [f"{elapsed:.1f}s"]
-        if usage is not None:
-            details.append(f"{usage.completion_tokens:,} output tokens")
-        if finish_reason and finish_reason != "stop":
-            details.append(finish_reason.replace("_", " "))
-        self.query_one(".message-footer", Static).update("  ·  ".join(details))
+        self.query_one(".message-footer", Static).update(
+            _session_metadata(
+                self.model_name,
+                elapsed=elapsed,
+                state="completed",
+            )
+        )
 
     async def show_error(self, error: str) -> None:
         self.remove_class("streaming")
         self.add_class("error")
-        self.query_one(".message-state", Static).update("× failed")
         safe_error = error.replace("\\", "\\\\").replace("`", "\\`")
         self.content_text = f"**Request failed**\n\n{safe_error}"
         await self.query_one(".message-body", Markdown).update(self.content_text)
         self.query_one(".message-footer", Static).update(
-            "Check the connection or API configuration, then try again."
+            _session_metadata(self.model_name, state="error")
         )
 
     async def show_cancelled(self) -> None:
         self.remove_class("streaming")
         self.add_class("cancelled")
-        self.query_one(".message-state", Static).update("■ interrupted")
         if not self.content_text:
             self.content_text = "_Generation interrupted._"
             await self.query_one(".message-body", Markdown).update(self.content_text)
+        self.query_one(".message-footer", Static).update(
+            _session_metadata(self.model_name, state="stopped")
+        )
 
 
 class ToolCallCard(Vertical):
@@ -510,13 +531,84 @@ ApprovalCard = ToolCallCard
 
 
 class StatusBar(Horizontal):
-    def __init__(self) -> None:
+    """Persistent workspace and command footer."""
+
+    def __init__(
+        self,
+        workspace: str,
+        *,
+        branch: str | None = None,
+        version: str = "0.1.0",
+        max_input_tokens: int = 0,
+    ) -> None:
+        self.workspace = workspace
+        self.branch = branch
+        self.version = version
+        self.max_input_tokens = max_input_tokens
+        self._conversation_active = False
+        self._usage_tokens = 0
         super().__init__(id="statusbar")
 
     def compose(self) -> ComposeResult:
-        yield Static("", classes="bar-spacer")
         yield Static(
-            "Ctrl+L new chat  ·  Esc stop  ·  Ctrl+Q quit",
-            id="shortcut-hint",
+            self._workspace_label(),
+            id="footer-workspace",
             markup=False,
         )
+        yield Static("", classes="bar-spacer")
+        yield Static(
+            self._right_label(),
+            id="footer-status",
+            markup=False,
+        )
+
+    def set_conversation_active(self, active: bool) -> None:
+        self._conversation_active = active
+        if self.is_mounted:
+            self.query_one("#footer-workspace", Static).update(
+                self._workspace_label()
+            )
+            self.query_one("#footer-status", Static).update(self._right_label())
+
+    def set_usage(self, usage: TokenUsage | None) -> None:
+        if usage is None:
+            return
+        self._usage_tokens = usage.total_tokens or (
+            usage.prompt_tokens + usage.completion_tokens
+        )
+        if self.is_mounted:
+            self.query_one("#footer-status", Static).update(self._right_label())
+
+    def reset(self) -> None:
+        self._usage_tokens = 0
+        self.set_conversation_active(False)
+
+    def _workspace_label(self) -> str:
+        if not self._conversation_active and self.branch:
+            return f"{self.workspace}:{self.branch}"
+        return self.workspace
+
+    def _right_label(self) -> Text:
+        label = Text()
+        if not self._conversation_active:
+            label.append(self.version, style="#666666")
+            return label
+
+        if self._usage_tokens:
+            if self._usage_tokens >= 1000:
+                token_label = f"{self._usage_tokens / 1000:.1f}K"
+            else:
+                token_label = str(self._usage_tokens)
+            label.append(token_label, style="#777777")
+            if self.max_input_tokens > 0:
+                percentage = min(
+                    100,
+                    round(self._usage_tokens / self.max_input_tokens * 100),
+                )
+                label.append(f" ({percentage}%)", style="#666666")
+            label.append("    ")
+        label.append("ctrl+p", style="#c8c8c8")
+        label.append(" commands    ", style="#707070")
+        label.append("ctrl+q", style="#c8c8c8")
+        label.append(" quit", style="#707070")
+        return label
