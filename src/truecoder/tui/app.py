@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import dataclass
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -11,16 +12,25 @@ from textual.widgets import Button, Static, TextArea
 from textual.worker import Worker, WorkerCancelled
 
 from truecoder.agent.agent import Agent
+from truecoder.agent.approval import ApprovalDecision, ApprovalRequest
 from truecoder.agent.events import AgentEventType
 from truecoder.agent.messages import ModelMessage
 from truecoder.client.response import TokenUsage
 from truecoder.tui.widgets import (
+    ApprovalCard,
     ChatMessage,
     EmptyState,
     PromptInput,
     StatusBar,
     TopBar,
 )
+
+
+@dataclass
+class _PendingApproval:
+    call_id: str
+    future: asyncio.Future[ApprovalDecision]
+    card: ApprovalCard
 
 
 class TrueCoderApp(App[None]):
@@ -40,8 +50,10 @@ class TrueCoderApp(App[None]):
     def __init__(self, agent: Agent | None = None) -> None:
         super().__init__()
         self.agent = agent or Agent()
+        self.agent.approval_handler = self._request_tool_approval
         self._busy = False
         self._active_worker: Worker[None] | None = None
+        self._pending_approval: _PendingApproval | None = None
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -96,6 +108,14 @@ class TrueCoderApp(App[None]):
     @on(TextArea.Changed, "#prompt-input")
     def update_send_button(self) -> None:
         self._sync_send_button()
+
+    @on(Button.Pressed, ".approval-approve")
+    def approve_pending_tool(self) -> None:
+        self._resolve_pending_approval(ApprovalDecision.APPROVED)
+
+    @on(Button.Pressed, ".approval-reject")
+    def reject_pending_tool(self) -> None:
+        self._resolve_pending_approval(ApprovalDecision.REJECTED)
 
     async def _submit_prompt(self, raw_prompt: str) -> None:
         prompt = raw_prompt.strip()
@@ -193,6 +213,39 @@ class TrueCoderApp(App[None]):
             self._scroll_to_latest()
             self.query_one(PromptInput).focus()
 
+    async def _request_tool_approval(
+        self,
+        request: ApprovalRequest,
+    ) -> ApprovalDecision:
+        future: asyncio.Future[ApprovalDecision] = (
+            asyncio.get_running_loop().create_future()
+        )
+        card = ApprovalCard(request.call_id, request.tool_name, request.arguments)
+        self._pending_approval = _PendingApproval(request.call_id, future, card)
+
+        transcript = self.query_one("#transcript", VerticalScroll)
+        await transcript.mount(card)
+        self._scroll_to_latest()
+        card.query_one(".approval-reject", Button).focus()
+
+        try:
+            return await future
+        finally:
+            if not future.done():
+                card.mark_resolved("Cancelled")
+            self._pending_approval = None
+
+    def _resolve_pending_approval(self, decision: ApprovalDecision) -> None:
+        pending = self._pending_approval
+        if pending is None or pending.future.done():
+            return
+
+        pending.future.set_result(decision)
+        outcome = (
+            "Approved" if decision is ApprovalDecision.APPROVED else "Rejected"
+        )
+        pending.card.mark_resolved(outcome)
+
     def _scroll_to_latest(self) -> None:
         transcript = self.query_one("#transcript", VerticalScroll)
         self.call_after_refresh(
@@ -219,7 +272,9 @@ class TrueCoderApp(App[None]):
             except WorkerCancelled:
                 pass
         self.agent.reset()
+        self._pending_approval = None
         await self.query(".chat-message").remove()
+        await self.query(".approval-card").remove()
         self.query_one("#empty-state", EmptyState).styles.display = "block"
         self._set_busy(False)
         self.screen.add_class("empty-chat")

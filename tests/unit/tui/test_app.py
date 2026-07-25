@@ -10,8 +10,10 @@ from truecoder.client.response import (
     TextDelta,
     TokenUsage,
 )
+from truecoder.tools import ToolApproval, ToolArguments, ToolCall, ToolRegistry
+from truecoder.tools.base import BaseTool
 from truecoder.tui.app import TrueCoderApp
-from truecoder.tui.widgets import ChatMessage, EmptyState, PromptInput
+from truecoder.tui.widgets import ApprovalCard, ChatMessage, EmptyState, PromptInput
 
 
 class FakeLLMClient:
@@ -29,20 +31,76 @@ class FakeLLMClient:
         self.closed = True
 
 
+class ScriptedLLMClient(FakeLLMClient):
+    def __init__(self, batches: list[list[StreamEvent]]) -> None:
+        super().__init__([])
+        self.batches = batches
+
+    async def chat_completion(self, messages, stream=True, tools=None):
+        index = len(self.calls)
+        self.calls.append((messages, stream))
+        batch = self.batches[index] if index < len(self.batches) else []
+        for event in batch:
+            yield event
+
+
+class GuardedArguments(ToolArguments):
+    text: str
+
+
+class GuardedTool(BaseTool[GuardedArguments]):
+    name = "guarded"
+    description = "Echo that requires approval before running."
+    arguments_type = GuardedArguments
+    approval = ToolApproval.REQUIRED
+
+    def __init__(self) -> None:
+        self.ran = False
+
+    async def run(self, arguments: GuardedArguments) -> dict[str, str]:
+        self.ran = True
+        return {"echoed": arguments.text}
+
+
+def guarded_tool_call() -> ScriptedLLMClient:
+    return ScriptedLLMClient(
+        [
+            [
+                StreamEvent(
+                    type=EventType.MESSAGE_COMPLETE,
+                    tool_calls=(ToolCall("call_1", "guarded", '{"text": "hi"}'),),
+                    finish_reason="tool_calls",
+                ),
+            ],
+            [
+                StreamEvent(type=EventType.TEXT_DELTA, text_delta=TextDelta("All done")),
+                StreamEvent(type=EventType.MESSAGE_COMPLETE, finish_reason="stop"),
+            ],
+        ]
+    )
+
+
 class FixedTokenCounter:
     def count_message(self, message) -> int:
         return 1
 
 
-def make_agent(client: FakeLLMClient) -> Agent:
+def make_agent(client: FakeLLMClient, tool_registry: ToolRegistry | None = None) -> Agent:
     return Agent(
         llm_client=client,
+        tool_registry=tool_registry,
         context_builder=ContextBuilder(
             system_prompt="test system",
             max_input_tokens=100,
             token_counter=FixedTokenCounter(),
         ),
     )
+
+
+def registry_with(tool: GuardedTool) -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register(tool)
+    return registry
 
 
 class BlockingLLMClient(FakeLLMClient):
@@ -239,6 +297,70 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(list(app.query(ChatMessage)), [])
             self.assertEqual(app.messages, [])
             self.assertTrue(app.query_one(EmptyState).display)
+
+
+class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_required_tool_waits_then_runs_when_approved(self):
+        tool = GuardedTool()
+        app = TrueCoderApp(make_agent(guarded_tool_call(), registry_with(tool)))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.query_one(PromptInput).text = "read it"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            cards = list(app.query(ApprovalCard))
+            self.assertEqual(len(cards), 1)
+            self.assertEqual(cards[0].tool_name, "guarded")
+            self.assertFalse(tool.ran)
+
+            await pilot.click(".approval-approve")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            self.assertTrue(tool.ran)
+            self.assertTrue(cards[0].has_class("resolved"))
+            assistant = list(app.query(ChatMessage))[-1]
+            self.assertIn("All done", assistant.content_text)
+
+    async def test_required_tool_is_reported_back_when_rejected(self):
+        tool = GuardedTool()
+        app = TrueCoderApp(make_agent(guarded_tool_call(), registry_with(tool)))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.query_one(PromptInput).text = "read it"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            await pilot.click(".approval-reject")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            self.assertFalse(tool.ran)
+            card = list(app.query(ApprovalCard))[-1]
+            self.assertTrue(card.has_class("resolved"))
+            assistant = list(app.query(ChatMessage))[-1]
+            self.assertIn("All done", assistant.content_text)
+
+    async def test_new_chat_cancels_a_pending_approval(self):
+        tool = GuardedTool()
+        app = TrueCoderApp(make_agent(guarded_tool_call(), registry_with(tool)))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.query_one(PromptInput).text = "read it"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            self.assertEqual(len(list(app.query(ApprovalCard))), 1)
+
+            await pilot.press("ctrl+l")
+            await pilot.pause()
+
+            self.assertFalse(tool.ran)
+            self.assertEqual(list(app.query(ApprovalCard)), [])
+            self.assertEqual(app.messages, [])
+            self.assertIsNone(app._pending_approval)
+            self.assertFalse(app._busy)
 
 
 if __name__ == "__main__":

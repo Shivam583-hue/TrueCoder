@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from time import monotonic
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import Markdown, Static, TextArea
+from textual.widgets import Button, Markdown, Static, TextArea
 
 from truecoder.client.response import TokenUsage
 
@@ -144,6 +145,43 @@ class ChatMessage(Vertical):
         if not self.content_text:
             self.content_text = "_Generation stopped._"
             await self.query_one(".message-body", Markdown).update(self.content_text)
+
+
+class ApprovalCard(Vertical):
+    def __init__(
+        self,
+        call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> None:
+        self.call_id = call_id
+        self.tool_name = tool_name
+        self.arguments = arguments
+        super().__init__(classes="approval-card")
+
+    def compose(self) -> ComposeResult:
+        yield Static("APPROVAL REQUIRED", classes="approval-title", markup=False)
+        yield Static(self.tool_name, classes="approval-tool", markup=False)
+
+        if self.arguments:
+            body = "\n".join(
+                f"{key}: {value}" for key, value in self.arguments.items()
+            )
+        else:
+            body = "(no arguments)"
+        yield Static(body, classes="approval-args", markup=False)
+
+        with Horizontal(classes="approval-actions"):
+            yield Button("Reject", classes="approval-reject")
+            yield Button("Approve", classes="approval-approve")
+
+        yield Static("", classes="approval-outcome", markup=False)
+
+    def mark_resolved(self, outcome: str) -> None:
+        for button in self.query(Button):
+            button.disabled = True
+        self.add_class("resolved")
+        self.query_one(".approval-outcome", Static).update(outcome)
 
 
 class StatusBar(Horizontal):
