@@ -1,5 +1,8 @@
+from collections.abc import Sequence
 from copy import deepcopy
-from typing import Literal, Protocol, Sequence, TypeAlias, TypedDict
+from typing import Literal, TypeAlias, TypedDict
+
+from truecoder.tools.base import ToolCall
 
 
 class SystemMessage(TypedDict):
@@ -49,74 +52,52 @@ ModelMessage: TypeAlias = (
 )
 
 
-class ToolCallLike(Protocol):
-    """
-    Structural type for the domain ToolCall object.
-
-    This can be replaced with an import of your actual ToolCall class.
-    """
-
-    id: str
-    name: str
-    arguments_json: str
-
-
 def create_system_message(content: str) -> SystemMessage:
-    return deepcopy(
-        {
-            "role": "system",
-            "content": content,
-        }
-    )
+    return {
+        "role": "system",
+        "content": content,
+    }
 
 
 def create_user_message(content: str) -> UserMessage:
-    return deepcopy(
-        {
-            "role": "user",
-            "content": content,
-        }
-    )
+    return {
+        "role": "user",
+        "content": content,
+    }
 
 
 def create_assistant_text_message(content: str) -> AssistantTextMessage:
-    return deepcopy(
-        {
-            "role": "assistant",
-            "content": content,
-        }
-    )
+    return {
+        "role": "assistant",
+        "content": content,
+    }
 
 
 def create_assistant_tool_call(
-    tool_call: ToolCallLike,
+    tool_call: ToolCall,
 ) -> AssistantFunctionToolCall:
-    return deepcopy(
-        {
-            "id": tool_call.id,
-            "type": "function",
-            "function": {
-                "name": tool_call.name,
-                # Preserve the original raw JSON exactly.
-                "arguments": tool_call.arguments_json,
-            },
-        }
-    )
+    return {
+        "id": tool_call.call_id,
+        "type": "function",
+        "function": {
+            "name": tool_call.name,
+            # Preserve the original raw JSON exactly.
+            "arguments": tool_call.arguments_json,
+        },
+    }
 
 
 def create_assistant_tool_call_message(
-    tool_calls: Sequence[ToolCallLike],
+    tool_calls: Sequence[ToolCall],
     content: str | None = None,
 ) -> AssistantToolCallMessage:
-    return deepcopy(
-        {
-            "role": "assistant",
-            "content": content,
-            "tool_calls": [
-                create_assistant_tool_call(tool_call) for tool_call in tool_calls
-            ],
-        }
-    )
+    return {
+        "role": "assistant",
+        "content": content,
+        "tool_calls": [
+            create_assistant_tool_call(tool_call) for tool_call in tool_calls
+        ],
+    }
 
 
 def create_tool_message(
@@ -126,13 +107,11 @@ def create_tool_message(
     """
     `content` must already be serialized by the caller.
     """
-    return deepcopy(
-        {
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "content": content,
-        }
-    )
+    return {
+        "role": "tool",
+        "tool_call_id": tool_call_id,
+        "content": content,
+    }
 
 
 def copy_message(message: ModelMessage) -> ModelMessage:

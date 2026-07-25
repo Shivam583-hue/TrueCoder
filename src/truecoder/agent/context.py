@@ -1,25 +1,28 @@
 import os
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Protocol
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Protocol
 
 import tiktoken
 from dotenv import load_dotenv
 
+from truecoder.agent.messages import (
+    ModelMessage,
+    copy_messages,
+    create_system_message,
+)
 from truecoder.agent.prompts import DEFAULT_SYSTEM_PROMPT
 
 if TYPE_CHECKING:
     from truecoder.agent.state import AgentState
 
 
-Message = dict[str, str]
-
-
 class TokenCounter(Protocol):
-    def count_message(self, message: Mapping[str, str]) -> int: ...
+    def count_message(self, message: Mapping[str, Any]) -> int: ...
 
 
 class TiktokenTokenCounter:
     MESSAGE_OVERHEAD = 4
+    _VALID_ROLES = frozenset({"system", "user", "assistant", "tool"})
 
     def __init__(self, model: str) -> None:
         try:
@@ -27,20 +30,67 @@ class TiktokenTokenCounter:
         except KeyError:
             self.__encoding = tiktoken.get_encoding("o200k_base")
 
-    def count_message(self, message: Mapping[str, str]) -> int:
-        role = message.get("role")
-        content = message.get("content")
+    def count_message(self, message: Mapping[str, Any]) -> int:
+        self._validate_message(message)
+        return self._count_string_values(message) + self.MESSAGE_OVERHEAD
 
+    def _count_string_values(self, value: Any) -> int:
+        if isinstance(value, str):
+            return len(self.__encoding.encode(value))
+
+        if value is None:
+            return 0
+
+        if isinstance(value, Mapping):
+            return sum(
+                self._count_string_values(nested_value)
+                for nested_value in value.values()
+            )
+
+        if isinstance(value, Sequence) and not isinstance(
+            value,
+            (str, bytes, bytearray),
+        ):
+            return sum(
+                self._count_string_values(nested_value)
+                for nested_value in value
+            )
+
+        raise TypeError("Message values must contain only strings, lists, mappings, or None.")
+
+    @classmethod
+    def _validate_message(cls, message: Mapping[str, Any]) -> None:
+        role = message.get("role")
         if not isinstance(role, str):
             raise TypeError("Message role must be a string.")
 
+        if role not in cls._VALID_ROLES:
+            raise ValueError(f"Unsupported message role '{role}'.")
+
+        content = message.get("content")
+
+        if role in {"system", "user"}:
+            if not isinstance(content, str):
+                raise TypeError(f"{role.title()} message content must be a string.")
+            return
+
+        if role == "assistant":
+            if content is not None and not isinstance(content, str):
+                raise TypeError(
+                    "Assistant message content must be a string or None."
+                )
+
+            if content is None and not isinstance(message.get("tool_calls"), list):
+                raise TypeError(
+                    "An assistant message without text must contain tool calls."
+                )
+            return
+
         if not isinstance(content, str):
-            raise TypeError("Message content must be a string.")
+            raise TypeError("Tool message content must be a string.")
 
-        role_tokens = len(self.__encoding.encode(role))
-        content_tokens = len(self.__encoding.encode(content))
-
-        return role_tokens + content_tokens + self.MESSAGE_OVERHEAD
+        if not isinstance(message.get("tool_call_id"), str):
+            raise TypeError("Tool messages require a string tool_call_id.")
 
 
 class ContextBuilder:
@@ -89,68 +139,56 @@ class ContextBuilder:
             token_counter=TiktokenTokenCounter(model.strip()),
         )
 
-    def build(self, state: "AgentState") -> list[Message]:
+    def build(self, state: "AgentState") -> list[ModelMessage]:
         if not state.turn_active:
             raise RuntimeError("Cannot build context without an active turn.")
 
-        pending_prompt = state.pending_prompt
-        if pending_prompt is None:
-            raise RuntimeError("An active turn must have a pending prompt.")
-
-        system_message: Message = {
-            "role": "system",
-            "content": self.system_prompt,
-        }
-        current_user_message: Message = {
-            "role": "user",
-            "content": pending_prompt,
-        }
-
-        context_token_count = self.token_counter.count_message(
-            system_message
-        ) + self.token_counter.count_message(current_user_message)
-
-        if context_token_count > self.max_input_tokens:
-            return [system_message, current_user_message]
-
-        completed_messages = state.messages
-
-        if len(completed_messages) % 2 != 0:
+        if state.outstanding_tool_call_ids:
             raise RuntimeError(
-                "Completed message history must contain user/assistant pairs."
+                "Cannot build context while tool calls remain unresolved."
             )
 
-        selected_pairs: list[list[Message]] = []
+        pending_messages = state.pending_messages
+        if not pending_messages:
+            raise RuntimeError("An active turn must contain pending messages.")
 
-        for index in range(len(completed_messages) - 2, -1, -2):
-            user_message = completed_messages[index]
-            assistant_message = completed_messages[index + 1]
+        system_message = create_system_message(self.system_prompt)
+        required_messages: list[ModelMessage] = [
+            system_message,
+            *pending_messages,
+        ]
+        context_token_count = sum(
+            self.token_counter.count_message(message)
+            for message in required_messages
+        )
 
-            if (
-                user_message.get("role") != "user"
-                or assistant_message.get("role") != "assistant"
-            ):
-                raise RuntimeError(
-                    "Completed history contains an invalid message pair."
-                )
+        if context_token_count > self.max_input_tokens:
+            return copy_messages(required_messages)
 
-            pair_token_count = self.token_counter.count_message(
-                user_message
-            ) + self.token_counter.count_message(assistant_message)
+        selected_turns: list[list[ModelMessage]] = []
 
-            if context_token_count + pair_token_count > self.max_input_tokens:
+        for turn in reversed(state.completed_turns):
+            turn_token_count = sum(
+                self.token_counter.count_message(message)
+                for message in turn
+            )
+
+            if context_token_count + turn_token_count > self.max_input_tokens:
                 break
 
-            selected_pairs.append([user_message, assistant_message])
-            context_token_count += pair_token_count
+            selected_turns.append(turn)
+            context_token_count += turn_token_count
 
-        selected_history: list[Message] = []
-
-        for pair in reversed(selected_pairs):
-            selected_history.extend(message.copy() for message in pair)
-
-        return [
-            system_message,
-            *selected_history,
-            current_user_message,
+        selected_history = [
+            message
+            for turn in reversed(selected_turns)
+            for message in turn
         ]
+
+        return copy_messages(
+            [
+                system_message,
+                *selected_history,
+                *pending_messages,
+            ]
+        )
