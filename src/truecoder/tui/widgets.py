@@ -147,7 +147,7 @@ class ChatMessage(Vertical):
             await self.query_one(".message-body", Markdown).update(self.content_text)
 
 
-class ApprovalCard(Vertical):
+class ApprovalCard(Horizontal):
     def __init__(
         self,
         call_id: str,
@@ -160,28 +160,18 @@ class ApprovalCard(Vertical):
         super().__init__(classes="approval-card")
 
     def compose(self) -> ComposeResult:
-        yield Static("APPROVAL REQUIRED", classes="approval-title", markup=False)
-        yield Static(self.tool_name, classes="approval-tool", markup=False)
+        summary = self._summary()
+        label = self.tool_name if not summary else f"{self.tool_name}  {summary}"
+        yield Static(f"run  {label}", classes="approval-line", markup=False)
+        yield Button("Approve", classes="approval-approve")
+        yield Button("Always", classes="approval-always")
+        yield Button("Reject", classes="approval-reject")
 
-        if self.arguments:
-            body = "\n".join(
-                f"{key}: {value}" for key, value in self.arguments.items()
-            )
-        else:
-            body = "(no arguments)"
-        yield Static(body, classes="approval-args", markup=False)
-
-        with Horizontal(classes="approval-actions"):
-            yield Button("Reject", classes="approval-reject")
-            yield Button("Approve", classes="approval-approve")
-
-        yield Static("", classes="approval-outcome", markup=False)
-
-    def mark_resolved(self, outcome: str) -> None:
-        for button in self.query(Button):
-            button.disabled = True
-        self.add_class("resolved")
-        self.query_one(".approval-outcome", Static).update(outcome)
+    def _summary(self) -> str:
+        if not self.arguments:
+            return ""
+        text = "  ".join(f"{key}={value}" for key, value in self.arguments.items())
+        return text if len(text) <= 64 else f"{text[:61]}..."
 
 
 class StatusBar(Horizontal):

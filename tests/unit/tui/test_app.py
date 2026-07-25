@@ -55,10 +55,10 @@ class GuardedTool(BaseTool[GuardedArguments]):
     approval = ToolApproval.REQUIRED
 
     def __init__(self) -> None:
-        self.ran = False
+        self.runs = 0
 
     async def run(self, arguments: GuardedArguments) -> dict[str, str]:
-        self.ran = True
+        self.runs += 1
         return {"echoed": arguments.text}
 
 
@@ -312,14 +312,15 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             cards = list(app.query(ApprovalCard))
             self.assertEqual(len(cards), 1)
             self.assertEqual(cards[0].tool_name, "guarded")
-            self.assertFalse(tool.ran)
+            self.assertEqual(tool.runs, 0)
 
             await pilot.click(".approval-approve")
             await app.workers.wait_for_complete()
             await pilot.pause()
 
-            self.assertTrue(tool.ran)
-            self.assertTrue(cards[0].has_class("resolved"))
+            self.assertEqual(tool.runs, 1)
+            self.assertEqual(list(app.query(ApprovalCard)), [])
+            self.assertIsNone(app._pending_approval)
             assistant = list(app.query(ChatMessage))[-1]
             self.assertIn("All done", assistant.content_text)
 
@@ -336,11 +337,51 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             await app.workers.wait_for_complete()
             await pilot.pause()
 
-            self.assertFalse(tool.ran)
-            card = list(app.query(ApprovalCard))[-1]
-            self.assertTrue(card.has_class("resolved"))
+            self.assertEqual(tool.runs, 0)
+            self.assertEqual(list(app.query(ApprovalCard)), [])
             assistant = list(app.query(ChatMessage))[-1]
             self.assertIn("All done", assistant.content_text)
+
+    async def test_always_stops_prompting_for_that_tool(self):
+        tool = GuardedTool()
+        client = ScriptedLLMClient(
+            [
+                [
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        tool_calls=(ToolCall("call_1", "guarded", '{"text": "a"}'),),
+                        finish_reason="tool_calls",
+                    ),
+                ],
+                [
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        tool_calls=(ToolCall("call_2", "guarded", '{"text": "b"}'),),
+                        finish_reason="tool_calls",
+                    ),
+                ],
+                [
+                    StreamEvent(type=EventType.TEXT_DELTA, text_delta=TextDelta("Done")),
+                    StreamEvent(type=EventType.MESSAGE_COMPLETE, finish_reason="stop"),
+                ],
+            ]
+        )
+        app = TrueCoderApp(make_agent(client, registry_with(tool)))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.query_one(PromptInput).text = "read it"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            self.assertEqual(len(list(app.query(ApprovalCard))), 1)
+
+            await pilot.click(".approval-always")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            self.assertEqual(tool.runs, 2)
+            self.assertIn("guarded", app._always_approved)
+            self.assertEqual(list(app.query(ApprovalCard)), [])
 
     async def test_new_chat_cancels_a_pending_approval(self):
         tool = GuardedTool()
@@ -356,7 +397,7 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("ctrl+l")
             await pilot.pause()
 
-            self.assertFalse(tool.ran)
+            self.assertEqual(tool.runs, 0)
             self.assertEqual(list(app.query(ApprovalCard)), [])
             self.assertEqual(app.messages, [])
             self.assertIsNone(app._pending_approval)

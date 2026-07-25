@@ -29,6 +29,7 @@ from truecoder.tui.widgets import (
 @dataclass
 class _PendingApproval:
     call_id: str
+    tool_name: str
     future: asyncio.Future[ApprovalDecision]
     card: ApprovalCard
 
@@ -54,6 +55,7 @@ class TrueCoderApp(App[None]):
         self._busy = False
         self._active_worker: Worker[None] | None = None
         self._pending_approval: _PendingApproval | None = None
+        self._always_approved: set[str] = set()
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -112,6 +114,10 @@ class TrueCoderApp(App[None]):
     @on(Button.Pressed, ".approval-approve")
     def approve_pending_tool(self) -> None:
         self._resolve_pending_approval(ApprovalDecision.APPROVED)
+
+    @on(Button.Pressed, ".approval-always")
+    def always_approve_pending_tool(self) -> None:
+        self._resolve_pending_approval(ApprovalDecision.APPROVED, always=True)
 
     @on(Button.Pressed, ".approval-reject")
     def reject_pending_tool(self) -> None:
@@ -217,34 +223,50 @@ class TrueCoderApp(App[None]):
         self,
         request: ApprovalRequest,
     ) -> ApprovalDecision:
+        if request.tool_name in self._always_approved:
+            return ApprovalDecision.APPROVED
+
         future: asyncio.Future[ApprovalDecision] = (
             asyncio.get_running_loop().create_future()
         )
         card = ApprovalCard(request.call_id, request.tool_name, request.arguments)
-        self._pending_approval = _PendingApproval(request.call_id, future, card)
+        self._pending_approval = _PendingApproval(
+            request.call_id,
+            request.tool_name,
+            future,
+            card,
+        )
 
         transcript = self.query_one("#transcript", VerticalScroll)
         await transcript.mount(card)
         self._scroll_to_latest()
-        card.query_one(".approval-reject", Button).focus()
+        card.query_one(".approval-approve", Button).focus()
 
         try:
             return await future
         finally:
-            if not future.done():
-                card.mark_resolved("Cancelled")
-            self._pending_approval = None
+            self._clear_pending_approval()
 
-    def _resolve_pending_approval(self, decision: ApprovalDecision) -> None:
+    def _resolve_pending_approval(
+        self,
+        decision: ApprovalDecision,
+        *,
+        always: bool = False,
+    ) -> None:
         pending = self._pending_approval
         if pending is None or pending.future.done():
             return
 
+        if always:
+            self._always_approved.add(pending.tool_name)
         pending.future.set_result(decision)
-        outcome = (
-            "Approved" if decision is ApprovalDecision.APPROVED else "Rejected"
-        )
-        pending.card.mark_resolved(outcome)
+        self._clear_pending_approval()
+
+    def _clear_pending_approval(self) -> None:
+        pending = self._pending_approval
+        self._pending_approval = None
+        if pending is not None and pending.card.is_mounted:
+            pending.card.remove()
 
     def _scroll_to_latest(self) -> None:
         transcript = self.query_one("#transcript", VerticalScroll)
@@ -272,7 +294,7 @@ class TrueCoderApp(App[None]):
             except WorkerCancelled:
                 pass
         self.agent.reset()
-        self._pending_approval = None
+        self._clear_pending_approval()
         await self.query(".chat-message").remove()
         await self.query(".approval-card").remove()
         self.query_one("#empty-state", EmptyState).styles.display = "block"
