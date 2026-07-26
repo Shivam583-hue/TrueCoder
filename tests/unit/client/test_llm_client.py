@@ -12,13 +12,13 @@ from openai import (
 )
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion import Choice as CompletionChoice
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
-from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_chunk import (
+    ChatCompletionChunk,
     ChoiceDelta,
     ChoiceDeltaToolCall,
     ChoiceDeltaToolCallFunction,
 )
+from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.chat.chat_completion_message_function_tool_call import (
     ChatCompletionMessageFunctionToolCall,
@@ -607,12 +607,14 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_model_is_a_configuration_error(self):
         llm_client = LLMClient()
 
-        with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "MODEL"):
-                _ = [
-                    event
-                    async for event in llm_client.chat_completion([], stream=False)
-                ]
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            self.assertRaisesRegex(RuntimeError, "MODEL"),
+        ):
+            _ = [
+                event
+                async for event in llm_client.chat_completion([], stream=False)
+            ]
 
 
 if __name__ == "__main__":

@@ -88,7 +88,7 @@ class Agent:
                 yield event
         except asyncio.CancelledError:
             raise
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - report unexpected agent failures
             yield AgentEvent.agent_error(
                 str(error),
                 details={"exception_type": type(error).__name__},

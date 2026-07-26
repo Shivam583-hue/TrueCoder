@@ -40,7 +40,7 @@ class LLMClient:
         self.__client: AsyncOpenAI | None = None
         self._max_retries: int = 3
 
-    async def __aenter__(self) -> "LLMClient":
+    async def __aenter__(self) -> "LLMClient":  # noqa: PYI034 - Python 3.10
         return self
 
     async def __aexit__(self, *_: object) -> None:

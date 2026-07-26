@@ -57,7 +57,7 @@ class ToolExecutor:
                 error=error.message,
                 error_code=error.code,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - return unexpected tool failures
             return ToolResult.failure(
                 call_id=call.call_id,
                 tool_name=call.name,

@@ -35,9 +35,11 @@ class ReadFileConstructionTests(unittest.TestCase):
             ]
 
             for invalid_root in invalid_roots:
-                with self.subTest(invalid_root=invalid_root):
-                    with self.assertRaises(ValueError):
-                        ReadFileTool(invalid_root)
+                with (
+                    self.subTest(invalid_root=invalid_root),
+                    self.assertRaises(ValueError),
+                ):
+                    ReadFileTool(invalid_root)
 
         with self.assertRaises(TypeError):
             ReadFileTool("/workspace")  # type: ignore[arg-type]
@@ -120,9 +122,11 @@ class ReadFileToolTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         for arguments_json in incomplete_arguments:
-            with self.subTest(arguments_json=arguments_json):
-                with self.assertRaises(ToolArgumentError):
-                    self.tool.parse_arguments(arguments_json)
+            with (
+                self.subTest(arguments_json=arguments_json),
+                self.assertRaises(ToolArgumentError),
+            ):
+                self.tool.parse_arguments(arguments_json)
 
     def test_line_inputs_are_one_based_positive_and_bounded(self):
         invalid_arguments = [
@@ -135,9 +139,11 @@ class ReadFileToolTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         for arguments_json in invalid_arguments:
-            with self.subTest(arguments_json=arguments_json):
-                with self.assertRaises(ToolArgumentError):
-                    self.tool.parse_arguments(arguments_json)
+            with (
+                self.subTest(arguments_json=arguments_json),
+                self.assertRaises(ToolArgumentError),
+            ):
+                self.tool.parse_arguments(arguments_json)
 
     def test_approval_is_explicitly_required(self):
         self.assertIs(self.tool.approval, ToolApproval.REQUIRED)

@@ -106,9 +106,8 @@ class ToolDefinitionTests(unittest.TestCase):
         ]
 
         for values in invalid_definitions:
-            with self.subTest(values=values):
-                with self.assertRaises(ValueError):
-                    ToolDefinition(**values)
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                ToolDefinition(**values)
 
         with self.assertRaises(TypeError):
             ToolDefinition(
@@ -152,9 +151,11 @@ class BaseToolTests(unittest.TestCase):
         ]
 
         for arguments_json in invalid_arguments:
-            with self.subTest(arguments_json=arguments_json):
-                with self.assertRaises(ToolArgumentError):
-                    self.tool.parse_arguments(arguments_json)
+            with (
+                self.subTest(arguments_json=arguments_json),
+                self.assertRaises(ToolArgumentError),
+            ):
+                self.tool.parse_arguments(arguments_json)
 
     def test_argument_models_forbid_extra_fields_directly(self):
         with self.assertRaises(ValidationError):
@@ -235,13 +236,12 @@ class ToolCallAndResultTests(unittest.TestCase):
         ]
 
         for values in invalid_results:
-            with self.subTest(values=values):
-                with self.assertRaises(ValueError):
-                    ToolResult(
-                        call_id="call_1",
-                        tool_name="tool",
-                        **values,
-                    )
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                ToolResult(
+                    call_id="call_1",
+                    tool_name="tool",
+                    **values,
+                )
 
 
 if __name__ == "__main__":
