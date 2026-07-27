@@ -5,7 +5,7 @@ from typing import Any
 from unittest.mock import Mock, patch
 
 from truecoder.agent import AgentState, ContextBuilder, TiktokenTokenCounter
-from truecoder.agent.prompts import DEFAULT_SYSTEM_PROMPT
+from truecoder.agent.prompts import DEFAULT_SYSTEM_PROMPT, build_system_prompt
 from truecoder.tools import ToolCall
 
 
@@ -205,6 +205,74 @@ class ContextBuilderTests(unittest.TestCase):
         self.assertEqual(builder.max_input_tokens, 42)
         self.assertIs(builder.token_counter, counter)
         counter_type.assert_called_once_with("test-model")
+
+    def test_from_environment_adds_project_instructions_to_system_prompt(self):
+        with (
+            patch("truecoder.agent.context.load_dotenv"),
+            patch.dict(os.environ, {"MODEL": "test-model"}, clear=True),
+            patch("truecoder.agent.context.TiktokenTokenCounter"),
+        ):
+            builder = ContextBuilder.from_environment(
+                project_instructions="Root guidance\n\nNested guidance",
+            )
+
+        self.assertEqual(
+            builder.system_prompt,
+            build_system_prompt("Root guidance\n\nNested guidance"),
+        )
+        self.assertEqual(builder.system_prompt.count("<project_instructions>"), 1)
+
+    def test_system_prompt_is_unchanged_without_project_instructions(self):
+        self.assertEqual(
+            build_system_prompt(),
+            DEFAULT_SYSTEM_PROMPT.strip(),
+        )
+        self.assertEqual(
+            build_system_prompt(" \n\t"),
+            DEFAULT_SYSTEM_PROMPT.strip(),
+        )
+
+    def test_system_prompt_rejects_non_string_project_instructions(self):
+        with self.assertRaises(TypeError):
+            build_system_prompt(None)  # type: ignore[arg-type]
+
+    def test_project_instructions_participate_in_context_budgeting(self):
+        state = state_with_turns([("old", "answer")], "current")
+        system_prompt = build_system_prompt("Repository guidance")
+        builder = ContextBuilder(
+            system_prompt=system_prompt,
+            max_input_tokens=len(system_prompt) + len("current"),
+            token_counter=LengthTokenCounter(),
+        )
+
+        messages = builder.build(state)
+
+        self.assertEqual(
+            messages,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "current"},
+            ],
+        )
+
+    def test_rebuilding_context_does_not_duplicate_project_instructions(self):
+        state = AgentState()
+        state.begin_turn("Question")
+        system_prompt = build_system_prompt("Repository guidance")
+        builder = ContextBuilder(
+            system_prompt=system_prompt,
+            max_input_tokens=10_000,
+            token_counter=LengthTokenCounter(),
+        )
+
+        first_request = builder.build(state)
+        second_request = builder.build(state)
+
+        self.assertEqual(first_request[0], second_request[0])
+        self.assertEqual(
+            first_request[0]["content"].count("<project_instructions>"),
+            1,
+        )
 
     def test_from_environment_defaults_input_limit(self):
         with (
