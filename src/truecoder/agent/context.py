@@ -10,7 +10,7 @@ from truecoder.agent.messages import (
     copy_messages,
     create_system_message,
 )
-from truecoder.agent.prompts import DEFAULT_SYSTEM_PROMPT
+from truecoder.agent.prompts import build_system_prompt
 
 if TYPE_CHECKING:
     from truecoder.agent.state import AgentState
@@ -117,7 +117,11 @@ class ContextBuilder:
         self.token_counter = token_counter
 
     @classmethod
-    def from_environment(cls) -> "ContextBuilder":
+    def from_environment(
+        cls,
+        *,
+        project_instructions: str = "",
+    ) -> "ContextBuilder":
         load_dotenv()
 
         model = os.getenv("MODEL")
@@ -134,7 +138,7 @@ class ContextBuilder:
             ) from error
 
         return cls(
-            system_prompt=DEFAULT_SYSTEM_PROMPT,
+            system_prompt=build_system_prompt(project_instructions),
             max_input_tokens=max_input_tokens,
             token_counter=TiktokenTokenCounter(model.strip()),
         )

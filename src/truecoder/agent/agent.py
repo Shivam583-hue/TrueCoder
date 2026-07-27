@@ -14,6 +14,10 @@ from truecoder.agent.approval import (
 from truecoder.agent.context import ContextBuilder
 from truecoder.agent.events import AgentEvent
 from truecoder.agent.messages import ModelMessage
+from truecoder.agent.project_instructions import (
+    find_project_root,
+    load_project_instructions,
+)
 from truecoder.agent.state import AgentState
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType, TokenUsage
@@ -234,9 +238,21 @@ def run() -> None:
     """Launch the TrueCoder terminal application."""
     from truecoder.tui.app import TrueCoderApp
 
-    workspace_root = Path.cwd().resolve(strict=True)
+    launch_directory = Path.cwd().resolve(strict=True)
+    project_root = find_project_root(launch_directory)
+    project_instructions = load_project_instructions(
+        project_root=project_root,
+        launch_directory=launch_directory,
+    )
+    context_builder = ContextBuilder.from_environment(
+        project_instructions=project_instructions,
+    )
+
     tool_registry = ToolRegistry()
-    tool_registry.register(ReadFileTool(workspace_root))
-    agent = Agent(tool_registry=tool_registry)
+    tool_registry.register(ReadFileTool(project_root))
+    agent = Agent(
+        context_builder=context_builder,
+        tool_registry=tool_registry,
+    )
 
     TrueCoderApp(agent).run()

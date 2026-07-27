@@ -187,18 +187,27 @@ def load_project_instructions(
     )
 
     sections: list[str] = []
+    used_bytes = 0
 
-    for path, content in entries:
-        relative_path = path.relative_to(resolved_root).as_posix()
-        sections.append(f"## Instructions from {relative_path}\n\n{content}")
+    for _path, content in entries:
+        separator_bytes = 2 if sections else 0
+        remaining_bytes = validated_max_bytes - used_bytes - separator_bytes
 
-    result = "\n\n---\n\n".join(sections)
-    result_size = len(result.encode("utf-8"))
+        if remaining_bytes <= 0:
+            break
 
-    if result_size > validated_max_bytes:
-        raise ProjectInstructionsError(
-            "Project instructions exceed the configured size limit: "
-            f"{result_size} bytes > {validated_max_bytes} bytes"
+        encoded_content = content.encode("utf-8")
+        if len(encoded_content) <= remaining_bytes:
+            sections.append(content)
+            used_bytes += separator_bytes + len(encoded_content)
+            continue
+
+        truncated_content = encoded_content[:remaining_bytes].decode(
+            "utf-8",
+            errors="ignore",
         )
+        if truncated_content:
+            sections.append(truncated_content)
+        break
 
-    return result
+    return "\n\n".join(sections)
