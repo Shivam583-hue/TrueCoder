@@ -102,6 +102,7 @@ _RISKY_TOOL_TERMS = frozenset(
     {
         "command",
         "delete",
+        "edit",
         "execute",
         "move",
         "patch",
@@ -459,6 +460,9 @@ class ToolCallCard(Vertical):
             prefix = f"Failed {self.human_name.lower()}"
         else:
             verbs = {
+                "edit_file": "Edited",
+                "glob": "Matched",
+                "grep": "Searched",
                 "read_file": "Read",
                 "write_file": "Wrote",
                 "list_dir": "Listed",
@@ -499,6 +503,25 @@ class ToolCallCard(Vertical):
                 return (
                     f"{bytes_written:,} "
                     f"{'byte' if bytes_written == 1 else 'bytes'}"
+                )
+        collection_keys = {
+            "glob": ("matches", "match", "matches"),
+            "grep": ("matches", "match", "matches"),
+            "list_dir": ("entries", "entry", "entries"),
+        }
+        collection_summary = collection_keys.get(self.tool_name)
+        if collection_summary is not None and isinstance(output, dict):
+            key, singular, plural = collection_summary
+            values = output.get(key)
+            if isinstance(values, list):
+                count = len(values)
+                return f"{count:,} {singular if count == 1 else plural}"
+        if self.tool_name == "edit_file" and isinstance(output, dict):
+            replacements = output.get("replacements")
+            if isinstance(replacements, int) and not isinstance(replacements, bool):
+                return (
+                    f"{replacements:,} "
+                    f"{'replacement' if replacements == 1 else 'replacements'}"
                 )
         return ""
 

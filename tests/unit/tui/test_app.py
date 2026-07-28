@@ -703,6 +703,78 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
                 str(read_card.query_one(".tool-title").content),
             )
 
+            repository_cards = (
+                (
+                    "edit_file",
+                    {
+                        "path": "src/example.py",
+                        "old_text": "pass",
+                        "new_text": "value = 1",
+                        "replace_all": False,
+                    },
+                    (
+                        '{"status":"success","output":{"path":"src/example.py",'
+                        '"replacements":1,"bytes_written":9}}'
+                    ),
+                    "Edited src/example.py · 1 replacement",
+                    True,
+                ),
+                (
+                    "list_dir",
+                    {"path": "src"},
+                    (
+                        '{"status":"success","output":{"path":"src","entries":'
+                        '[{"path":"src/truecoder","name":"truecoder",'
+                        '"type":"directory"}],"has_more":false}}'
+                    ),
+                    "Listed src · 1 entry",
+                    False,
+                ),
+                (
+                    "glob",
+                    {"path": ".", "pattern": "**/*.py"},
+                    (
+                        '{"status":"success","output":{"path":".","pattern":'
+                        '"**/*.py","matches":["src/app.py","tests/test_app.py"],'
+                        '"has_more":false}}'
+                    ),
+                    "Matched . · 2 matches",
+                    False,
+                ),
+                (
+                    "grep",
+                    {"path": ".", "pattern": "Agent"},
+                    (
+                        '{"status":"success","output":{"path":".","pattern":'
+                        '"Agent","matches":[],"has_more":false}}'
+                    ),
+                    "Searched . · 0 matches",
+                    False,
+                ),
+            )
+            for index, (
+                tool_name,
+                arguments,
+                result,
+                expected_headline,
+                risky,
+            ) in enumerate(repository_cards):
+                with self.subTest(tool_name=tool_name):
+                    repository_card = ToolCallCard(
+                        f"call_repository_{index}",
+                        tool_name,
+                        arguments,
+                        state="running",
+                    )
+                    await transcript.mount(repository_card)
+                    await pilot.pause()
+                    repository_card.finish("success", result)
+                    self.assertIn(
+                        expected_headline,
+                        str(repository_card.query_one(".tool-title").content),
+                    )
+                    self.assertEqual(repository_card.has_class("risky"), risky)
+
 
 if __name__ == "__main__":
     unittest.main()

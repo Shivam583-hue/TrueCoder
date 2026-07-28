@@ -149,6 +149,56 @@ class SessionManagerUITests(unittest.IsolatedAsyncioTestCase):
                     "Wrote example.py · 4 bytes",
                 )
 
+    async def test_switch_restores_a_completed_edit_file_card(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            app, manager = self.make_app(Path(temporary_directory).resolve())
+            app.agent.state.begin_turn("Update example.py")
+            app.agent.state.record_tool_calls(
+                (
+                    ToolCall(
+                        "call_edit",
+                        "edit_file",
+                        (
+                            '{"path":"example.py","old_text":"pass",'
+                            '"new_text":"value = 1","replace_all":false}'
+                        ),
+                    ),
+                )
+            )
+            app.agent.state.record_tool_result(
+                "call_edit",
+                serialize_tool_result(
+                    ToolResult.success(
+                        "call_edit",
+                        "edit_file",
+                        {
+                            "path": "example.py",
+                            "replacements": 1,
+                            "bytes_written": 9,
+                        },
+                    )
+                ),
+            )
+            app.agent.state.complete_turn("Updated example.py.")
+            saved_id = manager.save_completed_turns().session_id
+            manager.create_session()
+
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.press("ctrl+p")
+                session_list = app.screen.query_one(ListView)
+                session_list.index = 1
+                await pilot.press("enter")
+                await pilot.pause()
+
+                self.assertEqual(manager.active_session.session_id, saved_id)
+                cards = list(app.query(ToolCallCard))
+                self.assertEqual(len(cards), 1)
+                self.assertTrue(cards[0].restored)
+                self.assertEqual(
+                    str(cards[0].query_one(".tool-title").content),
+                    "Edited example.py · 1 replacement",
+                )
+
     async def test_rename_updates_the_selected_session(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             app, manager = self.make_app(Path(temporary_directory).resolve())
