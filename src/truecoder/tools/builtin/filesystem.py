@@ -75,7 +75,7 @@ def resolve_existing_workspace_path(
     workspace_root: Path,
     requested_path: str,
     *,
-    expected: Literal["file", "directory"],
+    expected: Literal["file", "directory", "file_or_directory"],
     allow_symlinks: bool = False,
 ) -> Path:
     """Resolve an existing non-sensitive path beneath a trusted workspace."""
@@ -160,10 +160,24 @@ def resolve_existing_workspace_path(
             code=f"not_a_{expected}",
         ) from error
 
-    expected_mode = stat.S_ISREG if expected == "file" else stat.S_ISDIR
-    if not expected_mode(path_stat.st_mode):
+    if expected == "file":
+        expected_mode = stat.S_ISREG(path_stat.st_mode)
+        error_code = "not_a_file"
+        error_message = "The requested path is not a file."
+    elif expected == "directory":
+        expected_mode = stat.S_ISDIR(path_stat.st_mode)
+        error_code = "not_a_directory"
+        error_message = "The requested path is not a directory."
+    else:
+        expected_mode = stat.S_ISREG(path_stat.st_mode) or stat.S_ISDIR(
+            path_stat.st_mode
+        )
+        error_code = "unsupported_path"
+        error_message = "The requested path is not a regular file or directory."
+
+    if not expected_mode:
         raise ToolExecutionError(
-            f"The requested path is not a {expected}.",
-            code=f"not_a_{expected}",
+            error_message,
+            code=error_code,
         )
     return resolved_path
