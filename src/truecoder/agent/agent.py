@@ -35,6 +35,7 @@ from truecoder.tools.base import (
     ToolResult,
 )
 from truecoder.tools.builtin import ReadFileTool
+from truecoder.tools.builtin.write_file import WriteFileTool
 from truecoder.tools.registry import ToolNotFoundError, ToolRegistry
 
 DEFAULT_MAX_ITERATIONS = 25
@@ -256,6 +257,7 @@ def run() -> None:
 
     tool_registry = ToolRegistry()
     tool_registry.register(ReadFileTool(project_root))
+    tool_registry.register(WriteFileTool(project_root))
     agent = Agent(
         state=state,
         context_builder=context_builder,
