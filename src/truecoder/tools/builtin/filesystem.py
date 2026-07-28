@@ -1,4 +1,10 @@
+from __future__ import annotations
+
+import stat
 from pathlib import Path
+from typing import Literal
+
+from truecoder.tools.base import ToolExecutionError
 
 _SENSITIVE_DIRECTORY_NAMES = frozenset(
     {
@@ -47,3 +53,117 @@ def is_sensitive_path(workspace_path: Path) -> bool:
         return True
 
     return workspace_path.suffix.casefold() in _SENSITIVE_FILE_SUFFIXES
+
+
+def validate_workspace_root(workspace_root: Path) -> Path:
+    """Return a trusted canonical workspace root."""
+    if not isinstance(workspace_root, Path):
+        raise TypeError("workspace_root must be a pathlib.Path.")
+    if not workspace_root.is_absolute():
+        raise ValueError("workspace_root must be an absolute path.")
+
+    try:
+        resolved_root = workspace_root.resolve(strict=True)
+    except OSError as error:
+        raise ValueError("workspace_root must exist and be accessible.") from error
+    if not resolved_root.is_dir():
+        raise ValueError("workspace_root must be a directory.")
+    return resolved_root
+
+
+def resolve_existing_workspace_path(
+    workspace_root: Path,
+    requested_path: str,
+    *,
+    expected: Literal["file", "directory"],
+    allow_symlinks: bool = False,
+) -> Path:
+    """Resolve an existing non-sensitive path beneath a trusted workspace."""
+    relative_path = Path(requested_path)
+    if relative_path.is_absolute():
+        raise ToolExecutionError(
+            "Absolute paths are not allowed.",
+            code="outside_workspace",
+        )
+
+    candidate = workspace_root / relative_path
+    if not allow_symlinks:
+        current = candidate
+        while current != workspace_root and current != current.parent:
+            try:
+                if current.is_symlink():
+                    raise ToolExecutionError(
+                        "Symbolic links are not allowed in this path.",
+                        code="symlink_not_allowed",
+                    )
+            except PermissionError as error:
+                raise ToolExecutionError(
+                    "Permission was denied while inspecting the requested path.",
+                    code="permission_denied",
+                ) from error
+            current = current.parent
+
+    try:
+        unresolved_candidate = candidate.resolve(strict=False)
+    except (OSError, RuntimeError) as error:
+        raise ToolExecutionError(
+            "The requested path could not be resolved safely.",
+            code="outside_workspace",
+        ) from error
+    if not unresolved_candidate.is_relative_to(workspace_root):
+        raise ToolExecutionError(
+            "The requested path is outside the workspace.",
+            code="outside_workspace",
+        )
+
+    try:
+        resolved_path = candidate.resolve(strict=True)
+    except FileNotFoundError as error:
+        raise ToolExecutionError(
+            "The requested path does not exist.",
+            code="file_not_found",
+        ) from error
+    except PermissionError as error:
+        raise ToolExecutionError(
+            "Permission was denied while resolving the requested path.",
+            code="permission_denied",
+        ) from error
+    except (OSError, RuntimeError) as error:
+        raise ToolExecutionError(
+            "The requested path could not be resolved safely.",
+            code="outside_workspace",
+        ) from error
+
+    if not resolved_path.is_relative_to(workspace_root):
+        raise ToolExecutionError(
+            "The requested path is outside the workspace.",
+            code="outside_workspace",
+        )
+
+    workspace_path = resolved_path.relative_to(workspace_root)
+    if is_sensitive_path(workspace_path):
+        raise ToolExecutionError(
+            "The requested path is considered sensitive.",
+            code="sensitive_path",
+        )
+
+    try:
+        path_stat = resolved_path.stat()
+    except PermissionError as error:
+        raise ToolExecutionError(
+            "Permission was denied while inspecting the requested path.",
+            code="permission_denied",
+        ) from error
+    except OSError as error:
+        raise ToolExecutionError(
+            "The requested path could not be inspected.",
+            code=f"not_a_{expected}",
+        ) from error
+
+    expected_mode = stat.S_ISREG if expected == "file" else stat.S_ISDIR
+    if not expected_mode(path_stat.st_mode):
+        raise ToolExecutionError(
+            f"The requested path is not a {expected}.",
+            code=f"not_a_{expected}",
+        )
+    return resolved_path

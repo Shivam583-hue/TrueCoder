@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from truecoder.agent.agent import run
-from truecoder.tools.builtin import ReadFileTool, WriteFileTool
+from truecoder.tools.builtin import ListDirTool, ReadFileTool, WriteFileTool
 
 
 class CompositionRootTests(unittest.TestCase):
@@ -53,6 +53,7 @@ class CompositionRootTests(unittest.TestCase):
                 run()
 
         tool_registry = agent_type.call_args.kwargs["tool_registry"]
+        list_dir_tool = tool_registry.get("list_dir")
         read_file_tool = tool_registry.get("read_file")
         write_file_tool = tool_registry.get("write_file")
 
@@ -64,6 +65,8 @@ class CompositionRootTests(unittest.TestCase):
         build_context.assert_called_once_with(
             project_instructions="Repository guidance",
         )
+        self.assertIsInstance(list_dir_tool, ListDirTool)
+        self.assertEqual(list_dir_tool.workspace_root, project_root)
         self.assertIsInstance(read_file_tool, ReadFileTool)
         self.assertEqual(read_file_tool.workspace_root, project_root)
         self.assertIsInstance(write_file_tool, WriteFileTool)
