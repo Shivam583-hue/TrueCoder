@@ -645,6 +645,39 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
                 str(approval.query_one(".tool-target").content),
                 "src/example.py",
             )
+            self.assertTrue(approval.has_class("risky"))
+            self.assertIn(
+                '"content": "pass"',
+                str(approval.query_one(".tool-details-content").content),
+            )
+            approval.finish(
+                "success",
+                (
+                    '{"status":"success","output":{"path":"src/example.py",'
+                    '"created":true,"bytes_written":4}}'
+                ),
+            )
+            self.assertIn(
+                "Wrote src/example.py · 4 bytes",
+                str(approval.query_one(".tool-title").content),
+            )
+
+            rejected_write = ToolCallCard(
+                "call_rejected_write",
+                "write_file",
+                {"path": "src/rejected.py", "content": "pass"},
+                state="running",
+            )
+            await transcript.mount(rejected_write)
+            await pilot.pause()
+            rejected_write.reject(
+                '{"status":"error","error":"The user rejected this tool call.",'
+                '"error_code":"approval_rejected"}'
+            )
+            self.assertIn(
+                "Rejected write file src/rejected.py",
+                str(rejected_write.query_one(".tool-title").content),
+            )
 
             read_card = ToolCallCard(
                 "call_read",

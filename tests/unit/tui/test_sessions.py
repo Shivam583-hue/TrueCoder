@@ -6,6 +6,7 @@ from textual.widgets import Input, ListView
 
 from tests.unit.tui.test_app import FakeLLMClient, make_agent
 from truecoder.session import SessionManager, SQLiteSessionStore
+from truecoder.tools import ToolCall, ToolResult, serialize_tool_result
 from truecoder.tui.app import TrueCoderApp
 from truecoder.tui.sessions import (
     DeleteSessionScreen,
@@ -13,7 +14,7 @@ from truecoder.tui.sessions import (
     SessionListItem,
     SessionManagerScreen,
 )
-from truecoder.tui.widgets import ChatMessage
+from truecoder.tui.widgets import ChatMessage, ToolCallCard
 
 
 class SessionManagerUITests(unittest.IsolatedAsyncioTestCase):
@@ -98,6 +99,54 @@ class SessionManagerUITests(unittest.IsolatedAsyncioTestCase):
                         ("user", "First question"),
                         ("assistant", "First answer"),
                     ],
+                )
+
+    async def test_switch_restores_a_completed_write_file_card(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            app, manager = self.make_app(Path(temporary_directory).resolve())
+            app.agent.state.begin_turn("Create example.py")
+            app.agent.state.record_tool_calls(
+                (
+                    ToolCall(
+                        "call_write",
+                        "write_file",
+                        '{"path":"example.py","content":"pass"}',
+                    ),
+                )
+            )
+            app.agent.state.record_tool_result(
+                "call_write",
+                serialize_tool_result(
+                    ToolResult.success(
+                        "call_write",
+                        "write_file",
+                        {
+                            "path": "example.py",
+                            "created": True,
+                            "bytes_written": 4,
+                        },
+                    )
+                ),
+            )
+            app.agent.state.complete_turn("Created example.py.")
+            saved_id = manager.save_completed_turns().session_id
+            manager.create_session()
+
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.press("ctrl+p")
+                session_list = app.screen.query_one(ListView)
+                session_list.index = 1
+                await pilot.press("enter")
+                await pilot.pause()
+
+                self.assertEqual(manager.active_session.session_id, saved_id)
+                cards = list(app.query(ToolCallCard))
+                self.assertEqual(len(cards), 1)
+                self.assertTrue(cards[0].restored)
+                self.assertEqual(cards[0].state, "completed")
+                self.assertEqual(
+                    str(cards[0].query_one(".tool-title").content),
+                    "Wrote example.py · 4 bytes",
                 )
 
     async def test_rename_updates_the_selected_session(self):

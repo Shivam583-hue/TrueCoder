@@ -1,6 +1,8 @@
 import asyncio
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from typing import Any
 
 from truecoder.agent import (
@@ -26,6 +28,7 @@ from truecoder.tools import (
     serialize_tool_result,
 )
 from truecoder.tools.base import BaseTool
+from truecoder.tools.builtin import WriteFileTool
 
 
 class EchoArguments(ToolArguments):
@@ -445,6 +448,138 @@ class AgentToolLoopTests(unittest.IsolatedAsyncioTestCase):
         # The second request carried the recorded tool result back to the model.
         second_request_messages = client.calls[1]["messages"]
         self.assertEqual(second_request_messages[-1]["role"], "tool")
+
+    async def test_approved_write_file_round_trip_updates_the_workspace(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workspace = Path(temporary_directory).resolve()
+            arguments_json = json.dumps(
+                {
+                    "path": "created.py",
+                    "content": 'print("created")\n',
+                }
+            )
+            client = ScriptedLLMClient(
+                [
+                    [
+                        StreamEvent(
+                            type=EventType.MESSAGE_COMPLETE,
+                            tool_calls=(
+                                ToolCall(
+                                    "call_write",
+                                    "write_file",
+                                    arguments_json,
+                                ),
+                            ),
+                            finish_reason="tool_calls",
+                        ),
+                    ],
+                    [
+                        StreamEvent(
+                            type=EventType.TEXT_DELTA,
+                            text_delta=TextDelta("Created the file."),
+                        ),
+                        StreamEvent(
+                            type=EventType.MESSAGE_COMPLETE,
+                            finish_reason="stop",
+                        ),
+                    ],
+                ]
+            )
+            registry = ToolRegistry()
+            registry.register(WriteFileTool(workspace))
+            approvals = RecordingApprovalHandler(ApprovalDecision.APPROVED)
+            agent = make_agent(
+                client,
+                tool_registry=registry,
+                approval_handler=approvals,
+            )
+
+            events = await collect(agent, "Create created.py")
+
+            self.assertEqual(
+                (workspace / "created.py").read_text(encoding="utf-8"),
+                'print("created")\n',
+            )
+            self.assertEqual(
+                [event.type for event in events],
+                [
+                    AgentEventType.AGENT_START,
+                    AgentEventType.TOOL_CALL,
+                    AgentEventType.APPROVAL_REQUESTED,
+                    AgentEventType.TOOL_RESULT,
+                    AgentEventType.TEXT_DELTA,
+                    AgentEventType.TEXT_COMPLETE,
+                    AgentEventType.AGENT_END,
+                ],
+            )
+            self.assertEqual(len(approvals.requests), 1)
+            self.assertEqual(approvals.requests[0].tool_name, "write_file")
+
+            tool_message = client.calls[1]["messages"][-1]
+            self.assertEqual(tool_message["role"], "tool")
+            self.assertEqual(
+                json.loads(tool_message["content"]),
+                {
+                    "status": "success",
+                    "output": {
+                        "path": "created.py",
+                        "created": True,
+                        "bytes_written": 17,
+                    },
+                },
+            )
+            self.assertEqual(agent.messages, client.calls[1]["messages"][1:] + [
+                {"role": "assistant", "content": "Created the file."}
+            ])
+
+    async def test_rejected_write_file_round_trip_leaves_workspace_unchanged(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workspace = Path(temporary_directory).resolve()
+            client = ScriptedLLMClient(
+                [
+                    [
+                        StreamEvent(
+                            type=EventType.MESSAGE_COMPLETE,
+                            tool_calls=(
+                                ToolCall(
+                                    "call_write",
+                                    "write_file",
+                                    '{"path":"rejected.py","content":"pass"}',
+                                ),
+                            ),
+                            finish_reason="tool_calls",
+                        ),
+                    ],
+                    [
+                        StreamEvent(
+                            type=EventType.TEXT_DELTA,
+                            text_delta=TextDelta("I did not write the file."),
+                        ),
+                        StreamEvent(
+                            type=EventType.MESSAGE_COMPLETE,
+                            finish_reason="stop",
+                        ),
+                    ],
+                ]
+            )
+            registry = ToolRegistry()
+            registry.register(WriteFileTool(workspace))
+            approvals = RecordingApprovalHandler(ApprovalDecision.REJECTED)
+            agent = make_agent(
+                client,
+                tool_registry=registry,
+                approval_handler=approvals,
+            )
+
+            events = await collect(agent, "Create rejected.py")
+
+            self.assertFalse((workspace / "rejected.py").exists())
+            self.assertIn(AgentEventType.TOOL_REJECTED, [event.type for event in events])
+            tool_message = client.calls[1]["messages"][-1]
+            self.assertEqual(
+                json.loads(tool_message["content"])["error_code"],
+                "approval_rejected",
+            )
 
     async def test_multiple_tool_rounds_before_final_answer(self):
         client = ScriptedLLMClient(
