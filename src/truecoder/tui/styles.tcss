@@ -19,6 +19,80 @@ Screen {
     color: $tc-text;
 }
 
+SessionManagerScreen,
+RenameSessionScreen,
+DeleteSessionScreen {
+    align: center middle;
+    background: #00000099;
+}
+
+#session-manager-dialog {
+    width: 72;
+    height: 24;
+    padding: 1 2;
+    background: $tc-surface;
+    border: solid $tc-border-strong;
+}
+
+.session-small-dialog {
+    width: 60;
+    height: auto;
+    padding: 1 2;
+    background: $tc-surface;
+    border: solid $tc-border-strong;
+}
+
+.session-dialog-title {
+    height: 2;
+    color: $tc-text;
+    text-style: bold;
+}
+
+#session-list {
+    height: 1fr;
+    background: transparent;
+    border: none;
+}
+
+#session-list ListItem {
+    height: 3;
+    padding: 0 1;
+}
+
+#session-list ListItem.-highlight {
+    background: $tc-surface-hover;
+    color: $tc-text;
+}
+
+.session-dialog-help {
+    height: 1;
+    color: $tc-text-muted;
+}
+
+#session-title-input {
+    margin-bottom: 1;
+}
+
+#session-title-error {
+    height: 1;
+    color: $tc-red;
+}
+
+.session-delete-copy {
+    height: auto;
+    margin-bottom: 1;
+    color: $tc-text-secondary;
+}
+
+.session-dialog-actions {
+    height: 3;
+    align-horizontal: right;
+}
+
+.session-dialog-actions Button {
+    margin-left: 1;
+}
+
 .bar-spacer,
 .tool-spacer {
     width: 1fr;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -20,6 +21,13 @@ from truecoder.agent.events import AgentEventType
 from truecoder.agent.messages import ModelMessage
 from truecoder.client.response import TokenUsage
 from truecoder.session import SessionError, SessionManager
+from truecoder.session.models import SessionRecord
+from truecoder.tui.sessions import (
+    DeleteSessionScreen,
+    RenameSessionScreen,
+    SessionAction,
+    SessionManagerScreen,
+)
 from truecoder.tui.widgets import (
     ChatMessage,
     Composer,
@@ -74,6 +82,7 @@ class TrueCoderApp(App[None]):
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("ctrl+q", "quit", "Quit", show=False, priority=True),
         Binding("ctrl+l", "new_chat", "New chat", show=False, priority=True),
+        Binding("ctrl+p", "manage_sessions", "Sessions", show=False, priority=True),
         Binding("escape", "cancel_response", "Stop", show=False, priority=True),
     ]
 
@@ -442,6 +451,180 @@ class TrueCoderApp(App[None]):
         self._set_busy(False)
         self.query_one(StatusBar).reset()
         self.screen.add_class("empty-chat")
+        self.query_one(PromptInput).focus()
+
+    def action_manage_sessions(self) -> None:
+        if self.session_manager is None:
+            self.notify("Session storage is not configured.", severity="warning")
+            return
+        if self._busy:
+            self.notify(
+                "Stop the current response before managing sessions.",
+                severity="warning",
+            )
+            return
+        self.push_screen(
+            SessionManagerScreen(
+                self.session_manager.list_sessions(),
+                self.session_manager.active_session.session_id,
+            ),
+            self._handle_session_action,
+        )
+
+    async def _handle_session_action(
+        self,
+        action: SessionAction | None,
+    ) -> None:
+        if action is None or self.session_manager is None:
+            return
+        try:
+            if action.kind == "new":
+                self.session_manager.create_session()
+                await self._render_active_session()
+            elif action.kind == "switch" and action.session_id is not None:
+                record = self.session_manager.switch_session(action.session_id)
+                await self._render_session(record)
+            elif action.kind == "rename" and action.session_id is not None:
+                summary = self._session_summary(action.session_id)
+                self.push_screen(
+                    RenameSessionScreen(summary.title),
+                    lambda title: self._finish_session_rename(
+                        action.session_id,
+                        title,
+                    ),
+                )
+            elif action.kind == "delete" and action.session_id is not None:
+                summary = self._session_summary(action.session_id)
+                self.push_screen(
+                    DeleteSessionScreen(summary.title),
+                    lambda confirmed: self._finish_session_delete(
+                        action.session_id,
+                        confirmed,
+                    ),
+                )
+        except SessionError as error:
+            self.notify(f"Session operation failed: {error}", severity="error")
+
+    def _session_summary(self, session_id: str):
+        if self.session_manager is None:
+            raise RuntimeError("Session storage is not configured.")
+        return next(
+            summary
+            for summary in self.session_manager.list_sessions()
+            if summary.session_id == session_id
+        )
+
+    def _finish_session_rename(
+        self,
+        session_id: str,
+        title: str | None,
+    ) -> None:
+        if title is None or self.session_manager is None:
+            return
+        try:
+            self.session_manager.rename_session(session_id, title)
+        except (SessionError, ValueError) as error:
+            self.notify(f"Session could not be renamed: {error}", severity="error")
+
+    async def _finish_session_delete(
+        self,
+        session_id: str,
+        confirmed: bool,
+    ) -> None:
+        if not confirmed or self.session_manager is None:
+            return
+        deleting_active = (
+            session_id == self.session_manager.active_session.session_id
+        )
+        try:
+            self.session_manager.delete_session(session_id)
+            if deleting_active:
+                await self._render_active_session()
+        except SessionError as error:
+            self.notify(f"Session could not be deleted: {error}", severity="error")
+
+    async def _render_active_session(self) -> None:
+        if self.session_manager is None:
+            return
+        record = SessionRecord(
+            summary=self.session_manager.active_session,
+            completed_turns=tuple(
+                tuple(turn) for turn in self.agent.state.completed_turns
+            ),
+        )
+        await self._render_session(record)
+
+    async def _render_session(self, record: SessionRecord) -> None:
+        await self.query(".chat-message").remove()
+        await self.query(".tool-call-card").remove()
+        self._tool_cards.clear()
+        self._active_assistant = None
+        transcript = self.query_one("#transcript", VerticalScroll)
+        cards: dict[str, ToolCallCard] = {}
+
+        for turn in record.completed_turns:
+            for message in turn:
+                role = message["role"]
+                if role == "user":
+                    await transcript.mount(
+                        ChatMessage(
+                            "user",
+                            message["content"],
+                            model_name=self._model_name,
+                        )
+                    )
+                elif role == "assistant" and "tool_calls" in message:
+                    if message["content"]:
+                        segment = ChatMessage(
+                            "assistant",
+                            message["content"],
+                            model_name=self._model_name,
+                        )
+                        await transcript.mount(segment)
+                        segment.finish_segment()
+                    for raw_call in message["tool_calls"]:
+                        function = raw_call["function"]
+                        card = ToolCallCard(
+                            raw_call["id"],
+                            function["name"],
+                            function["arguments"],
+                            state="running",
+                        )
+                        cards[raw_call["id"]] = card
+                        self._tool_cards[raw_call["id"]] = card
+                        await transcript.mount(card)
+                elif role == "tool":
+                    card = cards.get(message["tool_call_id"])
+                    if card is not None:
+                        try:
+                            payload = json.loads(message["content"])
+                        except json.JSONDecodeError:
+                            payload = {}
+                        status = (
+                            "approval_rejected"
+                            if payload.get("error_code") == "approval_rejected"
+                            else str(payload.get("status", "error"))
+                        )
+                        card.restore_result(status, message["content"])
+                elif role == "assistant":
+                    restored = ChatMessage(
+                        "assistant",
+                        message["content"],
+                        model_name=self._model_name,
+                    )
+                    await transcript.mount(restored)
+                    restored.restore()
+
+        has_history = bool(record.completed_turns)
+        self.query_one("#empty-state", EmptyState).styles.display = (
+            "none" if has_history else "block"
+        )
+        self.screen.set_class(not has_history, "empty-chat")
+        status_bar = self.query_one(StatusBar)
+        status_bar.reset()
+        status_bar.set_conversation_active(has_history)
+        self._set_busy(False)
+        self._scroll_to_latest()
         self.query_one(PromptInput).focus()
 
     def action_cancel_response(self) -> None:

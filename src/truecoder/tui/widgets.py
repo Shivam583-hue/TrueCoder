@@ -231,6 +231,14 @@ class ChatMessage(Vertical):
         self.remove_class("streaming")
         self.query_one(".message-footer", Static).styles.display = "none"
 
+    def restore(self) -> None:
+        """Mark persisted assistant text complete without inventing timing."""
+        self.remove_class("streaming")
+        self.add_class("completed")
+        self.query_one(".message-footer", Static).update(
+            _session_metadata(self.model_name, state="completed")
+        )
+
     def finish(
         self,
         usage: TokenUsage | None,
@@ -292,6 +300,7 @@ class ToolCallCard(Vertical):
         )
         self.state = state
         self.result_content = ""
+        self.restored = False
         self.started_at = monotonic()
         self.running_at = self.started_at if state == "running" else None
 
@@ -411,6 +420,15 @@ class ToolCallCard(Vertical):
         self.result_content = content
         self.set_state("rejected")
 
+    def restore_result(self, status: str, content: str) -> None:
+        """Restore a persisted result without fabricating elapsed time."""
+        self.restored = True
+        self.result_content = content
+        if status == "approval_rejected":
+            self.set_state("rejected")
+        else:
+            self.set_state("completed" if status == "success" else "failed")
+
     @on(Button.Pressed, ".tool-details-toggle")
     def toggle_details(self, event: Button.Pressed) -> None:
         event.stop()
@@ -457,7 +475,9 @@ class ToolCallCard(Vertical):
         result_summary = self._result_summary()
         if result_summary:
             parts.append(result_summary)
-        parts.append(self._elapsed_label())
+        elapsed = self._elapsed_label()
+        if elapsed:
+            parts.append(elapsed)
         return " · ".join(parts)
 
     def _result_summary(self) -> str:
@@ -476,6 +496,8 @@ class ToolCallCard(Vertical):
         return ""
 
     def _elapsed_label(self) -> str:
+        if self.restored:
+            return ""
         timer_started_at = (
             self.running_at
             if self.state in {"completed", "failed"} and self.running_at is not None
