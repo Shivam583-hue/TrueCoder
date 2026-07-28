@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from platformdirs import user_data_path
+
 from truecoder.agent.messages import ModelMessage
 from truecoder.session.codec import decode_turn, encode_turn
 from truecoder.session.models import (
@@ -18,6 +20,10 @@ from truecoder.session.models import (
 
 DATABASE_VERSION = 1
 DEFAULT_SESSION_TITLE = "New session"
+
+
+def default_session_database_path() -> Path:
+    return user_data_path("truecoder", appauthor=False) / "sessions.sqlite3"
 
 
 class SQLiteSessionStore:

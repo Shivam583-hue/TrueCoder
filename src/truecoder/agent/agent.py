@@ -21,6 +21,11 @@ from truecoder.agent.project_instructions import (
 from truecoder.agent.state import AgentState
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType, TokenUsage
+from truecoder.session import (
+    SessionManager,
+    SQLiteSessionStore,
+    default_session_database_path,
+)
 from truecoder.tools import ToolExecutor, serialize_tool_result
 from truecoder.tools.base import (
     BaseTool,
@@ -247,12 +252,16 @@ def run() -> None:
     context_builder = ContextBuilder.from_environment(
         project_instructions=project_instructions,
     )
+    state = AgentState()
 
     tool_registry = ToolRegistry()
     tool_registry.register(ReadFileTool(project_root))
     agent = Agent(
+        state=state,
         context_builder=context_builder,
         tool_registry=tool_registry,
     )
+    session_store = SQLiteSessionStore(default_session_database_path())
+    session_manager = SessionManager(session_store, state, project_root)
 
-    TrueCoderApp(agent).run()
+    TrueCoderApp(agent, session_manager=session_manager).run()

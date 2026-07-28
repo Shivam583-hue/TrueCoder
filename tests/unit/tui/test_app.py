@@ -1,7 +1,7 @@
 import asyncio
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from truecoder.agent import Agent, ContextBuilder
 from truecoder.client.response import (
@@ -263,6 +263,28 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                 str(app.query_one("#footer-status").content),
             )
 
+    async def test_successful_turn_is_saved_to_the_active_session(self):
+        client = FakeLLMClient(
+            [
+                StreamEvent(
+                    type=EventType.TEXT_DELTA,
+                    text_delta=TextDelta("Answer"),
+                ),
+                StreamEvent(type=EventType.MESSAGE_COMPLETE),
+            ]
+        )
+        manager = Mock()
+        app = TrueCoderApp(make_agent(client), session_manager=manager)
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            prompt = app.query_one(PromptInput)
+            prompt.text = "Question"
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+
+        manager.save_completed_turns.assert_called_once_with()
+        manager.close.assert_called_once_with()
+
     async def test_shift_enter_inserts_a_newline(self):
         client = FakeLLMClient([])
         app = TrueCoderApp(make_agent(client))
@@ -337,6 +359,19 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.messages, [])
             self.assertTrue(app.query_one(EmptyState).display)
             self.assertTrue(app.screen.has_class("empty-chat"))
+
+    async def test_new_chat_creates_a_persisted_session_when_configured(self):
+        manager = Mock()
+        app = TrueCoderApp(
+            make_agent(FakeLLMClient([])),
+            session_manager=manager,
+        )
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("ctrl+l")
+            await pilot.pause()
+
+        manager.create_session.assert_called_once_with()
 
     async def test_new_chat_safely_cancels_an_active_response(self):
         client = BlockingLLMClient([])

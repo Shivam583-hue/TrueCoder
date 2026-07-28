@@ -7,7 +7,7 @@ from truecoder.session.models import (
     SessionStorageError,
     SessionSummary,
 )
-from truecoder.session.store import SQLiteSessionStore
+from truecoder.session.store import SQLiteSessionStore, default_session_database_path
 
 __all__ = [
     "SQLiteSessionStore",
@@ -18,4 +18,5 @@ __all__ = [
     "SessionRecord",
     "SessionStorageError",
     "SessionSummary",
+    "default_session_database_path",
 ]

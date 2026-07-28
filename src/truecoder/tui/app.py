@@ -19,6 +19,7 @@ from truecoder.agent.approval import ApprovalDecision, ApprovalRequest
 from truecoder.agent.events import AgentEventType
 from truecoder.agent.messages import ModelMessage
 from truecoder.client.response import TokenUsage
+from truecoder.session import SessionError, SessionManager
 from truecoder.tui.widgets import (
     ChatMessage,
     Composer,
@@ -76,9 +77,15 @@ class TrueCoderApp(App[None]):
         Binding("escape", "cancel_response", "Stop", show=False, priority=True),
     ]
 
-    def __init__(self, agent: Agent | None = None) -> None:
+    def __init__(
+        self,
+        agent: Agent | None = None,
+        *,
+        session_manager: SessionManager | None = None,
+    ) -> None:
         super().__init__()
         self.agent = agent or Agent()
+        self.session_manager = session_manager
         self.agent.approval_handler = self._request_tool_approval
         self._busy = False
         self._active_worker: Worker[None] | None = None
@@ -117,7 +124,11 @@ class TrueCoderApp(App[None]):
     async def on_unmount(self) -> None:
         if self._active_worker is not None and self._active_worker.is_running:
             self._active_worker.cancel()
-        await self.agent.close()
+        try:
+            await self.agent.close()
+        finally:
+            if self.session_manager is not None:
+                self.session_manager.close()
 
     @on(PromptInput.Submitted)
     async def submit_from_keyboard(self, event: PromptInput.Submitted) -> None:
@@ -231,6 +242,14 @@ class TrueCoderApp(App[None]):
                         else None
                     )
                     completed = True
+                    if self.session_manager is not None:
+                        try:
+                            self.session_manager.save_completed_turns()
+                        except SessionError as error:
+                            self.notify(
+                                f"Session could not be saved: {error}",
+                                severity="error",
+                            )
                 elif event.type == AgentEventType.AGENT_ERROR:
                     await assistant_message.show_error(
                         str(
@@ -410,7 +429,10 @@ class TrueCoderApp(App[None]):
                 await active_worker.wait()
             except WorkerCancelled:
                 pass
-        self.agent.reset()
+        if self.session_manager is None:
+            self.agent.reset()
+        else:
+            self.session_manager.create_session()
         self._clear_pending_approval()
         await self.query(".chat-message").remove()
         await self.query(".tool-call-card").remove()

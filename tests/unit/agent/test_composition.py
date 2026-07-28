@@ -14,6 +14,9 @@ class CompositionRootTests(unittest.TestCase):
             launch_directory = project_root / "src" / "feature"
             launch_directory.mkdir(parents=True)
             context_builder = Mock()
+            session_store = Mock()
+            session_manager = Mock()
+            database_path = project_root / "sessions.sqlite3"
 
             with (
                 patch(
@@ -32,6 +35,18 @@ class CompositionRootTests(unittest.TestCase):
                     "truecoder.agent.agent.ContextBuilder.from_environment",
                     return_value=context_builder,
                 ) as build_context,
+                patch(
+                    "truecoder.agent.agent.default_session_database_path",
+                    return_value=database_path,
+                ) as resolve_database,
+                patch(
+                    "truecoder.agent.agent.SQLiteSessionStore",
+                    return_value=session_store,
+                ) as store_type,
+                patch(
+                    "truecoder.agent.agent.SessionManager",
+                    return_value=session_manager,
+                ) as manager_type,
                 patch("truecoder.agent.agent.Agent") as agent_type,
                 patch("truecoder.tui.app.TrueCoderApp") as app_type,
             ):
@@ -54,7 +69,18 @@ class CompositionRootTests(unittest.TestCase):
             agent_type.call_args.kwargs["context_builder"],
             context_builder,
         )
-        app_type.assert_called_once_with(agent_type.return_value)
+        state = agent_type.call_args.kwargs["state"]
+        resolve_database.assert_called_once_with()
+        store_type.assert_called_once_with(database_path)
+        manager_type.assert_called_once_with(
+            session_store,
+            state,
+            project_root,
+        )
+        app_type.assert_called_once_with(
+            agent_type.return_value,
+            session_manager=session_manager,
+        )
         app_type.return_value.run.assert_called_once_with()
 
 
