@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 from truecoder.agent.agent import run
 from truecoder.tools.builtin import (
+    EditFileTool,
     GlobTool,
     GrepTool,
     ListDirTool,
@@ -59,6 +60,7 @@ class CompositionRootTests(unittest.TestCase):
                 run()
 
         tool_registry = agent_type.call_args.kwargs["tool_registry"]
+        edit_file_tool = tool_registry.get("edit_file")
         glob_tool = tool_registry.get("glob")
         grep_tool = tool_registry.get("grep")
         list_dir_tool = tool_registry.get("list_dir")
@@ -73,6 +75,8 @@ class CompositionRootTests(unittest.TestCase):
         build_context.assert_called_once_with(
             project_instructions="Repository guidance",
         )
+        self.assertIsInstance(edit_file_tool, EditFileTool)
+        self.assertEqual(edit_file_tool.workspace_root, project_root)
         self.assertIsInstance(glob_tool, GlobTool)
         self.assertEqual(glob_tool.workspace_root, project_root)
         self.assertIsInstance(grep_tool, GrepTool)

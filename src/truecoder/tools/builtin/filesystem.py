@@ -85,6 +85,11 @@ def resolve_existing_workspace_path(
             "Absolute paths are not allowed.",
             code="outside_workspace",
         )
+    if is_sensitive_path(relative_path):
+        raise ToolExecutionError(
+            "The requested path is considered sensitive.",
+            code="sensitive_path",
+        )
 
     candidate = workspace_root / relative_path
     if not allow_symlinks:

@@ -35,6 +35,7 @@ from truecoder.tools.base import (
     ToolResult,
 )
 from truecoder.tools.builtin import (
+    EditFileTool,
     GlobTool,
     GrepTool,
     ListDirTool,
@@ -261,6 +262,7 @@ def run() -> None:
     state = AgentState()
 
     tool_registry = ToolRegistry()
+    tool_registry.register(EditFileTool(project_root))
     tool_registry.register(GlobTool(project_root))
     tool_registry.register(GrepTool(project_root))
     tool_registry.register(ListDirTool(project_root))
