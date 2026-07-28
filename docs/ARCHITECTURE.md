@@ -125,6 +125,26 @@ Arguments cross the model boundary as JSON and are validated before approval or 
 
 Tools are registered explicitly. Restricted tools, especially filesystem tools, must enforce their own security boundaries.
 
+The shipped filesystem tools share one sensitive-path policy and are rooted at
+the canonical project root:
+
+* `read_file` returns bounded UTF-8 line ranges and never exposes paths outside
+  the project or known credential locations
+* `write_file` creates or completely replaces one UTF-8 text file, requires an
+  existing parent directory, rejects symlinks and sensitive paths, and limits
+  content to 32 KiB
+
+`write_file` never appends, makes partial edits, creates directories, or writes
+non-regular files. It writes a temporary file beside the destination, flushes
+it, preserves existing permissions when replacing a file, and uses
+`os.replace()` so failure cannot expose a partially written destination. Its
+result reports only the relative path, whether the file was created, and the
+UTF-8 byte count; the original content is not duplicated in the result.
+
+Both tools require the normal awaited approval interaction. Successful and
+failed calls remain part of the current turn and are persisted with that turn
+once the model produces its final response.
+
 ## Approval
 
 Approval is an awaited request-response interaction.
