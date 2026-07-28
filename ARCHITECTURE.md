@@ -13,6 +13,12 @@ Agent
  ├─ Context and state
  ├─ LLM client
  └─ Tools
+
+UI
+ ↓
+Session manager
+ ├─ Agent state
+ └─ SQLite session store
 ```
 
 The UI handles presentation and user input.
@@ -67,6 +73,48 @@ The loop has a maximum iteration limit.
 
 Model text is only committed once the response is complete. Request failures abort the active turn. Tool failures become structured results when the model can reasonably recover from them.
 
+The detailed turn lifecycle is:
+
+1. The user sends a message.
+2. The agent starts an active turn and records the user message as pending.
+3. The context builder creates a model request.
+4. The model returns text, tool calls, or both.
+5. Requested tools are marked outstanding, executed, and recorded in order.
+6. The model is called again after every tool-call batch is resolved.
+7. A final assistant response completes the pending turn.
+8. The complete pending message group is committed as one turn.
+9. Active-turn state is cleared.
+
+## Sessions
+
+Sessions persist completed turns, not flattened messages or UI widgets.
+
+The session manager coordinates the current `AgentState` with a project-scoped
+SQLite store. The store lives in the operating system's user-data directory, so
+session data never enters the repository.
+
+Each application launch creates an active session immediately. After an
+`AGENT_END` event, the manager atomically appends any completed turns that are
+not yet stored. Errors, cancellations, pending approvals, unresolved tool calls,
+and streamed partial text are never persisted.
+
+Restoration is transactional:
+
+* persisted turns are decoded and validated before active state changes
+* every turn must begin with a user message and end with assistant text
+* tool calls and results must remain matched and ordered
+* invalid stored data leaves the existing conversation untouched
+* switching replaces completed history only after the target session loads
+
+Sessions are isolated by canonical project root. A repository cannot list,
+resume, rename, or delete another repository's sessions. Deleting the active
+session creates a new empty session so the application always has an active
+session.
+
+The TUI reconstructs transcript widgets from durable model messages. Focus,
+scroll position, expanded tool details, elapsed timing, token usage, and other
+presentation-only state are intentionally not persisted.
+
 ## Tools
 
 Tool definitions, calls, arguments, and results are typed values.
@@ -93,3 +141,5 @@ Keep these invariants stable as the codebase grows:
 * provider-specific behavior stays inside the client
 * tools do not depend on outer layers
 * the UI does not contain agent logic
+* session saves happen only at completed-turn boundaries
+* restoring a session cannot partially replace agent state
