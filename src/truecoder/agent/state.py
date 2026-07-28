@@ -172,6 +172,95 @@ class AgentState:
         self.__completed_turns.clear()
         self.__clear_pending_state()
 
+    def replace_completed_turns(
+        self,
+        turns: Sequence[Sequence[ModelMessage]],
+    ) -> None:
+        """Replace history with validated completed turns."""
+        if self.turn_active:
+            raise RuntimeError("Cannot replace history while a turn is active.")
+
+        replacement = AgentState()
+
+        for turn in turns:
+            messages = copy_messages(turn)
+            if not messages or messages[0].get("role") != "user":
+                raise ValueError("A completed turn must begin with a user message.")
+
+            prompt = messages[0].get("content")
+            if not isinstance(prompt, str):
+                raise TypeError("A completed turn requires a string user prompt.")
+
+            replacement.begin_turn(prompt)
+
+            for index, message in enumerate(messages[1:], start=1):
+                role = message.get("role")
+                is_last = index == len(messages) - 1
+
+                if role == "assistant" and "tool_calls" in message:
+                    if is_last:
+                        raise ValueError(
+                            "A completed turn must end with assistant text."
+                        )
+                    raw_calls = message.get("tool_calls")
+                    if not isinstance(raw_calls, list) or not raw_calls:
+                        raise ValueError(
+                            "An assistant tool-call message requires tool calls."
+                        )
+
+                    calls: list[ToolCall] = []
+                    for raw_call in raw_calls:
+                        if not isinstance(raw_call, dict):
+                            raise TypeError("Tool calls must be objects.")
+                        function = raw_call.get("function")
+                        if (
+                            raw_call.get("type") != "function"
+                            or not isinstance(function, dict)
+                        ):
+                            raise ValueError("Only function tool calls are supported.")
+                        calls.append(
+                            ToolCall(
+                                call_id=raw_call.get("id"),
+                                name=function.get("name"),
+                                arguments_json=function.get("arguments"),
+                            )
+                        )
+
+                    content = message.get("content")
+                    if content is not None and not isinstance(content, str):
+                        raise ValueError(
+                            "Assistant tool-call content must be a string or None."
+                        )
+                    replacement.record_tool_calls(calls, content=content)
+                    continue
+
+                if role == "tool":
+                    call_id = message.get("tool_call_id")
+                    content = message.get("content")
+                    if not isinstance(call_id, str) or not isinstance(content, str):
+                        raise ValueError(
+                            "Tool messages require string call IDs and content."
+                        )
+                    replacement.record_tool_result(call_id, content)
+                    continue
+
+                if role == "assistant" and "tool_calls" not in message:
+                    content = message.get("content")
+                    if not is_last or not isinstance(content, str):
+                        raise ValueError(
+                            "A completed turn must end with assistant text."
+                        )
+                    replacement.complete_turn(content)
+                    continue
+
+                raise ValueError(f"Unsupported message role in completed turn: {role}")
+
+            if replacement.turn_active:
+                raise ValueError("A completed turn must end with assistant text.")
+
+        self.__completed_turns = replacement.completed_turns
+        self.__clear_pending_state()
+
     def __clear_pending_state(self) -> None:
         self.__pending_messages = None
         self.__outstanding_tool_call_ids.clear()

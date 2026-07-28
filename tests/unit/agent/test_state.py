@@ -109,6 +109,52 @@ class AgentStateTests(unittest.TestCase):
             ],
         )
 
+    def test_replaces_history_with_validated_completed_turns(self):
+        state = AgentState()
+        state.replace_completed_turns(
+            [
+                [
+                    {"role": "user", "content": "Question"},
+                    {"role": "assistant", "content": "Answer"},
+                ]
+            ]
+        )
+
+        self.assertEqual(
+            state.completed_turns,
+            [
+                [
+                    {"role": "user", "content": "Question"},
+                    {"role": "assistant", "content": "Answer"},
+                ]
+            ],
+        )
+
+    def test_failed_history_replacement_is_atomic(self):
+        state = AgentState()
+        state.begin_turn("Existing")
+        state.complete_turn("History")
+
+        with self.assertRaises(ValueError):
+            state.replace_completed_turns(
+                [[{"role": "user", "content": "Incomplete"}]]
+            )
+
+        self.assertEqual(
+            state.messages,
+            [
+                {"role": "user", "content": "Existing"},
+                {"role": "assistant", "content": "History"},
+            ],
+        )
+
+    def test_rejects_history_replacement_during_active_turn(self):
+        state = AgentState()
+        state.begin_turn("Pending")
+
+        with self.assertRaises(RuntimeError):
+            state.replace_completed_turns([])
+
 
 class AgentStateToolTurnTests(unittest.TestCase):
     def test_single_tool_call_round_produces_provider_ordered_history(self):

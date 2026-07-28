@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from truecoder.agent.project_instructions import (
     PROJECT_INSTRUCTIONS_MAX_BYTES,
@@ -45,7 +46,11 @@ class ProjectRootTests(unittest.TestCase):
             launch_directory = Path(temporary_directory).resolve() / "scratch"
             launch_directory.mkdir()
 
-            result = find_project_root(launch_directory)
+            with patch(
+                "truecoder.agent.project_instructions.Path.exists",
+                return_value=False,
+            ):
+                result = find_project_root(launch_directory)
 
         self.assertEqual(result, launch_directory)
 
