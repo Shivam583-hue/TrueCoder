@@ -13,40 +13,10 @@ from truecoder.tools.base import (
     ToolArguments,
     ToolExecutionError,
 )
+from truecoder.tools.builtin.filesystem import is_sensitive_path
 
 MAX_LINE_COUNT = 500
 
-_SENSITIVE_DIRECTORY_NAMES = frozenset(
-    {
-        ".aws",
-        ".azure",
-        ".git",
-        ".gnupg",
-        ".kube",
-        ".ssh",
-    }
-)
-_SENSITIVE_FILE_NAMES = frozenset(
-    {
-        ".credentials",
-        ".netrc",
-        "credentials",
-        "credentials.json",
-        "credentials.yaml",
-        "credentials.yml",
-        "id_dsa",
-        "id_ecdsa",
-        "id_ed25519",
-        "id_rsa",
-        "secrets.json",
-        "secrets.yaml",
-        "secrets.yml",
-    }
-)
-_SENSITIVE_FILE_SUFFIXES = frozenset({".jks", ".key", ".p12", ".pem", ".pfx"})
-_SAFE_ENV_TEMPLATE_NAMES = frozenset(
-    {".env.example", ".env.sample", ".env.template"}
-)
 _TEXT_CONTROL_BYTES = frozenset({9, 10, 13})
 
 
@@ -126,9 +96,7 @@ class ReadFileTool(BaseTool[ReadFileArguments]):
             )
 
         try:
-            resolved_path = (self._workspace_root / relative_path).resolve(
-                strict=False
-            )
+            resolved_path = (self._workspace_root / relative_path).resolve(strict=False)
         except PermissionError as error:
             raise ToolExecutionError(
                 "Permission was denied while resolving the requested path.",
@@ -147,7 +115,7 @@ class ReadFileTool(BaseTool[ReadFileArguments]):
             )
 
         workspace_path = resolved_path.relative_to(self._workspace_root)
-        if self._is_sensitive_path(workspace_path):
+        if is_sensitive_path(workspace_path):
             raise ToolExecutionError(
                 "The requested path is considered sensitive.",
                 code="sensitive_path",
@@ -178,24 +146,6 @@ class ReadFileTool(BaseTool[ReadFileArguments]):
             )
 
         return resolved_path
-
-    @staticmethod
-    def _is_sensitive_path(workspace_path: Path) -> bool:
-        normalized_parts = tuple(part.casefold() for part in workspace_path.parts)
-        if any(part in _SENSITIVE_DIRECTORY_NAMES for part in normalized_parts):
-            return True
-
-        file_name = workspace_path.name.casefold()
-        if file_name in _SAFE_ENV_TEMPLATE_NAMES:
-            return False
-
-        if file_name == ".env" or file_name.startswith(".env."):
-            return True
-
-        if file_name in _SENSITIVE_FILE_NAMES:
-            return True
-
-        return workspace_path.suffix.casefold() in _SENSITIVE_FILE_SUFFIXES
 
     @classmethod
     def _decode_line(cls, raw_line: bytes) -> str:
