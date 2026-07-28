@@ -19,6 +19,8 @@ MAX_LINE_COUNT = 500
 
 _TEXT_CONTROL_BYTES = frozenset({9, 10, 13})
 
+# --------------------------------------------------------------------
+
 
 class ReadFileArguments(ToolArguments):
     """Validated arguments accepted by the read-file tool."""
@@ -38,6 +40,9 @@ class ReadFileArguments(ToolArguments):
     )
 
 
+# --------------------------------------------------------------------
+
+
 class ReadFileOutput(TypedDict):
     """Structured output returned by the read file tool."""
 
@@ -48,6 +53,9 @@ class ReadFileOutput(TypedDict):
     has_more: bool
 
 
+# --------------------------------------------------------------------
+
+
 class ReadFileTool(BaseTool[ReadFileArguments]):
     """Read bounded UTF-8 text ranges from a trusted workspace."""
 
@@ -55,6 +63,8 @@ class ReadFileTool(BaseTool[ReadFileArguments]):
     description = "Read a range of lines from a file in the workspace."
     arguments_type = ReadFileArguments
     approval = ToolApproval.REQUIRED
+
+    # -------------------------------
 
     def __init__(self, workspace_root: Path) -> None:
         if not isinstance(workspace_root, Path):
@@ -73,11 +83,15 @@ class ReadFileTool(BaseTool[ReadFileArguments]):
 
         self._workspace_root = resolved_root
 
+    # -------------------------------
+
     @property
     def workspace_root(self) -> Path:
         """Return the trusted, resolved workspace root."""
 
         return self._workspace_root
+
+    # -------------------------------
 
     async def run(self, arguments: ReadFileArguments) -> ReadFileOutput:
         resolved_path = self._resolve_requested_path(arguments.path)
@@ -86,6 +100,8 @@ class ReadFileTool(BaseTool[ReadFileArguments]):
             resolved_path,
             arguments,
         )
+
+    # -------------------------------
 
     def _resolve_requested_path(self, requested_path: str) -> Path:
         relative_path = Path(requested_path)
@@ -147,6 +163,8 @@ class ReadFileTool(BaseTool[ReadFileArguments]):
 
         return resolved_path
 
+    # -------------------------------
+
     @classmethod
     def _decode_line(cls, raw_line: bytes) -> str:
         if cls._contains_binary_control_bytes(raw_line):
@@ -163,12 +181,16 @@ class ReadFileTool(BaseTool[ReadFileArguments]):
                 code="unsupported_encoding",
             ) from error
 
+    # -------------------------------
+
     @staticmethod
     def _contains_binary_control_bytes(raw_line: bytes) -> bool:
         return any(
             (byte < 32 and byte not in _TEXT_CONTROL_BYTES) or byte == 127
             for byte in raw_line
         )
+
+    # -------------------------------
 
     def _read_lines(
         self,
