@@ -31,6 +31,9 @@ class SessionManagerUITests(unittest.IsolatedAsyncioTestCase):
     async def test_ctrl_p_lists_project_sessions_and_marks_active(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             app, manager = self.make_app(Path(temporary_directory).resolve())
+            manager.state.begin_turn("Saved session")
+            manager.state.complete_turn("Answer")
+            manager.save_completed_turns()
             manager.create_session()
 
             async with app.run_test(size=(120, 40)) as pilot:
@@ -42,6 +45,21 @@ class SessionManagerUITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(items), 2)
                 self.assertEqual(sum(item.active for item in items), 1)
 
+    async def test_escape_closes_session_manager(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            app, _manager = self.make_app(Path(temporary_directory).resolve())
+
+            async with app.run_test(size=(120, 40)) as pilot:
+                base_screen = app.screen
+                await pilot.press("ctrl+p")
+                await pilot.pause()
+                self.assertIsInstance(app.screen, SessionManagerScreen)
+
+                await pilot.press("escape")
+                await pilot.pause()
+
+                self.assertIs(app.screen, base_screen)
+
     async def test_new_session_action_creates_and_activates_a_session(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             app, manager = self.make_app(Path(temporary_directory).resolve())
@@ -52,7 +70,7 @@ class SessionManagerUITests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
 
                 self.assertNotEqual(manager.active_session.session_id, previous_id)
-                self.assertEqual(len(manager.list_sessions()), 2)
+                self.assertEqual(len(manager.list_sessions()), 1)
 
     async def test_switch_restores_the_selected_transcript(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

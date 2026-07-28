@@ -83,7 +83,7 @@ class TrueCoderApp(App[None]):
         Binding("ctrl+q", "quit", "Quit", show=False, priority=True),
         Binding("ctrl+l", "new_chat", "New chat", show=False, priority=True),
         Binding("ctrl+p", "manage_sessions", "Sessions", show=False, priority=True),
-        Binding("escape", "cancel_response", "Stop", show=False, priority=True),
+        Binding("escape", "cancel_response", "Stop", show=False),
     ]
 
     def __init__(

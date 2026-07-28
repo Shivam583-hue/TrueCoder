@@ -31,14 +31,18 @@ class SessionManager:
         self.state = state
         self.project_root = project_root.resolve(strict=True)
         self._active_session = self.store.create_session(self.project_root)
+        self._closed = False
 
     @property
     def active_session(self) -> SessionSummary:
         return self._active_session
 
     def create_session(self) -> SessionSummary:
+        previous_session = self._active_session
+        new_session = self.store.create_session(self.project_root)
         self.state.reset()
-        self._active_session = self.store.create_session(self.project_root)
+        self._active_session = new_session
+        self._delete_if_empty(previous_session)
         return self._active_session
 
     def save_completed_turns(self) -> SessionSummary:
@@ -70,9 +74,12 @@ class SessionManager:
         return self.store.list_sessions(self.project_root)
 
     def switch_session(self, session_id: str) -> SessionRecord:
+        previous_session = self._active_session
         record = self.store.load_session(self.project_root, session_id)
         self.state.replace_completed_turns(record.completed_turns)
         self._active_session = record.summary
+        if previous_session.session_id != record.summary.session_id:
+            self._delete_if_empty(previous_session)
         return record
 
     def rename_session(self, session_id: str, title: str) -> SessionSummary:
@@ -90,7 +97,18 @@ class SessionManager:
         deleting_active = session_id == self._active_session.session_id
         self.store.delete_session(self.project_root, session_id)
         if deleting_active:
-            self.create_session()
+            self.state.reset()
+            self._active_session = self.store.create_session(self.project_root)
 
     def close(self) -> None:
-        self.store.close()
+        if self._closed:
+            return
+        try:
+            self._delete_if_empty(self._active_session)
+        finally:
+            self.store.close()
+            self._closed = True
+
+    def _delete_if_empty(self, session: SessionSummary) -> None:
+        if session.turn_count == 0:
+            self.store.delete_session(self.project_root, session.session_id)

@@ -109,7 +109,9 @@ Restoration is transactional:
 Sessions are isolated by canonical project root. A repository cannot list,
 resume, rename, or delete another repository's sessions. Deleting the active
 session creates a new empty session so the application always has an active
-session.
+session. Empty sessions are temporary placeholders: creating another session,
+switching away, or closing the application automatically removes an active
+session that still has zero completed turns.
 
 The TUI reconstructs transcript widgets from durable model messages. Focus,
 scroll position, expanded tool details, elapsed timing, token usage, and other

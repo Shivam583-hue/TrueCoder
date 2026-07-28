@@ -64,7 +64,7 @@ def _launcher_shortcuts() -> Text:
     shortcuts.append("tab", style="#c8c8c8")
     shortcuts.append(" agents    ", style="#707070")
     shortcuts.append("ctrl+p", style="#c8c8c8")
-    shortcuts.append(" commands    ", style="#707070")
+    shortcuts.append(" sessions    ", style="#707070")
     shortcuts.append("ctrl+q", style="#c8c8c8")
     shortcuts.append(" quit", style="#707070")
     return shortcuts
@@ -630,7 +630,7 @@ class StatusBar(Horizontal):
                 label.append(f" ({percentage}%)", style="#666666")
             label.append("    ")
         label.append("ctrl+p", style="#c8c8c8")
-        label.append(" commands    ", style="#707070")
+        label.append(" sessions    ", style="#707070")
         label.append("ctrl+q", style="#c8c8c8")
         label.append(" quit", style="#707070")
         return label

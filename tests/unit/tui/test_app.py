@@ -154,7 +154,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                     shortcuts,
                 )
                 self.assertIn(
-                    "ctrl+p commands",
+                    "ctrl+p sessions",
                     shortcuts,
                 )
                 self.assertIn("ctrl+q quit", shortcuts)
@@ -255,7 +255,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app.query_one("#launcher-shortcuts").display)
             self.assertFalse(app.query_one("#launcher-tip").display)
             self.assertIn(
-                "ctrl+p commands",
+                "ctrl+p sessions",
                 str(app.query_one("#footer-status").content),
             )
             self.assertIn(
