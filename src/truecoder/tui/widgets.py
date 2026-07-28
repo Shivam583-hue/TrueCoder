@@ -493,6 +493,13 @@ class ToolCallCard(Vertical):
             if isinstance(start, int) and isinstance(end, int):
                 count = max(0, end - start + 1)
                 return f"{count:,} {'line' if count == 1 else 'lines'}"
+        if self.tool_name == "write_file" and isinstance(output, dict):
+            bytes_written = output.get("bytes_written")
+            if isinstance(bytes_written, int) and not isinstance(bytes_written, bool):
+                return (
+                    f"{bytes_written:,} "
+                    f"{'byte' if bytes_written == 1 else 'bytes'}"
+                )
         return ""
 
     def _elapsed_label(self) -> str:
