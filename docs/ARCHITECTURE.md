@@ -133,6 +133,20 @@ the canonical project root:
 * `write_file` creates or completely replaces one UTF-8 text file, requires an
   existing parent directory, rejects symlinks and sensitive paths, and limits
   content to 32 KiB
+* `edit_file` replaces exact text in an existing UTF-8 file, either once when
+  the match is unique or everywhere when explicitly requested
+* `list_dir` returns at most 500 immediate children of one directory without
+  recursing
+* `glob` finds at most 500 files or directories with rooted `*` and recursive
+  `**` path patterns
+* `grep` searches one file or a directory tree with a Python regular expression
+  and returns at most 200 matching lines with paths and line numbers
+
+`list_dir`, `glob`, and `grep` do not interpret `.gitignore`. They exclude the
+shared sensitive-path set, never follow symlinks while traversing, and use
+explicit scan limits so a model request cannot walk an unbounded tree.
+`list_dir` scans no more than 5,000 entries. `glob` and `grep` scan no more than
+20,000 entries.
 
 `write_file` never appends, makes partial edits, creates directories, or writes
 non-regular files. It writes a temporary file beside the destination, flushes
@@ -141,9 +155,35 @@ it, preserves existing permissions when replacing a file, and uses
 result reports only the relative path, whether the file was created, and the
 UTF-8 byte count; the original content is not duplicated in the result.
 
-Both tools require the normal awaited approval interaction. Successful and
-failed calls remain part of the current turn and are persisted with that turn
-once the model produces its final response.
+`edit_file` is deliberately an exact-text operation rather than a line-number
+patch. Its required arguments are `path`, `old_text`, `new_text`, and
+`replace_all`. With `replace_all=false`, the old text must appear exactly once;
+zero matches produce `text_not_found`, and multiple matches produce
+`ambiguous_match`. An empty `new_text` deletes the exact match. Both edit
+fragments are limited to 32 KiB, and the existing and resulting files are
+limited to 1 MiB.
+
+Before replacing an edited file, `edit_file` checks that the file still has the
+same device, inode, size, and modification timestamp it had when read. A
+concurrent change becomes `file_changed` instead of being overwritten. The
+replacement is written and flushed in the same directory, keeps the original
+permission bits, and is installed with `os.replace()`. This gives readers either
+the old complete file or the new complete file, never a partially written file.
+
+`grep` searches full lines but truncates returned display lines to 500
+characters. Files larger than 1 MiB, binary-looking files, and non-UTF-8 files
+are skipped during a recursive search. Its pattern is a Python regular
+expression, so callers can use anchors, groups, and inline flags such as
+`(?i)`. `glob` is for path-name patterns instead: `*` stays within one directory
+level, while `**` may cross levels.
+
+All shipped filesystem tools require the normal awaited approval interaction.
+Successful and failed calls remain part of the current turn and are persisted
+with that turn once the model produces its final response. The TUI renders
+compact completed summaries such as `Listed src · 4 entries`,
+`Matched . · 12 matches`, `Searched src · 3 matches`, and
+`Edited src/app.py · 1 replacement`; the same summaries are reconstructed when
+a session is resumed.
 
 ## Approval
 
