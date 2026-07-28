@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import stat
 import tempfile
 from pathlib import Path
 from typing import TypedDict
+
+from pydantic import Field
 
 from truecoder.tools.base import (
     BaseTool,
@@ -19,15 +23,22 @@ MAX_WRITE_BYTES = 32 * 1024
 
 
 class WriteFileArguments(ToolArguments):
-    path: str
-    content: str
+    """Validated arguments accepted by the write-file tool."""
+
+    path: str = Field(
+        min_length=1,
+        description="Path to the file, relative to the workspace.",
+    )
+    content: str = Field(
+        description="Complete UTF-8 text content to write to the file.",
+    )
 
 
 # --------------------------------------------------------------------
 
 
 class WriteFileOutput(TypedDict):
-    """Structured output returned by the read file tool."""
+    """Structured output returned by the write-file tool."""
 
     path: str
     created: bool
@@ -38,13 +49,14 @@ class WriteFileOutput(TypedDict):
 
 
 class WriteFileTool(BaseTool[WriteFileArguments]):
-    """Write files to a trusted workspace"""
+    """Atomically write bounded UTF-8 text files in a trusted workspace."""
 
     name = "write_file"
     description = (
         "Create or completely replace a UTF-8 text file inside the workspace. "
         "The parent directory must already exist."
     )
+    arguments_type = WriteFileArguments
     approval = ToolApproval.REQUIRED
 
     # -------------------------------
@@ -52,6 +64,9 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
     def __init__(self, workspace_root: Path) -> None:
         if not isinstance(workspace_root, Path):
             raise TypeError("workspace_root must be a pathlib.Path.")
+
+        if not workspace_root.is_absolute():
+            raise ValueError("workspace_root must be an absolute path.")
 
         try:
             resolved_root = workspace_root.resolve(strict=True)
@@ -192,12 +207,10 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
     # -------------------------------
 
     async def run(self, arguments: WriteFileArguments) -> WriteFileOutput:
-        """Write a UTF-8 text file atomically.
+        """Write a bounded UTF-8 text file atomically.
 
-        Cancellation note:
-            Once the filesystem operation has been dispatched to a worker thread,
-            cancelling this coroutine cannot guarantee rollback. The operating
-            system write or atomic replacement may already have completed.
+        Once dispatched to the worker thread, cancellation cannot guarantee
+        rollback because the atomic replacement may already have completed.
         """
 
         if not isinstance(arguments.content, str):
@@ -261,12 +274,41 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
         target_path = self._workspace_root / requested
         parent_dir = target_path.parent
 
+        # Reject symbolic links before resolving the parent so links outside the
+        # workspace are reported consistently and are never followed.
+        current_path = parent_dir
+        while (
+            current_path != self._workspace_root and current_path != current_path.parent
+        ):
+            try:
+                if current_path.is_symlink():
+                    raise ToolExecutionError(
+                        "Symbolic links are not allowed in the destination path.",
+                        code="symlink_not_allowed",
+                    )
+            except PermissionError as error:
+                raise ToolExecutionError(
+                    "Permission was denied while inspecting the destination path.",
+                    code="permission_denied",
+                ) from error
+            except OSError as error:
+                raise ToolExecutionError(
+                    "The destination path could not be inspected safely.",
+                    code="outside_workspace",
+                ) from error
+            current_path = current_path.parent
+
         try:
             resolved_parent = parent_dir.resolve(strict=True)
         except FileNotFoundError as error:
             raise ToolExecutionError(
                 "The parent directory does not exist.",
                 code="parent_not_found",
+            ) from error
+        except NotADirectoryError as error:
+            raise ToolExecutionError(
+                "The parent path is not a directory.",
+                code="not_a_directory",
             ) from error
         except PermissionError as error:
             raise ToolExecutionError(
@@ -311,32 +353,7 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
                 code="not_a_directory",
             )
 
-        # 5. Reject symbolic links in intermediate path components.
-        current_path = target_path.parent
-
-        while (
-            current_path != self._workspace_root and current_path != current_path.parent
-        ):
-            try:
-                if current_path.is_symlink():
-                    raise ToolExecutionError(
-                        "Symbolic links are not allowed in the destination path.",
-                        code="symlink_not_allowed",
-                    )
-            except PermissionError as error:
-                raise ToolExecutionError(
-                    "Permission was denied while inspecting the destination path.",
-                    code="permission_denied",
-                ) from error
-            except OSError as error:
-                raise ToolExecutionError(
-                    "The destination path could not be inspected safely.",
-                    code="outside_workspace",
-                ) from error
-
-            current_path = current_path.parent
-
-        # 6. Build and validate the final destination.
+        # 5. Build and validate the final destination.
         final_destination = resolved_parent / target_path.name
 
         if not final_destination.is_relative_to(self._workspace_root):
@@ -345,7 +362,7 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
                 code="outside_workspace",
             )
 
-        # 7. Reject sensitive paths.
+        # 6. Reject sensitive paths.
         workspace_path = final_destination.relative_to(self._workspace_root)
 
         if is_sensitive_path(workspace_path):
@@ -354,7 +371,7 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
                 code="sensitive_path",
             )
 
-        # 8. Inspect an existing target.
+        # 7. Inspect an existing target.
         try:
             target_stat = final_destination.lstat()
         except FileNotFoundError:
@@ -391,4 +408,3 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
             return final_destination, False
 
     # -------------------------------
-
