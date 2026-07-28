@@ -1,3 +1,5 @@
+"""Integration coverage for the Textual app, agent, and tool timeline."""
+
 import asyncio
 import os
 import unittest

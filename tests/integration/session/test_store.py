@@ -1,3 +1,5 @@
+"""Integration coverage for the SQLite session adapter."""
+
 import sqlite3
 import tempfile
 import unittest

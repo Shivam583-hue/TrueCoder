@@ -1,3 +1,5 @@
+"""Integration coverage for the session manager and SQLite store."""
+
 import tempfile
 import unittest
 from pathlib import Path

@@ -1,10 +1,12 @@
+"""Integration coverage for the Textual and persistent-session boundary."""
+
 import tempfile
 import unittest
 from pathlib import Path
 
 from textual.widgets import Input, ListView
 
-from tests.unit.tui.test_app import FakeLLMClient, make_agent
+from tests.integration.tui.test_app import FakeLLMClient, make_agent
 from truecoder.session import SessionManager, SQLiteSessionStore
 from truecoder.tools import ToolCall, ToolResult, serialize_tool_result
 from truecoder.tui.app import TrueCoderApp
