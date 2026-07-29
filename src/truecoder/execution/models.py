@@ -39,16 +39,25 @@ ExecutionStatus: TypeAlias = Literal[
 ExecutionLifecycleStage: TypeAlias = Literal[
     "requested",
     "policy_evaluated",
+    "approval_required",
+    "approved",
     "backend_selected",
     "starting",
     "started",
     "terminating",
     "completed",
+    "failed",
+    "timed_out",
+    "cancelled",
+    "denied",
+    "limit_exceeded",
+    "failed_to_start",
 ]
 
 ExecutionMode: TypeAlias = Literal["exec", "shell"]
 BackendPreference: TypeAlias = Literal["auto", "local", "container"]
 BackendName: TypeAlias = Literal["posix", "windows", "container"]
+ExecutionPlatform: TypeAlias = Literal["posix", "windows"]
 
 ShellKind: TypeAlias = Literal["auto", "posix", "powershell"]
 ResolvedShellKind: TypeAlias = Literal["posix", "powershell"]
@@ -92,17 +101,26 @@ EXECUTION_LIFECYCLE_STAGES: Final = frozenset(
     {
         "requested",
         "policy_evaluated",
+        "approval_required",
+        "approved",
         "backend_selected",
         "starting",
         "started",
         "terminating",
         "completed",
+        "failed",
+        "timed_out",
+        "cancelled",
+        "denied",
+        "limit_exceeded",
+        "failed_to_start",
     }
 )
 
 EXECUTION_MODES: Final = frozenset({"exec", "shell"})
 BACKEND_PREFERENCES: Final = frozenset({"auto", "local", "container"})
 BACKEND_NAMES: Final = frozenset({"posix", "windows", "container"})
+EXECUTION_PLATFORMS: Final = frozenset({"posix", "windows"})
 SHELL_KINDS: Final = frozenset({"auto", "posix", "powershell"})
 RESOLVED_SHELL_KINDS: Final = frozenset({"posix", "powershell"})
 
@@ -226,6 +244,20 @@ def _normalize_absolute_host_path(value: object, name: str) -> Path:
     return expanded.resolve(strict=False)
 
 
+def normalize_environment_name(
+    name: str,
+    platform: ExecutionPlatform,
+) -> str:
+
+    name = _require_nonempty_string(name, "environment variable name")
+    _require_no_null_bytes(name, "environment variable name")
+    _require_choice(platform, EXECUTION_PLATFORMS, "execution platform")
+
+    if platform == "windows":
+        return name.casefold()
+    return name
+
+
 def _validate_choice_tuple(
     values: object,
     *,
@@ -255,6 +287,7 @@ def _validate_string_pairs(
     require_nonempty_keys: bool = True,
     forbid_equals_in_keys: bool = False,
     forbid_null_bytes: bool = False,
+    key_platform: ExecutionPlatform | None = None,
 ) -> tuple[tuple[str, str], ...]:
     if not isinstance(values, tuple):
         raise TypeError(f"{name} must be a tuple of key/value pairs")
@@ -269,7 +302,7 @@ def _validate_string_pairs(
         key = _require_string(key, f"{name}[{index}].key")
         value = _require_string(value, f"{name}[{index}].value")
 
-        if require_nonempty_keys and not key:
+        if require_nonempty_keys and not key.strip():
             raise ValueError(f"{name} keys cannot be empty")
 
         if forbid_equals_in_keys and "=" in key:
@@ -279,10 +312,16 @@ def _validate_string_pairs(
             _require_no_null_bytes(key, f"{name}[{index}].key")
             _require_no_null_bytes(value, f"{name}[{index}].value")
 
-        if key in seen:
+        comparison_key = (
+            normalize_environment_name(key, key_platform)
+            if key_platform is not None
+            else key
+        )
+
+        if comparison_key in seen:
             raise ValueError(f"duplicate {name} key: {key!r}")
 
-        seen.add(key)
+        seen.add(comparison_key)
 
     return values
 
@@ -367,11 +406,21 @@ class ExecutionRequest:
             require_nonempty_keys=True,
             forbid_equals_in_keys=True,
             forbid_null_bytes=True,
+            key_platform=(
+                "windows"
+                if self.shell_kind == "powershell"
+                else "posix"
+                if self.shell_kind == "posix"
+                else None
+            ),
         )
 
     def _validate_exec_mode(self) -> None:
         if self.script is not None:
             raise ValueError("exec mode forbids script")
+
+        if self.shell_kind != "auto":
+            raise ValueError("exec mode requires shell_kind='auto'")
 
         if not isinstance(self.argv, tuple) or not self.argv:
             raise ValueError("exec mode requires a non-empty argv tuple")
@@ -380,8 +429,7 @@ class ExecutionRequest:
             argument = _require_string(argument, f"argv[{index}]")
             _require_no_null_bytes(argument, f"argv[{index}]")
 
-        if not self.argv[0]:
-            raise ValueError("argv[0] cannot be empty")
+        _require_nonempty_string(self.argv[0], "argv[0]")
 
     def _validate_shell_mode(self) -> None:
         if self.argv is not None:
@@ -390,7 +438,7 @@ class ExecutionRequest:
         if self.script is None:
             raise ValueError("shell mode requires script")
 
-        script = _require_string(self.script, "script")
+        script = _require_nonempty_string(self.script, "script")
         _require_no_null_bytes(script, "script")
 
 
@@ -523,9 +571,10 @@ class ExecutionResult:
         _require_bool(self.stderr_truncated, "stderr_truncated")
         _require_nonempty_string(self.audit_id, "audit_id")
 
-        if self.exit_code is not None:
-            if isinstance(self.exit_code, bool) or not isinstance(self.exit_code, int):
-                raise TypeError("exit_code must be an integer or None")
+        if self.exit_code is not None and (
+            isinstance(self.exit_code, bool) or not isinstance(self.exit_code, int)
+        ):
+            raise TypeError("exit_code must be an integer or None")
 
         if self.backend is not None:
             _require_choice(self.backend, BACKEND_NAMES, "backend name")
@@ -593,8 +642,8 @@ class ExecutionResult:
             return
 
         if self.status == "failed":
-            if self.exit_code == 0:
-                raise ValueError("failed execution cannot have exit_code 0")
+            if self.exit_code is None or self.exit_code == 0:
+                raise ValueError("failed execution requires a nonzero exit code")
             if self.termination_reason is not None:
                 raise ValueError(
                     "failed execution cannot have a termination reason; use "

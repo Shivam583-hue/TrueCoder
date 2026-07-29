@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import TypeAlias
 
 from .models import (
+    BACKEND_NAMES,
+    BACKEND_PREFERENCES,
     BackendName,
     BackendPreference,
     NativeDiagnostic,
@@ -14,8 +16,54 @@ BackendCompatibilityFailures: TypeAlias = tuple[
 ]
 
 
+def _require_nonempty_string(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{name} cannot be empty or whitespace-only")
+    return value
+
+
+def _validate_backend_failures(
+    failures: object,
+) -> BackendCompatibilityFailures:
+    if not isinstance(failures, tuple):
+        raise TypeError("failures must be a tuple")
+
+    seen_backends: set[str] = set()
+    for index, item in enumerate(failures):
+        if not isinstance(item, tuple) or len(item) != 2:
+            raise TypeError(f"failures[{index}] must be a two-item tuple")
+
+        backend, reasons = item
+        if backend not in BACKEND_NAMES:
+            raise ValueError(f"unknown backend name: {backend!r}")
+        if backend in seen_backends:
+            raise ValueError(f"duplicate backend failure: {backend!r}")
+        if not isinstance(reasons, tuple):
+            raise TypeError(f"failures[{index}].reasons must be a tuple")
+        if not reasons:
+            raise ValueError(f"failures[{index}].reasons cannot be empty")
+
+        seen_reasons: set[str] = set()
+        for reason_index, reason in enumerate(reasons):
+            reason = _require_nonempty_string(
+                reason,
+                f"failures[{index}].reasons[{reason_index}]",
+            )
+            if reason in seen_reasons:
+                raise ValueError(
+                    f"failures[{index}].reasons cannot contain duplicates"
+                )
+            seen_reasons.add(reason)
+
+        seen_backends.add(backend)
+
+    return failures
+
+
 class ExecutionInfrastructureError(Exception):
-    """Base class for failures in the execution system itself. infrastructure errors"""
+    """Base class for failures in the execution system itself."""
 
     def __init__(
         self,
@@ -26,22 +74,16 @@ class ExecutionInfrastructureError(Exception):
         operation: str | None = None,
         diagnostic: NativeDiagnostic | None = None,
     ) -> None:
-        if not isinstance(message, str):
-            raise TypeError("message must be a string")
-        if not message.strip():
-            raise ValueError("message cannot be empty or whitespace-only")
+        _require_nonempty_string(message, "message")
 
         if execution_id is not None:
-            if not isinstance(execution_id, str):
-                raise TypeError("execution_id must be a string or None")
-            if not execution_id.strip():
-                raise ValueError("execution_id cannot be empty or whitespace-only")
+            _require_nonempty_string(execution_id, "execution_id")
+
+        if backend is not None and backend not in BACKEND_NAMES:
+            raise ValueError(f"unknown backend name: {backend!r}")
 
         if operation is not None:
-            if not isinstance(operation, str):
-                raise TypeError("operation must be a string or None")
-            if not operation.strip():
-                raise ValueError("operation cannot be empty or whitespace-only")
+            _require_nonempty_string(operation, "operation")
 
         if diagnostic is not None and not isinstance(
             diagnostic,
@@ -81,6 +123,11 @@ class BackendUnavailableError(BackendSelectionError):
         execution_id: str | None = None,
         diagnostic: NativeDiagnostic | None = None,
     ) -> None:
+        if preference not in BACKEND_PREFERENCES:
+            raise ValueError(f"unknown backend preference: {preference!r}")
+        if preference == "auto":
+            raise ValueError("BackendUnavailableError requires a specific preference")
+
         super().__init__(
             message,
             execution_id=execution_id,
@@ -101,6 +148,10 @@ class NoCompatibleBackendError(BackendSelectionError):
         preference: BackendPreference = "auto",
         execution_id: str | None = None,
     ) -> None:
+        _validate_backend_failures(failures)
+        if preference not in BACKEND_PREFERENCES:
+            raise ValueError(f"unknown backend preference: {preference!r}")
+
         super().__init__(
             message,
             execution_id=execution_id,
@@ -132,6 +183,26 @@ class BackendCleanupError(BackendOperationError):
 
 class OutputCollectionError(ExecutionInfrastructureError):
     """The service could not collect or process execution output reliably."""
+
+
+class RequestValidationError(ExecutionInfrastructureError):
+    """A request could not be converted into a valid execution contract."""
+
+
+class PolicyEvaluationError(ExecutionInfrastructureError):
+    """Execution policy could not produce a reliable decision."""
+
+
+class ApprovalError(ExecutionInfrastructureError):
+    """The approval interaction failed before it produced a decision."""
+
+
+class EnvironmentConstructionError(ExecutionInfrastructureError):
+    """The child environment could not be constructed safely."""
+
+
+class ExecutionSerializationError(ExecutionInfrastructureError):
+    """Serialized execution data is malformed, unknown, or unsupported."""
 
 
 class AuditError(ExecutionInfrastructureError):
