@@ -1,12 +1,32 @@
+# models.py answers:
+#
+# What information exists?
+#
+# backends/base.py answers:
+#
+# What must every backend implement?
+#
+# discovery.py answers:
+#
+# Which backend can satisfy this request?
+#
+# service.py answers:
+#
+# In what order does execution happen?
+#
+# posix.py, windows.py, and container.py answer:
+#
+# How is it enforced on this platform?
+
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Literal
+from pathlib import Path
+from typing import Final, Literal, TypeAlias
 
-ExecutionStatus = Literal[
+ExecutionStatus: TypeAlias = Literal[
     "completed",
     "failed",
     "timed_out",
@@ -16,7 +36,7 @@ ExecutionStatus = Literal[
     "failed_to_start",
 ]
 
-ExecutionLifecycleStage = Literal[
+ExecutionLifecycleStage: TypeAlias = Literal[
     "requested",
     "policy_evaluated",
     "backend_selected",
@@ -26,60 +46,102 @@ ExecutionLifecycleStage = Literal[
     "completed",
 ]
 
-ExecutionMode = Literal["exec", "shell"]
+ExecutionMode: TypeAlias = Literal["exec", "shell"]
+BackendPreference: TypeAlias = Literal["auto", "local", "container"]
+BackendName: TypeAlias = Literal["posix", "windows", "container"]
 
-BackendPreference = Literal["auto", "local", "container"]
-BackendName = Literal["posix", "windows", "container"]
+ShellKind: TypeAlias = Literal["auto", "posix", "powershell"]
+ResolvedShellKind: TypeAlias = Literal["posix", "powershell"]
 
-ShellKind = Literal["auto", "posix", "powershell"]
-ResolvedShellKind = Literal["posix", "powershell"]
-
-FilesystemMode = Literal[
+FilesystemMode: TypeAlias = Literal[
     "host",
     "workspace-read",
     "workspace-write",
 ]
 
-WORKSPACE_FILESYSTEM_MODES: frozenset[str] = frozenset(
-    {"workspace-read", "workspace-write"}
-)
-
-CapabilityLevel = Literal[
+CapabilityLevel: TypeAlias = Literal[
     "unsupported",
     "best_effort",
     "enforced",
 ]
 
-TerminationReason = Literal[
+TerminationReason: TypeAlias = Literal[
     "timeout",
     "cancellation",
     "output_limit",
+    "memory_limit",
+    "cpu_limit",
+    "process_limit",
     "shutdown",
 ]
 
-_EXECUTION_MODES: frozenset[str] = frozenset({"exec", "shell"})
+
+EXECUTION_STATUSES: Final = frozenset(
+    {
+        "completed",
+        "failed",
+        "timed_out",
+        "cancelled",
+        "denied",
+        "limit_exceeded",
+        "failed_to_start",
+    }
+)
+
+EXECUTION_LIFECYCLE_STAGES: Final = frozenset(
+    {
+        "requested",
+        "policy_evaluated",
+        "backend_selected",
+        "starting",
+        "started",
+        "terminating",
+        "completed",
+    }
+)
+
+EXECUTION_MODES: Final = frozenset({"exec", "shell"})
+BACKEND_PREFERENCES: Final = frozenset({"auto", "local", "container"})
+BACKEND_NAMES: Final = frozenset({"posix", "windows", "container"})
+SHELL_KINDS: Final = frozenset({"auto", "posix", "powershell"})
+RESOLVED_SHELL_KINDS: Final = frozenset({"posix", "powershell"})
+
+FILESYSTEM_MODES: Final = frozenset({"host", "workspace-read", "workspace-write"})
+WORKSPACE_FILESYSTEM_MODES: Final = frozenset({"workspace-read", "workspace-write"})
+
+CAPABILITY_LEVELS: Final = frozenset({"unsupported", "best_effort", "enforced"})
+
+TERMINATION_REASONS: Final = frozenset(
+    {
+        "timeout",
+        "cancellation",
+        "output_limit",
+        "memory_limit",
+        "cpu_limit",
+        "process_limit",
+        "shutdown",
+    }
+)
+
+LIMIT_TERMINATION_REASONS: Final = frozenset(
+    {"output_limit", "memory_limit", "cpu_limit", "process_limit"}
+)
 
 
 # ---------------------- Validation helpers -------------------------
 
 
-def _require_finite(value: float | int, name: str) -> None:
-    if not math.isfinite(value):
-        raise ValueError(f"{name} must be a finite number")
+def _require_string(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    return value
 
 
-def _require_positive(value: float | int, name: str) -> None:
-    _require_finite(value, name)
-
-    if value <= 0:
-        raise ValueError(f"{name} must be greater than zero")
-
-
-def _require_nonnegative(value: float | int, name: str) -> None:
-    _require_finite(value, name)
-
-    if value < 0:
-        raise ValueError(f"{name} cannot be negative")
+def _require_nonempty_string(value: object, name: str) -> str:
+    text = _require_string(value, name)
+    if not text.strip():
+        raise ValueError(f"{name} cannot be empty or whitespace-only")
+    return text
 
 
 def _require_no_null_bytes(value: str, name: str) -> None:
@@ -87,33 +149,148 @@ def _require_no_null_bytes(value: str, name: str) -> None:
         raise ValueError(f"{name} cannot contain null bytes")
 
 
-def _require_utc(value: datetime, name: str) -> None:
-    offset = value.utcoffset()
+def _require_bool(value: object, name: str) -> None:
+    if not isinstance(value, bool):
+        raise TypeError(f"{name} must be a boolean")
 
+
+def _require_choice(
+    value: object,
+    allowed: frozenset[str],
+    name: str,
+) -> str:
+    text = _require_string(value, name)
+    if text not in allowed:
+        choices = ", ".join(sorted(allowed))
+        raise ValueError(f"unknown {name}: {text!r}; expected one of: {choices}")
+    return text
+
+
+def _require_number(value: object, name: str) -> float | int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{name} must be a number")
+
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{name} must be finite")
+
+    return value
+
+
+def _require_positive_number(value: object, name: str) -> None:
+    if _require_number(value, name) <= 0:
+        raise ValueError(f"{name} must be greater than zero")
+
+
+def _require_nonnegative_number(value: object, name: str) -> None:
+    if _require_number(value, name) < 0:
+        raise ValueError(f"{name} cannot be negative")
+
+
+def _require_positive_int(value: object, name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than zero")
+
+
+def _require_nonnegative_int(value: object, name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if value < 0:
+        raise ValueError(f"{name} cannot be negative")
+
+
+def _require_utc(value: object, name: str) -> datetime:
+    if not isinstance(value, datetime):
+        raise TypeError(f"{name} must be a datetime")
+
+    offset = value.utcoffset()
     if offset is None:
         raise ValueError(f"{name} must be timezone-aware")
-
     if offset != timedelta(0):
         raise ValueError(f"{name} must be expressed in UTC")
 
+    return value
 
-def _is_absolute_path(path: Path) -> bool:
-    """Absolute under *either* path flavour.
 
-    ``Path("/workspace").is_absolute()`` is False on Windows because the path
-    carries no drive letter. A Windows host is perfectly entitled to build a
-    request that targets a POSIX container, so absoluteness is checked against
-    both flavours rather than against the host's.
-    """
-    text = str(path)
+def _normalize_absolute_host_path(value: object, name: str) -> Path:
+    if not isinstance(value, Path):
+        raise TypeError(f"{name} must be a pathlib.Path")
 
-    return PurePosixPath(text).is_absolute() or PureWindowsPath(text).is_absolute()
+    _require_no_null_bytes(str(value), name)
+    expanded = value.expanduser()
+
+    if not expanded.is_absolute():
+        raise ValueError(f"{name} must be an absolute host path")
+
+    return expanded.resolve(strict=False)
+
+
+def _validate_choice_tuple(
+    values: object,
+    *,
+    name: str,
+    allowed: frozenset[str],
+    allow_empty: bool,
+) -> tuple[str, ...]:
+    if not isinstance(values, tuple):
+        raise TypeError(f"{name} must be a tuple")
+
+    if not allow_empty and not values:
+        raise ValueError(f"{name} cannot be empty")
+
+    if len(values) != len(set(values)):
+        raise ValueError(f"{name} cannot contain duplicates")
+
+    for value in values:
+        _require_choice(value, allowed, name)
+
+    return values
+
+
+def _validate_string_pairs(
+    values: object,
+    *,
+    name: str,
+    require_nonempty_keys: bool = True,
+    forbid_equals_in_keys: bool = False,
+    forbid_null_bytes: bool = False,
+) -> tuple[tuple[str, str], ...]:
+    if not isinstance(values, tuple):
+        raise TypeError(f"{name} must be a tuple of key/value pairs")
+
+    seen: set[str] = set()
+
+    for index, item in enumerate(values):
+        if not isinstance(item, tuple) or len(item) != 2:
+            raise TypeError(f"{name}[{index}] must be a two-item tuple")
+
+        key, value = item
+        key = _require_string(key, f"{name}[{index}].key")
+        value = _require_string(value, f"{name}[{index}].value")
+
+        if require_nonempty_keys and not key:
+            raise ValueError(f"{name} keys cannot be empty")
+
+        if forbid_equals_in_keys and "=" in key:
+            raise ValueError(f"{name} keys cannot contain '='")
+
+        if forbid_null_bytes:
+            _require_no_null_bytes(key, f"{name}[{index}].key")
+            _require_no_null_bytes(value, f"{name}[{index}].value")
+
+        if key in seen:
+            raise ValueError(f"duplicate {name} key: {key!r}")
+
+        seen.add(key)
+
+    return values
 
 
 # ----------------------- Request model -----------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ExecutionLimits:
     timeout_seconds: float
     max_output_bytes: int
@@ -124,39 +301,29 @@ class ExecutionLimits:
     termination_grace_seconds: float = 2.0
 
     def __post_init__(self) -> None:
-        _require_positive(self.timeout_seconds, "timeout_seconds")
-        _require_positive(self.max_output_bytes, "max_output_bytes")
-
-        _require_nonnegative(self.max_return_bytes, "max_return_bytes")
-        _require_nonnegative(
-            self.termination_grace_seconds, "termination_grace_seconds"
+        _require_positive_number(self.timeout_seconds, "timeout_seconds")
+        _require_positive_int(self.max_output_bytes, "max_output_bytes")
+        _require_nonnegative_int(self.max_return_bytes, "max_return_bytes")
+        _require_nonnegative_number(
+            self.termination_grace_seconds,
+            "termination_grace_seconds",
         )
 
         if self.max_return_bytes > self.max_output_bytes:
             raise ValueError("max_return_bytes cannot exceed max_output_bytes")
 
-        optional_positive = {
-            "memory_bytes": self.memory_bytes,
-            "cpu_seconds": self.cpu_seconds,
-            "max_processes": self.max_processes,
-        }
+        if self.memory_bytes is not None:
+            _require_positive_int(self.memory_bytes, "memory_bytes")
 
-        for name, value in optional_positive.items():
-            if value is not None:
-                _require_positive(value, name)
+        if self.cpu_seconds is not None:
+            _require_positive_number(self.cpu_seconds, "cpu_seconds")
+
+        if self.max_processes is not None:
+            _require_positive_int(self.max_processes, "max_processes")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ExecutionRequest:
-    """A request as authored by the caller, before a backend is chosen.
-
-    Deliberately platform-agnostic. ``working_directory`` and ``environment``
-    are validated but *not* normalized, because normalization depends on the
-    target platform, which is not known until the ``backend_selected``
-    lifecycle stage. See ``normalize_environment_for_backend`` and
-    ``resolve_shell_kind``.
-    """
-
     mode: ExecutionMode
     argv: tuple[str, ...] | None
     script: str | None
@@ -170,140 +337,86 @@ class ExecutionRequest:
     require_cancellation: bool = True
 
     def __post_init__(self) -> None:
-        if self.mode not in _EXECUTION_MODES:
-            raise ValueError(f"unknown execution mode: {self.mode!r}")
+        _require_choice(self.mode, EXECUTION_MODES, "execution mode")
+        _require_choice(self.backend, BACKEND_PREFERENCES, "backend preference")
+        _require_choice(self.shell_kind, SHELL_KINDS, "shell kind")
+        _require_choice(self.filesystem_mode, FILESYSTEM_MODES, "filesystem mode")
+        _require_bool(self.network_access, "network_access")
+        _require_bool(self.require_cancellation, "require_cancellation")
+
+        if not isinstance(self.limits, ExecutionLimits):
+            raise TypeError("limits must be an ExecutionLimits instance")
 
         if self.mode == "exec":
-            if not self.argv or self.script is not None:
-                raise ValueError("exec mode requires argv and forbids script")
-
-            for index, argument in enumerate(self.argv):
-                _require_no_null_bytes(argument, f"argv[{index}]")
-
-            if not self.argv[0]:
-                raise ValueError("argv[0] cannot be empty")
-
+            self._validate_exec_mode()
         else:
-            if self.script is None or self.argv is not None:
-                raise ValueError("shell mode requires script and forbids argv")
+            self._validate_shell_mode()
 
-            _require_no_null_bytes(self.script, "script")
-
-        self._validate_working_directory()
-        self._validate_environment(self.environment)
-
-    def _validate_working_directory(self) -> None:
-        text = str(self.working_directory)
-
-        _require_no_null_bytes(text, "working_directory")
-
-        if text.startswith("~"):
-            raise ValueError("working_directory must not contain a '~' prefix")
-
-        if not _is_absolute_path(self.working_directory):
-            raise ValueError("working_directory must be an absolute path")
-
-    @staticmethod
-    def _validate_environment(environment: tuple[tuple[str, str], ...]) -> None:
-        seen: set[str] = set()
-
-        for key, value in environment:
-            _require_no_null_bytes(key, "environment variable name")
-            _require_no_null_bytes(value, f"value of environment variable {key!r}")
-
-            if not key:
-                raise ValueError("environment variable names cannot be empty")
-
-            if any(character.isspace() for character in key):
-                raise ValueError(
-                    f"environment variable name cannot contain whitespace: {key!r}"
-                )
-
-            if "=" in key:
-                raise ValueError("environment variable names cannot contain '='")
-
-            if key in seen:
-                raise ValueError(f"duplicate environment variable: {key!r}")
-
-            seen.add(key)
-
-
-def normalize_environment_for_backend(
-    environment: tuple[tuple[str, str], ...],
-    backend: BackendName,
-) -> tuple[tuple[str, str], ...]:
-    """Fold environment variable names for the *target* platform.
-
-    Windows environment blocks are case-insensitive; POSIX ones are not. The
-    request cannot make this call itself, because a Windows host may target a
-    POSIX container and vice versa.
-    """
-    if backend != "windows":
-        return environment
-
-    seen: dict[str, str] = {}
-    normalized: list[tuple[str, str]] = []
-
-    for key, value in environment:
-        folded = key.upper()
-
-        if folded in seen:
-            raise ValueError(
-                "environment variables collide case-insensitively on Windows: "
-                f"{seen[folded]!r} and {key!r}"
-            )
-
-        seen[folded] = key
-        normalized.append((folded, value))
-
-    return tuple(normalized)
-
-
-def resolve_shell_kind(
-    shell_kind: ShellKind, backend: BackendName
-) -> ResolvedShellKind:
-    """Turn the request's ``ShellKind`` into the ``ResolvedShellKind`` that
-    ``BackendCapabilities.supported_shells`` is expressed in.
-
-    An explicit choice is passed through unchanged; whether the backend can
-    honour it is a capability question, not a resolution one.
-    """
-    if shell_kind != "auto":
-        return shell_kind
-
-    return "powershell" if backend == "windows" else "posix"
-
-
-def validate_workspace_containment(
-    request: ExecutionRequest,
-    context: ExecutionContext,
-    backend: BackendName,
-) -> None:
-    """Reject workspace-scoped executions that start outside the project root.
-
-    Only meaningful for local backends: a container's working directory lives
-    in the container's namespace and has no relationship to the host's
-    ``project_root``.
-    """
-    if backend == "container":
-        return
-
-    if request.filesystem_mode not in WORKSPACE_FILESYSTEM_MODES:
-        return
-
-    resolved = request.working_directory.expanduser().resolve(strict=False)
-
-    if not resolved.is_relative_to(context.project_root):
-        raise ValueError(
-            "working_directory must be inside project_root for filesystem mode "
-            f"{request.filesystem_mode!r}"
+        object.__setattr__(
+            self,
+            "working_directory",
+            _normalize_absolute_host_path(
+                self.working_directory,
+                "working_directory",
+            ),
         )
 
+        _validate_string_pairs(
+            self.environment,
+            name="environment",
+            require_nonempty_keys=True,
+            forbid_equals_in_keys=True,
+            forbid_null_bytes=True,
+        )
 
-# --------------------------------------------------------
+    def _validate_exec_mode(self) -> None:
+        if self.script is not None:
+            raise ValueError("exec mode forbids script")
+
+        if not isinstance(self.argv, tuple) or not self.argv:
+            raise ValueError("exec mode requires a non-empty argv tuple")
+
+        for index, argument in enumerate(self.argv):
+            argument = _require_string(argument, f"argv[{index}]")
+            _require_no_null_bytes(argument, f"argv[{index}]")
+
+        if not self.argv[0]:
+            raise ValueError("argv[0] cannot be empty")
+
+    def _validate_shell_mode(self) -> None:
+        if self.argv is not None:
+            raise ValueError("shell mode forbids argv")
+
+        if self.script is None:
+            raise ValueError("shell mode requires script")
+
+        script = _require_string(self.script, "script")
+        _require_no_null_bytes(script, "script")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
+class PolicyDecision:
+    allowed: bool
+    reason: str | None
+    effective_limits: ExecutionLimits
+
+    def __post_init__(self) -> None:
+        _require_bool(self.allowed, "allowed")
+
+        if not isinstance(self.effective_limits, ExecutionLimits):
+            raise TypeError("effective_limits must be an ExecutionLimits instance")
+
+        if self.reason is not None:
+            _require_nonempty_string(self.reason, "reason")
+
+        if not self.allowed and self.reason is None:
+            raise ValueError("a denied policy decision must include a reason")
+
+
+# ---------------------Backend capability models--------------------
+
+
+@dataclass(frozen=True, slots=True)
 class BackendCapabilities:
     filesystem_isolation: CapabilityLevel
     network_isolation: CapabilityLevel
@@ -318,31 +431,73 @@ class BackendCapabilities:
     supported_shells: tuple[ResolvedShellKind, ...]
 
     def __post_init__(self) -> None:
-        required = {
-            "supported_execution_modes": self.supported_execution_modes,
-            "supported_filesystem_modes": self.supported_filesystem_modes,
-            "supported_shells": self.supported_shells,
-        }
+        for name, value in (
+            ("filesystem_isolation", self.filesystem_isolation),
+            ("network_isolation", self.network_isolation),
+            ("memory_limits", self.memory_limits),
+            ("cpu_limits", self.cpu_limits),
+            ("process_limits", self.process_limits),
+            ("timeout_enforcement", self.timeout_enforcement),
+            ("cancellation", self.cancellation),
+        ):
+            _require_choice(value, CAPABILITY_LEVELS, name)
 
-        for name, values in required.items():
-            if not values:
-                raise ValueError(f"{name} cannot be empty")
+        _validate_choice_tuple(
+            self.supported_execution_modes,
+            name="supported_execution_modes",
+            allowed=EXECUTION_MODES,
+            allow_empty=False,
+        )
+        _validate_choice_tuple(
+            self.supported_filesystem_modes,
+            name="supported_filesystem_modes",
+            allowed=FILESYSTEM_MODES,
+            allow_empty=False,
+        )
+        _validate_choice_tuple(
+            self.supported_shells,
+            name="supported_shells",
+            allowed=RESOLVED_SHELL_KINDS,
+            allow_empty=True,
+        )
 
-            if len(values) != len(set(values)):
-                raise ValueError(f"{name} cannot contain duplicates")
+        supports_shell = "shell" in self.supported_execution_modes
+
+        if supports_shell and not self.supported_shells:
+            raise ValueError("a shell-capable backend must declare at least one shell")
+
+        if not supports_shell and self.supported_shells:
+            raise ValueError("an exec-only backend cannot declare shells")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CapabilityCheck:
     compatible: bool
     reasons: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        _require_bool(self.compatible, "compatible")
+
+        if not isinstance(self.reasons, tuple):
+            raise TypeError("reasons must be a tuple")
+
+        for index, reason in enumerate(self.reasons):
+            _require_nonempty_string(reason, f"reasons[{index}]")
+
+        if len(self.reasons) != len(set(self.reasons)):
+            raise ValueError("reasons cannot contain duplicates")
+
+        if self.compatible and self.reasons:
+            raise ValueError("a compatible CapabilityCheck cannot contain reasons")
+
         if not self.compatible and not self.reasons:
-            raise ValueError("an incompatible CapabilityCheck must give reasons")
+            raise ValueError("an incompatible CapabilityCheck must contain reasons")
 
 
-@dataclass(frozen=True)
+# ---------------------- Result, context, and audit models ----------------------
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionResult:
     status: ExecutionStatus
     exit_code: int | None
@@ -354,32 +509,100 @@ class ExecutionResult:
     stdout_truncated: bool
     stderr_truncated: bool
     termination_reason: TerminationReason | None
-    backend: BackendName
+    backend: BackendName | None
     audit_id: str
 
     def __post_init__(self) -> None:
-        if not self.audit_id:
-            raise ValueError("audit_id cannot be empty")
+        _require_choice(self.status, EXECUTION_STATUSES, "execution status")
+        _require_string(self.stdout, "stdout")
+        _require_string(self.stderr, "stderr")
+        _require_nonnegative_number(self.duration_seconds, "duration_seconds")
+        _require_nonnegative_int(self.stdout_bytes, "stdout_bytes")
+        _require_nonnegative_int(self.stderr_bytes, "stderr_bytes")
+        _require_bool(self.stdout_truncated, "stdout_truncated")
+        _require_bool(self.stderr_truncated, "stderr_truncated")
+        _require_nonempty_string(self.audit_id, "audit_id")
 
-        _require_nonnegative(self.duration_seconds, "duration_seconds")
-        _require_nonnegative(self.stdout_bytes, "stdout_bytes")
-        _require_nonnegative(self.stderr_bytes, "stderr_bytes")
+        if self.exit_code is not None:
+            if isinstance(self.exit_code, bool) or not isinstance(self.exit_code, int):
+                raise TypeError("exit_code must be an integer or None")
 
+        if self.backend is not None:
+            _require_choice(self.backend, BACKEND_NAMES, "backend name")
+
+        if self.termination_reason is not None:
+            _require_choice(
+                self.termination_reason,
+                TERMINATION_REASONS,
+                "termination reason",
+            )
+
+        self._validate_status_invariants()
+
+    def _validate_status_invariants(self) -> None:
         if self.status == "completed":
-            if self.exit_code is None:
-                raise ValueError("a completed execution must report an exit code")
+            if self.exit_code != 0:
+                raise ValueError("completed execution requires exit_code 0")
+            if self.backend is None:
+                raise ValueError("completed execution requires a backend")
+            if self.termination_reason is not None:
+                raise ValueError("completed execution cannot have a termination reason")
+            return
 
+        if self.status == "denied":
+            if self.exit_code is not None:
+                raise ValueError("denied execution cannot have an exit code")
+            if self.backend is not None:
+                raise ValueError("denied execution cannot have a backend")
+            if self.termination_reason is not None:
+                raise ValueError("denied execution cannot have a termination reason")
+            return
+
+        if self.status == "failed_to_start":
+            if self.exit_code is not None:
+                raise ValueError("failed-to-start execution cannot have an exit code")
             if self.termination_reason is not None:
                 raise ValueError(
-                    "a completed execution cannot carry a termination reason"
+                    "failed-to-start execution cannot have a termination reason"
+                )
+            return
+
+        if self.backend is None:
+            raise ValueError(f"{self.status} execution requires a backend")
+
+        if self.status == "timed_out":
+            if self.termination_reason != "timeout":
+                raise ValueError(
+                    "timed-out execution requires termination_reason='timeout'"
+                )
+            return
+
+        if self.status == "cancelled":
+            if self.termination_reason not in {"cancellation", "shutdown"}:
+                raise ValueError(
+                    "cancelled execution requires cancellation or shutdown "
+                    "as its termination reason"
+                )
+            return
+
+        if self.status == "limit_exceeded":
+            if self.termination_reason not in LIMIT_TERMINATION_REASONS:
+                raise ValueError(
+                    "limit-exceeded execution must identify the exceeded limit"
+                )
+            return
+
+        if self.status == "failed":
+            if self.exit_code == 0:
+                raise ValueError("failed execution cannot have exit_code 0")
+            if self.termination_reason is not None:
+                raise ValueError(
+                    "failed execution cannot have a termination reason; use "
+                    "timed_out, cancelled, or limit_exceeded instead"
                 )
 
-        # These two never reached the point of having a process to exit.
-        if self.status in {"denied", "failed_to_start"} and self.exit_code is not None:
-            raise ValueError(f"{self.status} executions cannot report an exit code")
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ExecutionContext:
     execution_id: str
     tool_call_id: str
@@ -389,34 +612,45 @@ class ExecutionContext:
     launched_at_utc: datetime
 
     def __post_init__(self) -> None:
-        if not self.execution_id:
-            raise ValueError("execution_id cannot be empty")
+        _require_nonempty_string(self.execution_id, "execution_id")
+        _require_nonempty_string(self.tool_call_id, "tool_call_id")
 
-        if not self.tool_call_id:
-            raise ValueError("tool_call_id cannot be empty")
+        if self.session_id is not None:
+            _require_nonempty_string(self.session_id, "session_id")
+
+        if self.turn_id is not None:
+            _require_nonempty_string(self.turn_id, "turn_id")
 
         _require_utc(self.launched_at_utc, "launched_at_utc")
-
-        expanded = self.project_root.expanduser()
-
-        if not expanded.is_absolute():
-            raise ValueError("project_root must be an absolute path")
 
         object.__setattr__(
             self,
             "project_root",
-            expanded.resolve(strict=False),
+            _normalize_absolute_host_path(self.project_root, "project_root"),
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class NativeDiagnostic:
     code: int | str | None
     message: str
     platform: str
 
+    def __post_init__(self) -> None:
+        if isinstance(self.code, bool) or not isinstance(
+            self.code,
+            (int, str, type(None)),
+        ):
+            raise TypeError("code must be an integer, string, or None")
 
-@dataclass(frozen=True)
+        if isinstance(self.code, str):
+            _require_nonempty_string(self.code, "code")
+
+        _require_nonempty_string(self.message, "message")
+        _require_nonempty_string(self.platform, "platform")
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionLifecycleEvent:
     execution_id: str
     stage: ExecutionLifecycleStage
@@ -426,18 +660,20 @@ class ExecutionLifecycleEvent:
     details: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.execution_id:
-            raise ValueError("execution_id cannot be empty")
-
-        if self.sequence < 0:
-            raise ValueError("sequence cannot be negative")
-
+        _require_nonempty_string(self.execution_id, "execution_id")
+        _require_choice(
+            self.stage,
+            EXECUTION_LIFECYCLE_STAGES,
+            "execution lifecycle stage",
+        )
         _require_utc(self.occurred_at_utc, "occurred_at_utc")
+        _require_nonnegative_int(self.sequence, "sequence")
 
-        keys = [key for key, _ in self.details]
+        if self.message is not None:
+            _require_nonempty_string(self.message, "message")
 
-        if any(not key for key in keys):
-            raise ValueError("lifecycle detail keys cannot be empty")
-
-        if len(keys) != len(set(keys)):
-            raise ValueError("lifecycle detail keys must be unique")
+        _validate_string_pairs(
+            self.details,
+            name="lifecycle details",
+            require_nonempty_keys=True,
+        )
