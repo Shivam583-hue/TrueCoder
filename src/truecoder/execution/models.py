@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import sys
+import math
 from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timedelta
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal
 
 ExecutionStatus = Literal[
@@ -40,6 +40,10 @@ FilesystemMode = Literal[
     "workspace-write",
 ]
 
+WORKSPACE_FILESYSTEM_MODES: frozenset[str] = frozenset(
+    {"workspace-read", "workspace-write"}
+)
+
 CapabilityLevel = Literal[
     "unsupported",
     "best_effort",
@@ -53,6 +57,61 @@ TerminationReason = Literal[
     "shutdown",
 ]
 
+_EXECUTION_MODES: frozenset[str] = frozenset({"exec", "shell"})
+
+
+# ---------------------- Validation helpers -------------------------
+
+
+def _require_finite(value: float | int, name: str) -> None:
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number")
+
+
+def _require_positive(value: float | int, name: str) -> None:
+    _require_finite(value, name)
+
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than zero")
+
+
+def _require_nonnegative(value: float | int, name: str) -> None:
+    _require_finite(value, name)
+
+    if value < 0:
+        raise ValueError(f"{name} cannot be negative")
+
+
+def _require_no_null_bytes(value: str, name: str) -> None:
+    if "\x00" in value:
+        raise ValueError(f"{name} cannot contain null bytes")
+
+
+def _require_utc(value: datetime, name: str) -> None:
+    offset = value.utcoffset()
+
+    if offset is None:
+        raise ValueError(f"{name} must be timezone-aware")
+
+    if offset != timedelta(0):
+        raise ValueError(f"{name} must be expressed in UTC")
+
+
+def _is_absolute_path(path: Path) -> bool:
+    """Absolute under *either* path flavour.
+
+    ``Path("/workspace").is_absolute()`` is False on Windows because the path
+    carries no drive letter. A Windows host is perfectly entitled to build a
+    request that targets a POSIX container, so absoluteness is checked against
+    both flavours rather than against the host's.
+    """
+    text = str(path)
+
+    return PurePosixPath(text).is_absolute() or PureWindowsPath(text).is_absolute()
+
+
+# ----------------------- Request model -----------------------
+
 
 @dataclass(frozen=True)
 class ExecutionLimits:
@@ -65,30 +124,39 @@ class ExecutionLimits:
     termination_grace_seconds: float = 2.0
 
     def __post_init__(self) -> None:
-        nonnegative = {
-            "timeout_seconds": self.timeout_seconds,
-            "max_output_bytes": self.max_output_bytes,
-            "max_return_bytes": self.max_return_bytes,
-            "termination_grace_seconds": self.termination_grace_seconds,
-        }
+        _require_positive(self.timeout_seconds, "timeout_seconds")
+        _require_positive(self.max_output_bytes, "max_output_bytes")
 
-        for name, value in nonnegative.items():
-            if value < 0:
-                raise ValueError(f"{name} cannot be negative")
+        _require_nonnegative(self.max_return_bytes, "max_return_bytes")
+        _require_nonnegative(
+            self.termination_grace_seconds, "termination_grace_seconds"
+        )
 
-        optional_nonnegative = {
+        if self.max_return_bytes > self.max_output_bytes:
+            raise ValueError("max_return_bytes cannot exceed max_output_bytes")
+
+        optional_positive = {
             "memory_bytes": self.memory_bytes,
             "cpu_seconds": self.cpu_seconds,
             "max_processes": self.max_processes,
         }
 
-        for name, value in optional_nonnegative.items():
-            if value is not None and value < 0:
-                raise ValueError(f"{name} cannot be negative")
+        for name, value in optional_positive.items():
+            if value is not None:
+                _require_positive(value, name)
 
 
 @dataclass(frozen=True)
 class ExecutionRequest:
+    """A request as authored by the caller, before a backend is chosen.
+
+    Deliberately platform-agnostic. ``working_directory`` and ``environment``
+    are validated but *not* normalized, because normalization depends on the
+    target platform, which is not known until the ``backend_selected``
+    lifecycle stage. See ``normalize_environment_for_backend`` and
+    ``resolve_shell_kind``.
+    """
+
     mode: ExecutionMode
     argv: tuple[str, ...] | None
     script: str | None
@@ -102,56 +170,137 @@ class ExecutionRequest:
     require_cancellation: bool = True
 
     def __post_init__(self) -> None:
+        if self.mode not in _EXECUTION_MODES:
+            raise ValueError(f"unknown execution mode: {self.mode!r}")
+
         if self.mode == "exec":
             if not self.argv or self.script is not None:
                 raise ValueError("exec mode requires argv and forbids script")
 
-        elif self.mode == "shell":
+            for index, argument in enumerate(self.argv):
+                _require_no_null_bytes(argument, f"argv[{index}]")
+
+            if not self.argv[0]:
+                raise ValueError("argv[0] cannot be empty")
+
+        else:
             if self.script is None or self.argv is not None:
                 raise ValueError("shell mode requires script and forbids argv")
 
-        normalized_directory = self.working_directory.expanduser().resolve(strict=False)
-        object.__setattr__(
-            self,
-            "working_directory",
-            normalized_directory,
-        )
+            _require_no_null_bytes(self.script, "script")
 
-        object.__setattr__(
-            self,
-            "environment",
-            self._normalize_environment(self.environment),
-        )
+        self._validate_working_directory()
+        self._validate_environment(self.environment)
+
+    def _validate_working_directory(self) -> None:
+        text = str(self.working_directory)
+
+        _require_no_null_bytes(text, "working_directory")
+
+        if text.startswith("~"):
+            raise ValueError("working_directory must not contain a '~' prefix")
+
+        if not _is_absolute_path(self.working_directory):
+            raise ValueError("working_directory must be an absolute path")
 
     @staticmethod
-    def _normalize_environment(
-        environment: tuple[tuple[str, str], ...],
-    ) -> tuple[tuple[str, str], ...]:
-        is_windows = sys.platform == "win32"
-
+    def _validate_environment(environment: tuple[tuple[str, str], ...]) -> None:
         seen: set[str] = set()
-        normalized: list[tuple[str, str]] = []
 
         for key, value in environment:
-            if "\x00" in key or "\x00" in value:
-                raise ValueError("environment variables cannot contain null bytes")
+            _require_no_null_bytes(key, "environment variable name")
+            _require_no_null_bytes(value, f"value of environment variable {key!r}")
 
-            if not key or not key.strip():
+            if not key:
                 raise ValueError("environment variable names cannot be empty")
+
+            if any(character.isspace() for character in key):
+                raise ValueError(
+                    f"environment variable name cannot contain whitespace: {key!r}"
+                )
 
             if "=" in key:
                 raise ValueError("environment variable names cannot contain '='")
 
-            normalized_key = key.upper() if is_windows else key
-            duplicate_key = normalized_key if is_windows else key
-
-            if duplicate_key in seen:
+            if key in seen:
                 raise ValueError(f"duplicate environment variable: {key!r}")
 
-            seen.add(duplicate_key)
-            normalized.append((normalized_key, value))
+            seen.add(key)
 
-        return tuple(normalized)
+
+def normalize_environment_for_backend(
+    environment: tuple[tuple[str, str], ...],
+    backend: BackendName,
+) -> tuple[tuple[str, str], ...]:
+    """Fold environment variable names for the *target* platform.
+
+    Windows environment blocks are case-insensitive; POSIX ones are not. The
+    request cannot make this call itself, because a Windows host may target a
+    POSIX container and vice versa.
+    """
+    if backend != "windows":
+        return environment
+
+    seen: dict[str, str] = {}
+    normalized: list[tuple[str, str]] = []
+
+    for key, value in environment:
+        folded = key.upper()
+
+        if folded in seen:
+            raise ValueError(
+                "environment variables collide case-insensitively on Windows: "
+                f"{seen[folded]!r} and {key!r}"
+            )
+
+        seen[folded] = key
+        normalized.append((folded, value))
+
+    return tuple(normalized)
+
+
+def resolve_shell_kind(
+    shell_kind: ShellKind, backend: BackendName
+) -> ResolvedShellKind:
+    """Turn the request's ``ShellKind`` into the ``ResolvedShellKind`` that
+    ``BackendCapabilities.supported_shells`` is expressed in.
+
+    An explicit choice is passed through unchanged; whether the backend can
+    honour it is a capability question, not a resolution one.
+    """
+    if shell_kind != "auto":
+        return shell_kind
+
+    return "powershell" if backend == "windows" else "posix"
+
+
+def validate_workspace_containment(
+    request: ExecutionRequest,
+    context: ExecutionContext,
+    backend: BackendName,
+) -> None:
+    """Reject workspace-scoped executions that start outside the project root.
+
+    Only meaningful for local backends: a container's working directory lives
+    in the container's namespace and has no relationship to the host's
+    ``project_root``.
+    """
+    if backend == "container":
+        return
+
+    if request.filesystem_mode not in WORKSPACE_FILESYSTEM_MODES:
+        return
+
+    resolved = request.working_directory.expanduser().resolve(strict=False)
+
+    if not resolved.is_relative_to(context.project_root):
+        raise ValueError(
+            "working_directory must be inside project_root for filesystem mode "
+            f"{request.filesystem_mode!r}"
+        )
+
+
+# --------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -168,11 +317,29 @@ class BackendCapabilities:
     supported_filesystem_modes: tuple[FilesystemMode, ...]
     supported_shells: tuple[ResolvedShellKind, ...]
 
+    def __post_init__(self) -> None:
+        required = {
+            "supported_execution_modes": self.supported_execution_modes,
+            "supported_filesystem_modes": self.supported_filesystem_modes,
+            "supported_shells": self.supported_shells,
+        }
+
+        for name, values in required.items():
+            if not values:
+                raise ValueError(f"{name} cannot be empty")
+
+            if len(values) != len(set(values)):
+                raise ValueError(f"{name} cannot contain duplicates")
+
 
 @dataclass(frozen=True)
 class CapabilityCheck:
     compatible: bool
     reasons: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.compatible and not self.reasons:
+            raise ValueError("an incompatible CapabilityCheck must give reasons")
 
 
 @dataclass(frozen=True)
@@ -184,10 +351,32 @@ class ExecutionResult:
     duration_seconds: float
     stdout_bytes: int
     stderr_bytes: int
-    output_truncated: bool
-    termination_reason: str | None
+    stdout_truncated: bool
+    stderr_truncated: bool
+    termination_reason: TerminationReason | None
     backend: BackendName
     audit_id: str
+
+    def __post_init__(self) -> None:
+        if not self.audit_id:
+            raise ValueError("audit_id cannot be empty")
+
+        _require_nonnegative(self.duration_seconds, "duration_seconds")
+        _require_nonnegative(self.stdout_bytes, "stdout_bytes")
+        _require_nonnegative(self.stderr_bytes, "stderr_bytes")
+
+        if self.status == "completed":
+            if self.exit_code is None:
+                raise ValueError("a completed execution must report an exit code")
+
+            if self.termination_reason is not None:
+                raise ValueError(
+                    "a completed execution cannot carry a termination reason"
+                )
+
+        # These two never reached the point of having a process to exit.
+        if self.status in {"denied", "failed_to_start"} and self.exit_code is not None:
+            raise ValueError(f"{self.status} executions cannot report an exit code")
 
 
 @dataclass(frozen=True)
@@ -200,18 +389,23 @@ class ExecutionContext:
     launched_at_utc: datetime
 
     def __post_init__(self) -> None:
-        canonical_root = self.project_root.expanduser().resolve(strict=False)
+        if not self.execution_id:
+            raise ValueError("execution_id cannot be empty")
 
-        if not canonical_root.is_absolute():
+        if not self.tool_call_id:
+            raise ValueError("tool_call_id cannot be empty")
+
+        _require_utc(self.launched_at_utc, "launched_at_utc")
+
+        expanded = self.project_root.expanduser()
+
+        if not expanded.is_absolute():
             raise ValueError("project_root must be an absolute path")
-
-        if self.launched_at_utc.tzinfo is None:
-            raise ValueError("launched_at_utc must be timezone-aware")
 
         object.__setattr__(
             self,
             "project_root",
-            canonical_root,
+            expanded.resolve(strict=False),
         )
 
 
@@ -238,8 +432,7 @@ class ExecutionLifecycleEvent:
         if self.sequence < 0:
             raise ValueError("sequence cannot be negative")
 
-        if self.occurred_at_utc.tzinfo is None:
-            raise ValueError("occurred_at_utc must be timezone-aware")
+        _require_utc(self.occurred_at_utc, "occurred_at_utc")
 
         keys = [key for key, _ in self.details]
 
