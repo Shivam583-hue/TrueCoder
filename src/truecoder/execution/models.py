@@ -21,10 +21,13 @@
 from __future__ import annotations
 
 import math
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Final, Literal, TypeAlias
+
+from truecoder.session import SessionManager
 
 ExecutionStatus: TypeAlias = Literal[
     "completed",
@@ -657,12 +660,14 @@ class ExecutionContext:
     tool_call_id: str
     session_id: str | None
     turn_id: str | None
+    workspace_id: str
     project_root: Path
     launched_at_utc: datetime
 
     def __post_init__(self) -> None:
         _require_nonempty_string(self.execution_id, "execution_id")
         _require_nonempty_string(self.tool_call_id, "tool_call_id")
+        _require_nonempty_string(self.workspace_id, "workspace_id")
 
         if self.session_id is not None:
             _require_nonempty_string(self.session_id, "session_id")
