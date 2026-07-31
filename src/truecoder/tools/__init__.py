@@ -9,7 +9,7 @@ from truecoder.tools.base import (
     ToolResult,
     ToolResultStatus,
 )
-from truecoder.tools.executor import ToolExecutor
+from truecoder.tools.executor import PreparedToolCall, ToolExecutor
 from truecoder.tools.registry import (
     DuplicateToolError,
     ToolNotFoundError,
@@ -20,6 +20,7 @@ from truecoder.tools.serialization import serialize_tool_result
 __all__ = [
     "BaseTool",
     "DuplicateToolError",
+    "PreparedToolCall",
     "ToolApproval",
     "ToolArgumentError",
     "ToolArguments",

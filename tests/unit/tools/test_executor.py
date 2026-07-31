@@ -3,6 +3,7 @@ import unittest
 
 from truecoder.tools import (
     BaseTool,
+    PreparedToolCall,
     ToolApproval,
     ToolArguments,
     ToolCall,
@@ -109,6 +110,33 @@ class ToolExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, ToolResultStatus.ERROR)
         self.assertEqual(result.error_code, "invalid_arguments")
         self.assertEqual(tool.calls, [])
+
+    async def test_prepared_call_reuses_the_exact_validated_arguments(self):
+        tool = ApprovalTool()
+        self.registry.register(tool)
+        call = ToolCall("call_1", "approved_double", '{"value": 4}')
+
+        prepared = self.executor.prepare(call)
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        if not isinstance(prepared, PreparedToolCall):
+            self.fail("expected a prepared tool call")
+        self.assertEqual(prepared.arguments, NumberArguments(value=4))
+        result = await self.executor.execute_prepared(prepared, approved=True)
+        self.assertEqual(result.status, ToolResultStatus.SUCCESS)
+        self.assertEqual(tool.calls, [NumberArguments(value=4)])
+
+    async def test_preparation_returns_structured_errors_without_running(self):
+        missing = self.executor.prepare(ToolCall("call_1", "missing", "{}"))
+        self.registry.register(RecordingTool())
+        invalid = self.executor.prepare(
+            ToolCall("call_2", "double", '{"value": "wrong"}')
+        )
+
+        self.assertEqual(missing.status, ToolResultStatus.ERROR)
+        self.assertEqual(missing.error_code, "tool_not_found")
+        self.assertEqual(invalid.status, ToolResultStatus.ERROR)
+        self.assertEqual(invalid.error_code, "invalid_arguments")
 
     async def test_required_tool_waits_for_explicit_approval(self):
         tool = ApprovalTool()
