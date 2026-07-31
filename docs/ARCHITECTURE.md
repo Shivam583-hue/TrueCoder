@@ -12,7 +12,15 @@ UI
 Agent
  ├─ Context and state
  ├─ LLM client
+ ├─ Approval service
  └─ Tools
+
+Shell tool (future phase)
+ ↓
+Execution service
+ ├─ Execution context
+ ├─ Cancellation registry
+ └─ Platform backends (future phases)
 
 UI
  ↓
@@ -123,6 +131,11 @@ Tool definitions, calls, arguments, and results are typed values.
 
 Arguments cross the model boundary as JSON and are validated before approval or execution.
 
+Approval-required calls are prepared once. Preparation resolves the tool and
+parses its arguments. The approval fingerprint, approval display, and eventual
+execution all use that same prepared value, so the system never approves one
+parse and executes another.
+
 Tools are registered explicitly. Restricted tools, especially filesystem tools, must enforce their own security boundaries.
 
 The shipped filesystem tools share one sensitive-path policy and are rooted at
@@ -189,9 +202,75 @@ a session is resumed.
 
 Approval is an awaited request-response interaction.
 
-The agent asks an injected approval handler for a decision and pauses until it receives one. The UI may display approval events, but it does not own approval state or agent execution.
+The approval service owns reusable grants. The UI is only an injected
+request-response handler: it presents the exact request, returns the selected
+decision and scope, and does not decide whether an earlier grant matches.
 
 Approval policy belongs to the tool. Orchestration belongs to the agent. Presentation belongs to the UI.
+
+Every request contains:
+
+* canonical validated arguments
+* the canonical workspace identity
+* a versioned SHA-256 fingerprint of all security-relevant inputs
+* the scopes that policy allows the UI to offer
+* for shell execution, the effective request, limits, selected backend,
+  capability levels, risk, policy version, and reasons
+
+Transient call, execution, session, and turn IDs are not part of a reusable
+operation fingerprint. The session ID still scopes a session grant, and the
+workspace ID scopes a workspace grant. Argument, workspace, limit, capability,
+backend, policy, or risk changes produce a different fingerprint and therefore
+require another approval.
+
+The available scopes are:
+
+* `once`, which is never stored
+* `session`, which matches only the same session and exact fingerprint
+* `workspace`, which matches only the same workspace and exact fingerprint
+
+Reusable grants are currently held in memory for the running application. They
+are never stored in the repository and do not survive an application restart.
+Rejections are never remembered.
+
+The safe-scope calculation is authoritative. Shell-script mode and any
+execution above low risk permit `once` only. A model-facing tool named `shell`
+also defaults to `once` only when execution details are not available. The
+approval service rejects a handler response that selects a scope outside the
+request's allowed set, so a hidden or buggy UI control cannot turn an arbitrary
+shell command into a reusable grant.
+
+## Execution control plane
+
+The execution package defines the shared control-plane contracts before any
+platform backend starts processes.
+
+An `ExecutionContext` correlates one execution with its tool call, active
+session, active turn, canonical project root, stable workspace identity, launch
+time, and opaque execution ID. The workspace identity is a versioned hash of
+the canonical host path, with host case normalization where required.
+
+`ExecutionContextFactory` validates all runtime identities and canonicalizes the
+project root. The active turn receives its own ID when it begins and loses it
+when the turn completes, aborts, or resets.
+
+Cancellation uses a source/token split:
+
+* the service owns the `CancellationSource`
+* backends receive the read-only `CancellationToken`
+* the first cancellation request records the reason and releases every waiter
+* later requests are idempotent and cannot replace the original reason
+
+`ExecutionRegistry` maps opaque execution IDs to the exact active entry. It
+supports lookup and cancellation by execution ID. Registration rejects
+duplicates, and cleanup requires the same entry object that was registered, so
+stale cleanup cannot remove a newer execution that happens to use the same ID.
+`ExecutionService` is the public owner of registration, lookup, cancellation,
+and unregister operations.
+
+This phase does not claim to execute or sandbox commands. Process creation,
+limits, environment filtering, output collection, audit persistence, and
+platform backends remain later execution phases.
 
 ## Design rules
 
@@ -203,5 +282,8 @@ Keep these invariants stable as the codebase grows:
 * provider-specific behavior stays inside the client
 * tools do not depend on outer layers
 * the UI does not contain agent logic
+* approvals apply to exact fingerprints, never tool names alone
+* unsafe shell requests cannot receive reusable approval scopes
+* cancellation is addressed by execution ID and is idempotent
 * session saves happen only at completed-turn boundaries
 * restoring a session cannot partially replace agent state
