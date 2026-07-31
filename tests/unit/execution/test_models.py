@@ -494,6 +494,7 @@ class ContextDiagnosticAndEventTests(unittest.TestCase):
             tool_call_id="call_01",
             session_id="session_01",
             turn_id="turn_01",
+            workspace_id="workspace_01",
             project_root=PROJECT_ROOT / "src" / "..",
             launched_at_utc=UTC_NOW,
         )

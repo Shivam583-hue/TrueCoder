@@ -15,6 +15,7 @@ class AgentStateTests(unittest.TestCase):
 
         self.assertEqual(state.messages, [])
         self.assertIsNone(state.pending_prompt)
+        self.assertIsNone(state.pending_turn_id)
         self.assertFalse(state.turn_active)
         self.assertEqual(state.messages_for_context(), [])
 
@@ -24,6 +25,7 @@ class AgentStateTests(unittest.TestCase):
         state.begin_turn("  Explain this code  ")
 
         self.assertTrue(state.turn_active)
+        self.assertIsNotNone(state.pending_turn_id)
         self.assertEqual(state.pending_prompt, "Explain this code")
         self.assertEqual(state.messages, [])
         self.assertEqual(
@@ -46,6 +48,22 @@ class AgentStateTests(unittest.TestCase):
         )
         self.assertFalse(state.turn_active)
         self.assertIsNone(state.pending_prompt)
+        self.assertIsNone(state.pending_turn_id)
+
+    def test_each_active_turn_has_a_stable_unique_identity(self):
+        state = AgentState()
+
+        state.begin_turn("First")
+        first_turn_id = state.pending_turn_id
+        self.assertIsNotNone(first_turn_id)
+        self.assertEqual(state.pending_turn_id, first_turn_id)
+        state.complete_turn("Done")
+
+        state.begin_turn("Second")
+        second_turn_id = state.pending_turn_id
+
+        self.assertIsNotNone(second_turn_id)
+        self.assertNotEqual(first_turn_id, second_turn_id)
 
     def test_begin_turn_rejects_empty_prompt(self):
         state = AgentState()
@@ -77,6 +95,7 @@ class AgentStateTests(unittest.TestCase):
 
         self.assertFalse(state.turn_active)
         self.assertEqual(state.messages, [])
+        self.assertIsNone(state.pending_turn_id)
 
     def test_reset_clears_completed_and_pending_state(self):
         state = AgentState()
@@ -88,6 +107,7 @@ class AgentStateTests(unittest.TestCase):
 
         self.assertEqual(state.messages, [])
         self.assertIsNone(state.pending_prompt)
+        self.assertIsNone(state.pending_turn_id)
         self.assertFalse(state.turn_active)
 
     def test_returned_messages_are_defensive_copies(self):

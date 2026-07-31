@@ -19,7 +19,7 @@ from .models import (
     PolicyDecision,
 )
 
-SERIALIZATION_VERSION: Final = 1
+SERIALIZATION_VERSION: Final = 2
 
 ExecutionModel: TypeAlias = (
     ExecutionLimits
@@ -179,6 +179,7 @@ def _encode_model(model: ExecutionModel) -> JsonObject:
             "session_id": model.session_id,
             "tool_call_id": model.tool_call_id,
             "turn_id": model.turn_id,
+            "workspace_id": model.workspace_id,
         }
     if isinstance(model, NativeDiagnostic):
         return {
@@ -343,14 +344,16 @@ def _decode_model(model_name: str, data: JsonObject) -> ExecutionModel:
                 "session_id",
                 "tool_call_id",
                 "turn_id",
+                "workspace_id",
             },
             model_name,
         )
         return ExecutionContext(
             execution_id=data["execution_id"],  # type: ignore[arg-type]
             tool_call_id=data["tool_call_id"],  # type: ignore[arg-type]
-            session_id=_decode_optional_string(data["session_id"], "session_id"),
-            turn_id=_decode_optional_string(data["turn_id"], "turn_id"),
+            session_id=data["session_id"],  # type: ignore[arg-type]
+            turn_id=data["turn_id"],  # type: ignore[arg-type]
+            workspace_id=data["workspace_id"],  # type: ignore[arg-type]
             project_root=_decode_host_path(data["project_root"], "project_root"),
             launched_at_utc=_decode_datetime(
                 data["launched_at_utc"],
