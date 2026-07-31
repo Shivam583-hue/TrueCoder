@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Sequence
 
 from truecoder.agent.messages import (
@@ -19,17 +20,14 @@ class AgentState:
         self.__pending_messages: list[ModelMessage] | None = None
         self.__outstanding_tool_call_ids: list[str] = []
         self.__seen_tool_call_ids: set[str] = set()
+        self.__pending_turn_id: str | None = None
 
     @property
     def messages(self) -> list[ModelMessage]:
         """Return a flattened defensive copy of completed history."""
 
         return copy_messages(
-            [
-                message
-                for turn in self.__completed_turns
-                for message in turn
-            ]
+            [message for turn in self.__completed_turns for message in turn]
         )
 
     @property
@@ -78,6 +76,11 @@ class AgentState:
         self.__pending_messages = [create_user_message(prompt)]
         self.__outstanding_tool_call_ids.clear()
         self.__seen_tool_call_ids.clear()
+        self.__pending_turn_id = str(uuid.uuid4().hex)
+
+    @property
+    def pending_turn_id(self) -> str | None:
+        return self.__pending_turn_id
 
     def record_tool_calls(
         self,
@@ -213,9 +216,8 @@ class AgentState:
                         if not isinstance(raw_call, dict):
                             raise TypeError("Tool calls must be objects.")
                         function = raw_call.get("function")
-                        if (
-                            raw_call.get("type") != "function"
-                            or not isinstance(function, dict)
+                        if raw_call.get("type") != "function" or not isinstance(
+                            function, dict
                         ):
                             raise ValueError("Only function tool calls are supported.")
                         calls.append(
@@ -265,3 +267,4 @@ class AgentState:
         self.__pending_messages = None
         self.__outstanding_tool_call_ids.clear()
         self.__seen_tool_call_ids.clear()
+        self.__pending_turn_id = None

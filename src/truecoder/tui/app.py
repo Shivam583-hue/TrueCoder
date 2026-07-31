@@ -533,9 +533,7 @@ class TrueCoderApp(App[None]):
     ) -> None:
         if not confirmed or self.session_manager is None:
             return
-        deleting_active = (
-            session_id == self.session_manager.active_session.session_id
-        )
+        deleting_active = session_id == self.session_manager.active_session.session_id
         try:
             self.session_manager.delete_session(session_id)
             if deleting_active:
