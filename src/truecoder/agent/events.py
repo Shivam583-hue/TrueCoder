@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any
 
 from truecoder.client.response import TokenUsage
+from truecoder.execution.approval import ApprovalRequest
 
 
 class AgentEventType(str, Enum):
@@ -84,16 +85,31 @@ class AgentEvent:
     @classmethod
     def approval_requested(
         cls,
-        call_id: str,
-        tool_name: str,
-        arguments: dict[str, Any],
+        request: ApprovalRequest,
     ) -> AgentEvent:
+        execution = request.execution
         return cls(
             type=AgentEventType.APPROVAL_REQUESTED,
             data={
-                "call_id": call_id,
-                "tool_name": tool_name,
-                "arguments": arguments,
+                "allowed_scopes": tuple(
+                    scope.value for scope in request.allowed_scopes
+                ),
+                "arguments": request.arguments,
+                "call_id": request.call_id,
+                "execution": (
+                    {
+                        "backend": execution.backend,
+                        "capabilities": asdict(execution.capabilities),
+                        "command": execution.command_display,
+                        "limits": asdict(execution.effective_limits),
+                        "risk": execution.risk.value,
+                        "working_directory": str(execution.working_directory),
+                    }
+                    if execution is not None
+                    else None
+                ),
+                "fingerprint": request.fingerprint,
+                "tool_name": request.tool_name,
             },
         )
 

@@ -175,6 +175,16 @@ class ApprovalRequestTests(unittest.TestCase):
         self.assertEqual(shell.allowed_scopes, (ApprovalScope.ONCE,))
         self.assertEqual(high_risk.allowed_scopes, (ApprovalScope.ONCE,))
 
+    def test_shell_tool_without_execution_details_still_cannot_persist(self):
+        item = ApprovalRequest.create(
+            call_id="call_01",
+            tool_name="shell",
+            arguments={"command": "echo hello"},
+            identity=ApprovalIdentity("session_01", "workspace_01"),
+        )
+
+        self.assertEqual(item.allowed_scopes, (ApprovalScope.ONCE,))
+
 
 class ApprovalServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_session_grant_reuses_only_the_exact_fingerprint(self):

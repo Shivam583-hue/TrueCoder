@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Sequence
+import uuid
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Any
 
 from truecoder.agent.approval import (
     ApprovalDecision,
-    ApprovalHandler,
+    ApprovalIdentity,
     ApprovalRequest,
+    ApprovalResponse,
+    ApprovalService,
     reject_all_tool_calls,
 )
 from truecoder.agent.context import ContextBuilder
@@ -21,6 +23,7 @@ from truecoder.agent.project_instructions import (
 from truecoder.agent.state import AgentState
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType, TokenUsage
+from truecoder.execution.context import workspace_id_for
 from truecoder.session import (
     SessionManager,
     SQLiteSessionStore,
@@ -28,9 +31,7 @@ from truecoder.session import (
 )
 from truecoder.tools import ToolExecutor, serialize_tool_result
 from truecoder.tools.base import (
-    BaseTool,
     ToolApproval,
-    ToolArgumentError,
     ToolCall,
     ToolResult,
 )
@@ -42,9 +43,14 @@ from truecoder.tools.builtin import (
     ReadFileTool,
     WriteFileTool,
 )
-from truecoder.tools.registry import ToolNotFoundError, ToolRegistry
+from truecoder.tools.registry import ToolRegistry
 
 DEFAULT_MAX_ITERATIONS = 25
+ApprovalIdentityProvider = Callable[[], ApprovalIdentity]
+CompatibleApprovalHandler = Callable[
+    [ApprovalRequest],
+    Awaitable[ApprovalResponse | ApprovalDecision],
+]
 
 
 class Agent:
@@ -55,13 +61,23 @@ class Agent:
         context_builder: ContextBuilder | None = None,
         tool_registry: ToolRegistry | None = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
-        approval_handler: ApprovalHandler | None = None,
+        approval_handler: CompatibleApprovalHandler | None = None,
+        approval_service: ApprovalService | None = None,
+        approval_identity_provider: ApprovalIdentityProvider | None = None,
     ) -> None:
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
 
         if max_iterations < 1:
             raise ValueError("max_iterations must be at least one.")
+        if approval_handler is not None and approval_service is not None:
+            raise ValueError(
+                "approval_handler and approval_service cannot both be supplied."
+            )
+        if approval_identity_provider is not None and not callable(
+            approval_identity_provider
+        ):
+            raise TypeError("approval_identity_provider must be callable.")
 
         self.llm_client = llm_client if llm_client is not None else LLMClient()
         self.state = state if state is not None else AgentState()
@@ -75,9 +91,40 @@ class Agent:
         )
         self.tool_executor = ToolExecutor(self.tool_registry)
         self.max_iterations = max_iterations
-        self.approval_handler: ApprovalHandler = (
-            approval_handler if approval_handler is not None else reject_all_tool_calls
+        self._default_approval_identity = ApprovalIdentity(
+            session_id=f"session_{uuid.uuid4().hex}",
+            workspace_id=workspace_id_for(Path.cwd().resolve(strict=True)),
         )
+        self._approval_identity_provider = (
+            approval_identity_provider
+            if approval_identity_provider is not None
+            else lambda: self._default_approval_identity
+        )
+        self._approval_handler: CompatibleApprovalHandler = reject_all_tool_calls
+        self.approval_service = approval_service or ApprovalService(
+            self._invoke_approval_handler
+        )
+        if approval_handler is not None:
+            self.approval_handler = approval_handler
+
+    @property
+    def approval_handler(self) -> CompatibleApprovalHandler:
+        return self._approval_handler
+
+    @approval_handler.setter
+    def approval_handler(self, handler: CompatibleApprovalHandler) -> None:
+        if not callable(handler):
+            raise TypeError("approval_handler must be callable.")
+        self._approval_handler = handler
+        self.approval_service.handler = self._invoke_approval_handler
+
+    def set_approval_identity_provider(
+        self,
+        provider: ApprovalIdentityProvider,
+    ) -> None:
+        if not callable(provider):
+            raise TypeError("approval identity provider must be callable.")
+        self._approval_identity_provider = provider
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -187,28 +234,35 @@ class Agent:
             yield AgentEvent.tool_call(call.call_id, call.name, call.arguments_json)
 
             rejected = False
-            tool = self._lookup_tool(call.name)
-            if tool is not None and tool.approval is ToolApproval.REQUIRED:
-                arguments = self._display_arguments(tool, call)
-                if arguments is not None:
-                    request = ApprovalRequest(call.call_id, call.name, arguments)
-                    yield AgentEvent.approval_requested(
-                        request.call_id,
-                        request.tool_name,
-                        request.arguments,
-                    )
-                    decision = await self.approval_handler(request)
-                    rejected = decision is ApprovalDecision.REJECTED
-
-            if rejected:
-                result = ToolResult.failure(
-                    call.call_id,
-                    call.name,
-                    "The user rejected this tool call.",
-                    "approval_rejected",
-                )
+            prepared = self.tool_executor.prepare(call)
+            if isinstance(prepared, ToolResult):
+                result = prepared
             else:
-                result = await self.tool_executor.execute(call, approved=True)
+                if prepared.tool.approval is ToolApproval.REQUIRED:
+                    request = ApprovalRequest.create(
+                        call_id=call.call_id,
+                        tool_name=call.name,
+                        arguments=prepared.arguments.model_dump(mode="json"),
+                        identity=self._approval_identity(),
+                    )
+                    response = self.approval_service.reusable_response(request)
+                    if response is None:
+                        yield AgentEvent.approval_requested(request)
+                        response = await self.approval_service.authorize(request)
+                    rejected = response.decision is ApprovalDecision.REJECTED
+
+                if rejected:
+                    result = ToolResult.failure(
+                        call.call_id,
+                        call.name,
+                        "The user rejected this tool call.",
+                        "approval_rejected",
+                    )
+                else:
+                    result = await self.tool_executor.execute_prepared(
+                        prepared,
+                        approved=True,
+                    )
 
             content = serialize_tool_result(result)
             self.state.record_tool_result(call.call_id, content)
@@ -223,21 +277,26 @@ class Agent:
                     content,
                 )
 
-    def _lookup_tool(self, name: str) -> BaseTool[Any] | None:
-        try:
-            return self.tool_registry.get(name)
-        except ToolNotFoundError:
-            return None
+    def _approval_identity(self) -> ApprovalIdentity:
+        identity = self._approval_identity_provider()
+        if not isinstance(identity, ApprovalIdentity):
+            raise TypeError(
+                "approval identity provider must return an ApprovalIdentity."
+            )
+        return identity
 
-    @staticmethod
-    def _display_arguments(
-        tool: BaseTool[Any],
-        call: ToolCall,
-    ) -> dict[str, Any] | None:
-        try:
-            return tool.parse_arguments(call.arguments_json).model_dump()
-        except ToolArgumentError:
-            return None
+    async def _invoke_approval_handler(
+        self,
+        request: ApprovalRequest,
+    ) -> ApprovalResponse:
+        response = await self._approval_handler(request)
+        if isinstance(response, ApprovalResponse):
+            return response
+        if response is ApprovalDecision.APPROVED:
+            return ApprovalResponse.approve()
+        if response is ApprovalDecision.REJECTED:
+            return ApprovalResponse.reject()
+        return response  # type: ignore[return-value]
 
     def reset(self) -> None:
         self.state.reset()

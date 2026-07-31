@@ -11,6 +11,8 @@ from truecoder.agent import (
     AgentState,
     ApprovalDecision,
     ApprovalRequest,
+    ApprovalResponse,
+    ApprovalScope,
     ContextBuilder,
 )
 from truecoder.client.response import (
@@ -60,11 +62,17 @@ class GuardedTool(BaseTool[EchoArguments]):
 
 
 class RecordingApprovalHandler:
-    def __init__(self, decision: ApprovalDecision) -> None:
+    def __init__(
+        self,
+        decision: ApprovalDecision | ApprovalResponse,
+    ) -> None:
         self.decision = decision
         self.requests: list[ApprovalRequest] = []
 
-    async def __call__(self, request: ApprovalRequest) -> ApprovalDecision:
+    async def __call__(
+        self,
+        request: ApprovalRequest,
+    ) -> ApprovalDecision | ApprovalResponse:
         self.requests.append(request)
         return self.decision
 
@@ -795,6 +803,112 @@ class AgentApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.data["tool_name"], "guarded")
         self.assertEqual(request.data["call_id"], "call_1")
         self.assertEqual(request.data["arguments"], {"text": "hi"})
+        self.assertTrue(request.data["fingerprint"].startswith("approval_"))
+        self.assertEqual(
+            request.data["allowed_scopes"],
+            ("once", "session", "workspace"),
+        )
+
+    async def test_exact_session_approval_is_reused_without_prompting(self):
+        tool = GuardedTool()
+        handler = RecordingApprovalHandler(
+            ApprovalResponse.approve(ApprovalScope.SESSION)
+        )
+        client = ScriptedLLMClient(
+            [
+                [
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        tool_calls=(
+                            ToolCall("call_1", "guarded", '{"text": "same"}'),
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+                [
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        tool_calls=(
+                            ToolCall("call_2", "guarded", '{"text": "same"}'),
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+                [
+                    StreamEvent(
+                        type=EventType.TEXT_DELTA,
+                        text_delta=TextDelta("done"),
+                    ),
+                    StreamEvent(type=EventType.MESSAGE_COMPLETE),
+                ],
+            ]
+        )
+        agent = make_agent(
+            client,
+            tool_registry=guarded_registry(tool),
+            approval_handler=handler,
+        )
+
+        events = await collect(agent, "go")
+
+        self.assertEqual(len(handler.requests), 1)
+        self.assertEqual(
+            sum(
+                event.type is AgentEventType.APPROVAL_REQUESTED
+                for event in events
+            ),
+            1,
+        )
+        self.assertTrue(tool.ran)
+        self.assertEqual(
+            sum(message["role"] == "tool" for message in agent.messages),
+            2,
+        )
+
+    async def test_changed_arguments_require_a_new_approval(self):
+        handler = RecordingApprovalHandler(
+            ApprovalResponse.approve(ApprovalScope.SESSION)
+        )
+        client = ScriptedLLMClient(
+            [
+                [
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        tool_calls=(
+                            ToolCall("call_1", "guarded", '{"text": "first"}'),
+                        ),
+                    )
+                ],
+                [
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        tool_calls=(
+                            ToolCall("call_2", "guarded", '{"text": "second"}'),
+                        ),
+                    )
+                ],
+                [
+                    StreamEvent(
+                        type=EventType.TEXT_DELTA,
+                        text_delta=TextDelta("done"),
+                    ),
+                    StreamEvent(type=EventType.MESSAGE_COMPLETE),
+                ],
+            ]
+        )
+        agent = make_agent(
+            client,
+            tool_registry=guarded_registry(GuardedTool()),
+            approval_handler=handler,
+        )
+
+        await collect(agent, "go")
+
+        self.assertEqual(len(handler.requests), 2)
+        self.assertNotEqual(
+            handler.requests[0].fingerprint,
+            handler.requests[1].fingerprint,
+        )
 
     async def test_rejected_required_tool_does_not_run(self):
         tool = GuardedTool()

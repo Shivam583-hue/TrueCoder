@@ -136,7 +136,7 @@ class ApprovalRequest:
         ):
             raise TypeError("execution must be ExecutionApprovalDetails or None")
         arguments_json = _canonical_json(arguments)
-        safe_scopes = safe_approval_scopes(execution)
+        safe_scopes = safe_approval_scopes(execution, tool_name=tool_name)
         allowed_scopes = _restrict_scopes(requested_scopes, safe_scopes)
         fingerprint = build_approval_fingerprint(
             tool_name=tool_name,
@@ -265,9 +265,9 @@ class ApprovalService:
         if not isinstance(request, ApprovalRequest):
             raise TypeError("request must be an ApprovalRequest")
 
-        reused_scope = self._store.find(request)
-        if reused_scope is not None and reused_scope in request.allowed_scopes:
-            return ApprovalResponse.approve(reused_scope, reused=True)
+        reused = self.reusable_response(request)
+        if reused is not None:
+            return reused
 
         response = await self._handler(request)
         if not isinstance(response, ApprovalResponse):
@@ -293,12 +293,29 @@ class ApprovalService:
             self._store.remember(request, response.scope)
         return response
 
+    def reusable_response(
+        self,
+        request: ApprovalRequest,
+    ) -> ApprovalResponse | None:
+        """Return an exact reusable grant without invoking the UI handler."""
+
+        if not isinstance(request, ApprovalRequest):
+            raise TypeError("request must be an ApprovalRequest")
+        reused_scope = self._store.find(request)
+        if reused_scope is None or reused_scope not in request.allowed_scopes:
+            return None
+        return ApprovalResponse.approve(reused_scope, reused=True)
+
 
 def safe_approval_scopes(
     execution: ExecutionApprovalDetails | None,
+    *,
+    tool_name: str | None = None,
 ) -> tuple[ApprovalScope, ...]:
     """Return the maximum scopes the UI may offer for this operation."""
 
+    if tool_name == "shell":
+        return (ApprovalScope.ONCE,)
     if execution is None:
         return (
             ApprovalScope.ONCE,

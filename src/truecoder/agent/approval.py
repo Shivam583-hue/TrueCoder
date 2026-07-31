@@ -1,29 +1,29 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any
+from truecoder.execution.approval import (
+    ApprovalDecision,
+    ApprovalHandler,
+    ApprovalIdentity,
+    ApprovalRequest,
+    ApprovalResponse,
+    ApprovalScope,
+    ApprovalService,
+    ExecutionApprovalDetails,
+    RiskLevel,
+    approve_all_tool_calls,
+    reject_all_tool_calls,
+)
 
-
-class ApprovalDecision(str, Enum):
-    APPROVED = "approved"
-    REJECTED = "rejected"
-
-
-@dataclass(frozen=True, slots=True)
-class ApprovalRequest:
-    call_id: str
-    tool_name: str
-    arguments: dict[str, Any] = field(default_factory=dict)
-
-
-ApprovalHandler = Callable[[ApprovalRequest], Awaitable[ApprovalDecision]]
-
-
-async def reject_all_tool_calls(_request: ApprovalRequest) -> ApprovalDecision:
-    return ApprovalDecision.REJECTED
-
-
-async def approve_all_tool_calls(_request: ApprovalRequest) -> ApprovalDecision:
-    return ApprovalDecision.APPROVED
+__all__ = [
+    "ApprovalDecision",
+    "ApprovalHandler",
+    "ApprovalIdentity",
+    "ApprovalRequest",
+    "ApprovalResponse",
+    "ApprovalScope",
+    "ApprovalService",
+    "ExecutionApprovalDetails",
+    "RiskLevel",
+    "approve_all_tool_calls",
+    "reject_all_tool_calls",
+]
