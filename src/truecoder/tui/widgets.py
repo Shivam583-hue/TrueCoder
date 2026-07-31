@@ -114,6 +114,7 @@ _RISKY_TOOL_TERMS = frozenset(
 )
 
 _TARGET_KEYS = ("path", "file_path", "target", "command", "query", "url")
+_APPROVAL_SCOPES = frozenset({"once", "session", "workspace"})
 
 
 class PromptInput(TextArea):
@@ -287,6 +288,7 @@ class ToolCallCard(Vertical):
         arguments: dict[str, Any] | str,
         *,
         state: str = "queued",
+        allowed_approval_scopes: tuple[str, ...] = ("once",),
     ) -> None:
         if state not in _TOOL_STATE_LABELS:
             raise ValueError(f"Unsupported tool-call state: {state}")
@@ -301,6 +303,10 @@ class ToolCallCard(Vertical):
         )
         self.state = state
         self.result_content = ""
+        self.approval_details: tuple[tuple[str, str], ...] = ()
+        self.allowed_approval_scopes = self._validate_approval_scopes(
+            allowed_approval_scopes
+        )
         self.restored = False
         self.started_at = monotonic()
         self.running_at = self.started_at if state == "running" else None
@@ -310,6 +316,8 @@ class ToolCallCard(Vertical):
             classes += " risky"
         if not self._target and not self._parameter_summary:
             classes += " no-summary"
+        if self.allowed_approval_scopes == ("once",):
+            classes += " approval-once-only"
         super().__init__(classes=classes)
 
     @property
@@ -379,16 +387,35 @@ class ToolCallCard(Vertical):
             )
 
         with Horizontal(classes="tool-approval-actions"):
-            yield Static("", classes="tool-spacer")
-            yield Button("Approve", classes="approval-approve")
-            yield Button("Always allow", classes="approval-always")
+            yield Button(
+                "Approve once",
+                classes=self._approval_button_classes("once"),
+            )
+            yield Button(
+                "Allow session",
+                classes=self._approval_button_classes("session"),
+            )
+            yield Button(
+                "Allow workspace",
+                classes=self._approval_button_classes("workspace"),
+            )
             yield Button("Reject", classes="approval-reject")
 
         with VerticalScroll(classes="tool-details"):
             yield Static(self._details_text(), classes="tool-details-content")
 
-    def set_awaiting_approval(self, arguments: dict[str, Any]) -> None:
+    def set_awaiting_approval(
+        self,
+        arguments: dict[str, Any],
+        *,
+        allowed_scopes: tuple[str, ...] = ("once",),
+        approval_details: tuple[tuple[str, str], ...] = (),
+    ) -> None:
         self.arguments = arguments
+        self.allowed_approval_scopes = self._validate_approval_scopes(
+            allowed_scopes
+        )
+        self.approval_details = approval_details
         self.running_at = None
         self.raw_arguments = json.dumps(
             arguments,
@@ -396,6 +423,7 @@ class ToolCallCard(Vertical):
             indent=2,
             sort_keys=True,
         )
+        self._sync_approval_buttons()
         self._refresh_summary()
         self.set_state("awaiting-approval")
 
@@ -552,6 +580,11 @@ class ToolCallCard(Vertical):
             pass
 
         details = f"Arguments\n{argument_text}"
+        if self.approval_details:
+            approval_text = "\n".join(
+                f"{name}: {value}" for name, value in self.approval_details
+            )
+            details += f"\n\nExecution approval\n{approval_text}"
         if self.result_content:
             result_text = self.result_content
             try:
@@ -566,6 +599,38 @@ class ToolCallCard(Vertical):
                 pass
             details += f"\n\nResult\n{result_text}"
         return details
+
+    def _approval_button_classes(self, scope: str) -> str:
+        classes = f"approval-{scope}"
+        if scope not in self.allowed_approval_scopes:
+            classes += " scope-disabled"
+        return classes
+
+    def _sync_approval_buttons(self) -> None:
+        self.set_class(
+            self.allowed_approval_scopes == ("once",),
+            "approval-once-only",
+        )
+        if not self.is_mounted:
+            return
+        for scope in _APPROVAL_SCOPES:
+            button = self.query_one(f".approval-{scope}", Button)
+            button.set_class(
+                scope not in self.allowed_approval_scopes,
+                "scope-disabled",
+            )
+
+    @staticmethod
+    def _validate_approval_scopes(scopes: object) -> tuple[str, ...]:
+        if not isinstance(scopes, tuple):
+            raise TypeError("allowed approval scopes must be a tuple")
+        if "once" not in scopes:
+            raise ValueError("allowed approval scopes must include 'once'")
+        if len(scopes) != len(set(scopes)):
+            raise ValueError("allowed approval scopes cannot contain duplicates")
+        if any(scope not in _APPROVAL_SCOPES for scope in scopes):
+            raise ValueError("unknown approval scope")
+        return scopes
 
     @staticmethod
     def _parse_arguments(arguments: dict[str, Any] | str) -> dict[str, Any]:

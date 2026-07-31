@@ -31,6 +31,18 @@ class SessionManagerUITests(unittest.IsolatedAsyncioTestCase):
         )
         return TrueCoderApp(agent, session_manager=manager), manager
 
+    async def test_agent_approval_identity_tracks_the_active_session(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            app, manager = self.make_app(Path(temporary_directory).resolve())
+            first = app.agent._approval_identity()
+
+            manager.create_session()
+            second = app.agent._approval_identity()
+
+            self.assertNotEqual(first.session_id, second.session_id)
+            self.assertEqual(first.workspace_id, second.workspace_id)
+            app.session_manager.close()
+
     async def test_ctrl_p_lists_project_sessions_and_marks_active(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             app, manager = self.make_app(Path(temporary_directory).resolve())

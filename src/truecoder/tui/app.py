@@ -16,10 +16,16 @@ from textual.widgets import Button
 from textual.worker import Worker, WorkerCancelled
 
 from truecoder.agent.agent import Agent
-from truecoder.agent.approval import ApprovalDecision, ApprovalRequest
+from truecoder.agent.approval import (
+    ApprovalIdentity,
+    ApprovalRequest,
+    ApprovalResponse,
+    ApprovalScope,
+)
 from truecoder.agent.events import AgentEventType
 from truecoder.agent.messages import ModelMessage
 from truecoder.client.response import TokenUsage
+from truecoder.execution.context import workspace_id_for
 from truecoder.session import SessionError, SessionManager
 from truecoder.session.models import SessionRecord
 from truecoder.tui.sessions import (
@@ -40,9 +46,8 @@ from truecoder.tui.widgets import (
 
 @dataclass
 class _PendingApproval:
-    call_id: str
-    tool_name: str
-    future: asyncio.Future[ApprovalDecision]
+    request: ApprovalRequest
+    future: asyncio.Future[ApprovalResponse]
     card: ToolCallCard
 
 
@@ -96,11 +101,21 @@ class TrueCoderApp(App[None]):
         self.agent = agent or Agent()
         self.session_manager = session_manager
         self.agent.approval_handler = self._request_tool_approval
+        if session_manager is not None and isinstance(
+            session_manager.project_root,
+            Path,
+        ):
+            workspace_id = workspace_id_for(session_manager.project_root)
+            self.agent.set_approval_identity_provider(
+                lambda: ApprovalIdentity(
+                    session_id=session_manager.active_session.session_id,
+                    workspace_id=workspace_id,
+                )
+            )
         self._busy = False
         self._active_worker: Worker[None] | None = None
         self._active_assistant: ChatMessage | None = None
         self._pending_approval: _PendingApproval | None = None
-        self._always_approved: set[str] = set()
         self._tool_cards: dict[str, ToolCallCard] = {}
         self._model_name = "model not configured"
 
@@ -143,17 +158,21 @@ class TrueCoderApp(App[None]):
     async def submit_from_keyboard(self, event: PromptInput.Submitted) -> None:
         await self._submit_prompt(event.value)
 
-    @on(Button.Pressed, ".approval-approve")
-    def approve_pending_tool(self) -> None:
-        self._resolve_pending_approval(ApprovalDecision.APPROVED)
+    @on(Button.Pressed, ".approval-once")
+    def approve_pending_tool_once(self) -> None:
+        self._resolve_pending_approval(ApprovalScope.ONCE)
 
-    @on(Button.Pressed, ".approval-always")
-    def always_approve_pending_tool(self) -> None:
-        self._resolve_pending_approval(ApprovalDecision.APPROVED, always=True)
+    @on(Button.Pressed, ".approval-session")
+    def approve_pending_tool_for_session(self) -> None:
+        self._resolve_pending_approval(ApprovalScope.SESSION)
+
+    @on(Button.Pressed, ".approval-workspace")
+    def approve_pending_tool_for_workspace(self) -> None:
+        self._resolve_pending_approval(ApprovalScope.WORKSPACE)
 
     @on(Button.Pressed, ".approval-reject")
     def reject_pending_tool(self) -> None:
-        self._resolve_pending_approval(ApprovalDecision.REJECTED)
+        self._resolve_pending_approval(None)
 
     async def _submit_prompt(self, raw_prompt: str) -> None:
         prompt = raw_prompt.strip()
@@ -224,7 +243,20 @@ class TrueCoderApp(App[None]):
                     card = self._tool_cards.get(call_id)
                     arguments = event.data.get("arguments")
                     if card is not None and isinstance(arguments, dict):
-                        card.set_awaiting_approval(arguments)
+                        raw_scopes = event.data.get("allowed_scopes")
+                        allowed_scopes = (
+                            tuple(
+                                str(scope)
+                                for scope in raw_scopes
+                                if isinstance(scope, str)
+                            )
+                            if isinstance(raw_scopes, (list, tuple))
+                            else ("once",)
+                        )
+                        card.set_awaiting_approval(
+                            arguments,
+                            allowed_scopes=allowed_scopes,
+                        )
                         self._scroll_to_latest()
                 elif event.type == AgentEventType.TOOL_RESULT:
                     self._finish_tool_call(
@@ -299,14 +331,8 @@ class TrueCoderApp(App[None]):
     async def _request_tool_approval(
         self,
         request: ApprovalRequest,
-    ) -> ApprovalDecision:
-        if request.tool_name in self._always_approved:
-            card = self._tool_cards.get(request.call_id)
-            if card is not None:
-                card.set_state("running")
-            return ApprovalDecision.APPROVED
-
-        future: asyncio.Future[ApprovalDecision] = (
+    ) -> ApprovalResponse:
+        future: asyncio.Future[ApprovalResponse] = (
             asyncio.get_running_loop().create_future()
         )
         card = self._tool_cards.get(request.call_id)
@@ -316,7 +342,11 @@ class TrueCoderApp(App[None]):
                 request.tool_name,
                 request.arguments,
                 state="awaiting-approval",
+                allowed_approval_scopes=tuple(
+                    scope.value for scope in request.allowed_scopes
+                ),
             )
+            card.approval_details = self._approval_detail_rows(request)
             self._tool_cards[request.call_id] = card
             transcript = self.query_one("#transcript", VerticalScroll)
             before = (
@@ -327,16 +357,21 @@ class TrueCoderApp(App[None]):
             )
             await transcript.mount(card, before=before)
         else:
-            card.set_awaiting_approval(request.arguments)
+            card.set_awaiting_approval(
+                request.arguments,
+                allowed_scopes=tuple(
+                    scope.value for scope in request.allowed_scopes
+                ),
+                approval_details=self._approval_detail_rows(request),
+            )
 
         self._pending_approval = _PendingApproval(
-            request.call_id,
-            request.tool_name,
+            request,
             future,
             card,
         )
 
-        card.query_one(".approval-approve", Button).focus(scroll_visible=False)
+        card.query_one(".approval-once", Button).focus(scroll_visible=False)
         self.call_after_refresh(
             card.scroll_visible,
             animate=False,
@@ -351,24 +386,81 @@ class TrueCoderApp(App[None]):
 
     def _resolve_pending_approval(
         self,
-        decision: ApprovalDecision,
-        *,
-        always: bool = False,
+        scope: ApprovalScope | None,
     ) -> None:
         pending = self._pending_approval
         if pending is None or pending.future.done():
             return
 
-        if always:
-            self._always_approved.add(pending.tool_name)
-        pending.card.set_state(
-            "running" if decision is ApprovalDecision.APPROVED else "rejected"
+        if scope is not None and scope not in pending.request.allowed_scopes:
+            return
+        response = (
+            ApprovalResponse.reject()
+            if scope is None
+            else ApprovalResponse.approve(scope)
         )
-        pending.future.set_result(decision)
+        pending.card.set_state(
+            "running" if scope is not None else "rejected"
+        )
+        pending.future.set_result(response)
         self._clear_pending_approval()
 
     def _clear_pending_approval(self) -> None:
         self._pending_approval = None
+
+    @staticmethod
+    def _approval_detail_rows(
+        request: ApprovalRequest,
+    ) -> tuple[tuple[str, str], ...]:
+        execution = request.execution
+        if execution is None:
+            return ()
+
+        limits = execution.effective_limits
+        capabilities = execution.capabilities
+
+        def optional_limit(value: object, suffix: str = "") -> str:
+            return "not requested" if value is None else f"{value}{suffix}"
+
+        return (
+            ("Command", execution.command_display),
+            ("Directory", str(execution.working_directory)),
+            ("Backend", execution.backend),
+            ("Risk", execution.risk.value),
+            ("Mode", execution.request.mode),
+            ("Shell", execution.request.shell_kind),
+            (
+                "Network",
+                "allowed" if execution.request.network_access else "denied",
+            ),
+            ("Filesystem", execution.request.filesystem_mode),
+            ("Timeout", f"{limits.timeout_seconds}s"),
+            ("Termination grace", f"{limits.termination_grace_seconds}s"),
+            ("Output limit", f"{limits.max_output_bytes} bytes"),
+            ("Return limit", f"{limits.max_return_bytes} bytes"),
+            ("Memory limit", optional_limit(limits.memory_bytes, " bytes")),
+            ("CPU limit", optional_limit(limits.cpu_seconds, "s")),
+            ("Process limit", optional_limit(limits.max_processes)),
+            ("Filesystem isolation", capabilities.filesystem_isolation),
+            ("Network isolation", capabilities.network_isolation),
+            ("Memory enforcement", capabilities.memory_limits),
+            ("CPU enforcement", capabilities.cpu_limits),
+            ("Process enforcement", capabilities.process_limits),
+            ("Timeout enforcement", capabilities.timeout_enforcement),
+            ("Cancellation", capabilities.cancellation),
+            (
+                "Supported modes",
+                ", ".join(capabilities.supported_execution_modes),
+            ),
+            (
+                "Supported filesystems",
+                ", ".join(capabilities.supported_filesystem_modes),
+            ),
+            (
+                "Supported shells",
+                ", ".join(capabilities.supported_shells) or "none",
+            ),
+        )
 
     async def _show_tool_call(
         self,

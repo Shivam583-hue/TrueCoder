@@ -451,7 +451,7 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(preamble.content_text, "I'll inspect it.")
             self.assertFalse(preamble.query_one(".message-footer").display)
 
-            await pilot.click(".approval-approve")
+            await pilot.click(".approval-once")
             await app.workers.wait_for_complete()
             await pilot.pause()
 
@@ -487,13 +487,13 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
                 str(card.query_one(".tool-parameters").content),
             )
             self.assertTrue(
-                app.focused.has_class("approval-approve")
+                app.focused.has_class("approval-once")
                 if app.focused is not None
                 else False
             )
             self.assertEqual(tool.runs, 0)
 
-            await pilot.click(".approval-approve")
+            await pilot.click(".approval-once")
             await app.workers.wait_for_complete()
             await pilot.pause()
 
@@ -537,21 +537,21 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             assistant = list(app.query(ChatMessage))[-1]
             self.assertIn("All done", assistant.content_text)
 
-    async def test_always_stops_prompting_for_that_tool(self):
+    async def test_exact_session_scope_reuses_without_prompting(self):
         tool = GuardedTool()
         client = ScriptedLLMClient(
             [
                 [
                     StreamEvent(
                         type=EventType.MESSAGE_COMPLETE,
-                        tool_calls=(ToolCall("call_1", "guarded", '{"text": "a"}'),),
+                    tool_calls=(ToolCall("call_1", "guarded", '{"text": "a"}'),),
                         finish_reason="tool_calls",
                     ),
                 ],
                 [
                     StreamEvent(
                         type=EventType.MESSAGE_COMPLETE,
-                        tool_calls=(ToolCall("call_2", "guarded", '{"text": "b"}'),),
+                    tool_calls=(ToolCall("call_2", "guarded", '{"text": "a"}'),),
                         finish_reason="tool_calls",
                     ),
                 ],
@@ -572,15 +572,58 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(len(list(app.query(ToolCallCard))), 1)
 
-            await pilot.click(".approval-always")
+            first_card = app.query_one(ToolCallCard)
+            await pilot.click(first_card.query_one(".approval-session"))
             await app.workers.wait_for_complete()
             await pilot.pause()
 
             self.assertEqual(tool.runs, 2)
-            self.assertIn("guarded", app._always_approved)
             cards = list(app.query(ToolCallCard))
             self.assertEqual(len(cards), 2)
             self.assertTrue(all(card.state == "completed" for card in cards))
+
+    async def test_changed_arguments_do_not_reuse_session_scope(self):
+        tool = GuardedTool()
+        client = ScriptedLLMClient(
+            [
+                [
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        tool_calls=(ToolCall("call_1", "guarded", '{"text": "a"}'),),
+                    )
+                ],
+                [
+                    StreamEvent(
+                        type=EventType.MESSAGE_COMPLETE,
+                        tool_calls=(ToolCall("call_2", "guarded", '{"text": "b"}'),),
+                    )
+                ],
+                [
+                    StreamEvent(
+                        type=EventType.TEXT_DELTA,
+                        text_delta=TextDelta("Done"),
+                    ),
+                    StreamEvent(type=EventType.MESSAGE_COMPLETE),
+                ],
+            ]
+        )
+        app = TrueCoderApp(make_agent(client, registry_with(tool)))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.query_one(PromptInput).text = "read it"
+            await pilot.press("enter")
+            await pilot.pause()
+            first_card = app.query_one(ToolCallCard)
+            await pilot.click(first_card.query_one(".approval-session"))
+            await pilot.pause()
+
+            cards = list(app.query(ToolCallCard))
+            self.assertEqual(tool.runs, 1)
+            self.assertEqual(len(cards), 2)
+            self.assertEqual(cards[1].state, "awaiting-approval")
+
+            await pilot.click(cards[1].query_one(".approval-reject"))
+            await app.workers.wait_for_complete()
 
     async def test_new_chat_cancels_a_pending_approval(self):
         tool = GuardedTool()
@@ -634,15 +677,18 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
                 "write_file",
                 {"path": "src/example.py", "content": "pass"},
                 state="awaiting-approval",
+                allowed_approval_scopes=("once", "session", "workspace"),
             )
             await transcript.mount(approval)
             await pilot.pause()
 
-            approve = approval.query_one(".approval-approve")
-            always = approval.query_one(".approval-always")
+            once = approval.query_one(".approval-once")
+            session = approval.query_one(".approval-session")
+            workspace = approval.query_one(".approval-workspace")
             reject = approval.query_one(".approval-reject")
-            self.assertLess(approve.region.y, always.region.y)
-            self.assertLess(always.region.y, reject.region.y)
+            self.assertEqual(once.region.y, session.region.y)
+            self.assertEqual(workspace.region.y, reject.region.y)
+            self.assertLess(once.region.y, workspace.region.y)
             self.assertEqual(
                 str(approval.query_one(".tool-target").content),
                 "src/example.py",
@@ -652,6 +698,24 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
                 '"content": "pass"',
                 str(approval.query_one(".tool-details-content").content),
             )
+
+            shell_approval = ToolCallCard(
+                "call_shell_approval",
+                "shell",
+                {"command": "pytest -q && ruff check ."},
+                state="awaiting-approval",
+            )
+            await transcript.mount(shell_approval)
+            await pilot.pause()
+            self.assertTrue(shell_approval.has_class("approval-once-only"))
+            self.assertTrue(shell_approval.query_one(".approval-once").display)
+            self.assertFalse(
+                shell_approval.query_one(".approval-session").display
+            )
+            self.assertFalse(
+                shell_approval.query_one(".approval-workspace").display
+            )
+            self.assertTrue(shell_approval.query_one(".approval-reject").display)
             approval.finish(
                 "success",
                 (
