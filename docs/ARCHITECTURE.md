@@ -319,17 +319,23 @@ memory grows only with configured retention and redaction bounds.
 
 Phase 5 defines one backend lifecycle without implementing a model-facing shell
 or concrete process backend. `ExecutionBackend.start()` accepts the immutable
-request, execution context, and read-only cancellation token. A successful
-start returns an `ExecutionHandle` with the matching execution ID, one exact
-durable `BackendResourceIdentifier`, a single-owner raw output iterator, stable
+request, execution context, read-only cancellation token, and an awaited
+resource-registration callback. A backend may acquire a native process group,
+Job Object, or container before invoking that callback, but project-controlled
+code must remain behind a launch gate until the exact
+`BackendResourceIdentifier` is durably attached to the pending audit run. If
+registration fails, the backend cleans the partial resource and never releases
+the gate. A successful start returns an `ExecutionHandle` with the matching
+execution ID, registered resource, single-owner raw output iterator, stable
 wait semantics, idempotent termination, and idempotent cleanup.
 
 Cleanup ownership transfers exactly once:
 
 1. During `start()`, the backend owns every partially acquired native resource.
-2. A failed start cleans those partial resources before raising.
-3. A successful return transfers all native ownership to the handle.
-4. The execution service owns that handle's lifecycle and must eventually call
+2. The backend registers the exact resource while user code remains gated.
+3. A failed acquisition or registration cleans partial resources before raising.
+4. A successful return transfers all native ownership to the handle.
+5. The execution service owns that handle's lifecycle and must eventually call
    cleanup after normal exit, termination, cancellation, or monitoring failure.
 
 Termination, waiting, and cleanup are separate operations. Termination asks the
@@ -457,6 +463,7 @@ Keep these invariants stable as the codebase grows:
 * output byte counts and digests cover the full raw streams
 * retained and model-visible output remain bounded as produced output grows
 * backend ownership transfers only through a successfully returned handle
+* project-controlled code stays gated until its resource identity is durable
 * discovery facts are bounded, explicit, and separated from pure selection
 * backend selection compares every capability requirement independently
 * an explicit backend or shell preference is never silently downgraded
