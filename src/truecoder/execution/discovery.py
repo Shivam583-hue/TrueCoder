@@ -7,6 +7,7 @@ import platform
 import re
 import shutil
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal, Protocol, TypeAlias
@@ -893,7 +894,8 @@ async def _kill_probe(
     task: asyncio.Task[tuple[int, bytes]],
 ) -> None:
     if process.returncode is None:
-        process.kill()
+        with suppress(ProcessLookupError):
+            process.kill()
     await process.wait()
     if not task.done():
         task.cancel()
