@@ -13,6 +13,7 @@ from .models import (
     SelectedBackend,
     UnavailableReason,
 )
+from .posix import PosixBackend, PosixExecutionHandle
 
 __all__ = [
     "BackendCompatibility",
@@ -28,6 +29,8 @@ __all__ = [
     "ExecutionBackend",
     "ExecutionHandle",
     "HostPlatformInfo",
+    "PosixBackend",
+    "PosixExecutionHandle",
     "SelectedBackend",
     "UnavailableReason",
 ]
