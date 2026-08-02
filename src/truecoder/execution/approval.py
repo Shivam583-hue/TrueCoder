@@ -15,6 +15,7 @@ from truecoder.execution.models import (
     BackendName,
     ExecutionLimits,
     ExecutionRequest,
+    RiskLevel,
 )
 
 _FINGERPRINT_VERSION = 1
@@ -29,13 +30,6 @@ class ApprovalScope(str, Enum):
     ONCE = "once"
     SESSION = "session"
     WORKSPACE = "workspace"
-
-
-class RiskLevel(str, Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,13 +223,9 @@ class ApprovalGrantStore:
         if scope is ApprovalScope.ONCE:
             return
         if scope is ApprovalScope.SESSION:
-            self._session_grants.add(
-                (request.identity.session_id, request.fingerprint)
-            )
+            self._session_grants.add((request.identity.session_id, request.fingerprint))
             return
-        self._workspace_grants.add(
-            (request.identity.workspace_id, request.fingerprint)
-        )
+        self._workspace_grants.add((request.identity.workspace_id, request.fingerprint))
 
 
 class ApprovalService:
@@ -346,9 +336,7 @@ def build_approval_fingerprint(
     payload = {
         "arguments": arguments,
         "execution": (
-            _execution_fingerprint_payload(execution)
-            if execution is not None
-            else None
+            _execution_fingerprint_payload(execution) if execution is not None else None
         ),
         "tool_name": tool_name,
         "version": _FINGERPRINT_VERSION,
@@ -423,9 +411,7 @@ def _execution_fingerprint_payload(
             "max_processes": request.limits.max_processes,
             "max_return_bytes": request.limits.max_return_bytes,
             "memory_bytes": request.limits.memory_bytes,
-            "termination_grace_seconds": (
-                request.limits.termination_grace_seconds
-            ),
+            "termination_grace_seconds": (request.limits.termination_grace_seconds),
             "timeout_seconds": request.limits.timeout_seconds,
         },
         "mode": request.mode,
