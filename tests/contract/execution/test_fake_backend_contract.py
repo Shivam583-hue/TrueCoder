@@ -164,9 +164,11 @@ class FakeBackend:
         del request
         cancellation.raise_if_cancelled()
         self._tracker.live_resources += 1
+        self._tracker.lifecycle_events.append("acquired")
         if self._fail_after_acquire:
             self._tracker.partial_start_cleanups += 1
             self._tracker.live_resources -= 1
+            self._tracker.lifecycle_events.append("cleaned")
             raise BackendStartError(
                 "injected partial start failure",
                 execution_id=context.execution_id,
@@ -184,7 +186,9 @@ class FakeBackend:
         except Exception:
             self._tracker.partial_start_cleanups += 1
             await handle.cleanup()
+            self._tracker.lifecycle_events.append("cleaned")
             raise
+        self._tracker.lifecycle_events.append("released")
         return handle
 
 
@@ -208,6 +212,7 @@ class FakeBackendContractTests(
         ) -> None:
             tracker.resource_registrations += 1
             tracker.registered_resource = resource
+            tracker.lifecycle_events.append("registered")
 
         return BackendContractCase(
             backend=FakeBackend(
@@ -239,6 +244,7 @@ class FakeBackendContractTests(
         ) -> None:
             tracker.resource_registrations += 1
             tracker.registered_resource = resource
+            tracker.lifecycle_events.append("registered")
 
         return BackendContractCase(
             backend=FakeBackend(

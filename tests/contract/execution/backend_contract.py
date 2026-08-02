@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from truecoder.execution.audit.models import BackendResourceIdentifier
 from truecoder.execution.backends.base import ExecutionBackend, ExecutionHandle
@@ -21,6 +21,7 @@ class BackendContractTracker:
     partial_start_cleanups: int = 0
     resource_registrations: int = 0
     registered_resource: BackendResourceIdentifier | None = None
+    lifecycle_events: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +84,10 @@ class BackendContractMixin:
 
         self.assertEqual(case.tracker.resource_registrations, 1)
         self.assertEqual(case.tracker.registered_resource, handle.resource)
+        self.assertLess(
+            case.tracker.lifecycle_events.index("registered"),
+            case.tracker.lifecycle_events.index("released"),
+        )
         self.assertEqual(handle.execution_id, case.context.execution_id)
         self.assertEqual(handle.resource.backend, case.backend.descriptor.name)
         self.assertEqual(handle.resource.resource_id, case.context.execution_id)
@@ -196,6 +201,7 @@ class BackendContractMixin:
 
         self.assertEqual(case.tracker.live_resources, 0)
         self.assertEqual(case.tracker.partial_start_cleanups, 1)
+        self.assertNotIn("released", case.tracker.lifecycle_events)
 
 
 BackendContractTestCase = unittest.IsolatedAsyncioTestCase
