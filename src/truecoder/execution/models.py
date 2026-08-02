@@ -33,7 +33,12 @@ MAX_COMMAND_BYTES: Final = 128 * 1024
 MAX_SCRIPT_BYTES: Final = 128 * 1024
 
 MAX_ENVIRONMENT_ENTRIES: Final = 256
+MAX_ENVIRONMENT_NAME_BYTES: Final = 1024
+MAX_ENVIRONMENT_VALUE_BYTES: Final = 32 * 1024
 MAX_ENVIRONMENT_BYTES: Final = 128 * 1024
+
+MAX_POLICY_IDENTIFIER_BYTES: Final = 128
+MAX_POLICY_MESSAGE_BYTES: Final = 4096
 
 
 class RiskLevel(str, Enum):
@@ -290,7 +295,6 @@ def normalize_environment_name(
     name: str,
     platform: ExecutionPlatform,
 ) -> str:
-
     name = _require_nonempty_string(name, "environment variable name")
     _require_no_null_bytes(name, "environment variable name")
     _require_choice(platform, EXECUTION_PLATFORMS, "execution platform")
@@ -468,7 +472,17 @@ class ExecutionRequest:
 
         total_environment_bytes = 0
 
-        for key, value in self.environment:
+        for index, (key, value) in enumerate(self.environment):
+            _require_utf8_size_at_most(
+                key,
+                name=f"environment[{index}].key",
+                maximum=MAX_ENVIRONMENT_NAME_BYTES,
+            )
+            _require_utf8_size_at_most(
+                value,
+                name=f"environment[{index}].value",
+                maximum=MAX_ENVIRONMENT_VALUE_BYTES,
+            )
             total_environment_bytes += _utf8_size(key) + 1 + _utf8_size(value)
 
         if total_environment_bytes > MAX_ENVIRONMENT_BYTES:
@@ -541,6 +555,11 @@ class PolicyReason:
         for name, value in (("code", self.code), ("rule_id", self.rule_id)):
             identifier = _require_nonempty_string(value, name)
             _require_no_null_bytes(identifier, name)
+            _require_utf8_size_at_most(
+                identifier,
+                name=name,
+                maximum=MAX_POLICY_IDENTIFIER_BYTES,
+            )
 
             if identifier != identifier.strip():
                 raise ValueError(f"{name} cannot have leading or trailing whitespace")
@@ -560,6 +579,11 @@ class PolicyReason:
 
         message = _require_nonempty_string(self.message, "message")
         _require_no_null_bytes(message, "message")
+        _require_utf8_size_at_most(
+            message,
+            name="message",
+            maximum=MAX_POLICY_MESSAGE_BYTES,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -621,14 +645,6 @@ class PolicyDecision:
         reason_codes = tuple(reason.code for reason in self.reasons)
         if len(reason_codes) != len(set(reason_codes)):
             raise ValueError("reason codes cannot repeat")
-
-        ordered_reasons = tuple(
-            sorted(
-                self.reasons,
-                key=lambda reason: (reason.rule_id, reason.code),
-            )
-        )
-        object.__setattr__(self, "reasons", ordered_reasons)
 
         if not self.allowed:
             if not self.reasons:
