@@ -10,6 +10,7 @@ from .errors import ExecutionSerializationError
 from .models import (
     BackendCapabilities,
     CapabilityCheck,
+    CapabilityRequirements,
     ExecutionContext,
     ExecutionLifecycleEvent,
     ExecutionLimits,
@@ -17,13 +18,17 @@ from .models import (
     ExecutionResult,
     NativeDiagnostic,
     PolicyDecision,
+    PolicyReason,
+    RiskLevel,
 )
 
-SERIALIZATION_VERSION: Final = 2
+SERIALIZATION_VERSION: Final = 3
 
 ExecutionModel: TypeAlias = (
     ExecutionLimits
     | ExecutionRequest
+    | PolicyReason
+    | CapabilityRequirements
     | PolicyDecision
     | BackendCapabilities
     | CapabilityCheck
@@ -38,6 +43,8 @@ JsonObject: TypeAlias = dict[str, object]
 _MODEL_NAMES: Final = {
     ExecutionLimits: "execution_limits",
     ExecutionRequest: "execution_request",
+    PolicyReason: "policy_reason",
+    CapabilityRequirements: "capability_requirements",
     PolicyDecision: "policy_decision",
     BackendCapabilities: "backend_capabilities",
     CapabilityCheck: "capability_check",
@@ -99,9 +106,7 @@ def deserialize_execution_model(payload: str) -> ExecutionModel:
 
         version = _require_integer(envelope["version"], "payload.version")
         if version != SERIALIZATION_VERSION:
-            raise ValueError(
-                f"unsupported execution serialization version: {version}"
-            )
+            raise ValueError(f"unsupported execution serialization version: {version}")
 
         model_name = _require_string(envelope["model"], "payload.model")
         data = _require_object(envelope["data"], "payload.data")
@@ -132,11 +137,20 @@ def _encode_model(model: ExecutionModel) -> JsonObject:
             "shell_kind": model.shell_kind,
             "working_directory": _encode_host_path(model.working_directory),
         }
+    if isinstance(model, PolicyReason):
+        return _encode_policy_reason(model)
+
+    if isinstance(model, CapabilityRequirements):
+        return _encode_capability_requirements(model)
+
     if isinstance(model, PolicyDecision):
         return {
             "allowed": model.allowed,
+            "risk": model.risk,
+            "requires_approval": model.requires_approval,
             "effective_limits": _encode_limits(model.effective_limits),
-            "reason": model.reason,
+            "requirements": _encode_capability_requirements(model.requirements),
+            "reasons": [_encode_policy_reason(reason) for reason in model.reasons],
         }
     if isinstance(model, BackendCapabilities):
         return {
@@ -237,22 +251,48 @@ def _decode_model(model_name: str, data: JsonObject) -> ExecutionModel:
             environment=_decode_string_pairs(data["environment"], "environment"),
             require_cancellation=data["require_cancellation"],  # type: ignore[arg-type]
         )
+
+    if model_name == "policy_reason":
+        return _decode_policy_reason(data)
+
+    if model_name == "capability_requirements":
+        return _decode_capability_requirements(data)
+
     if model_name == "policy_decision":
         _require_exact_fields(
             data,
-            {"allowed", "effective_limits", "reason"},
+            {
+                "allowed",
+                "risk",
+                "requires_approval",
+                "effective_limits",
+                "requirements",
+                "reasons",
+            },
             model_name,
         )
         return PolicyDecision(
             allowed=data["allowed"],  # type: ignore[arg-type]
-            reason=_decode_optional_string(data["reason"], "reason"),
+            risk=RiskLevel(_require_string(data["risk"], "policy_decision.risk")),
+            requires_approval=data["requires_approval"],  # type: ignore[arg-type]
             effective_limits=_decode_limits(
                 _require_object(
                     data["effective_limits"],
-                    "effective_limits",
+                    "policy_decision.effective_limits",
                 )
             ),
+            requirements=_decode_capability_requirements(
+                _require_object(
+                    data["requirements"],
+                    "policy_decision.requirements",
+                )
+            ),
+            reasons=_decode_policy_reasons(
+                data["reasons"],
+                "policy_decision.reasons",
+            ),
         )
+
     if model_name == "backend_capabilities":
         _require_exact_fields(
             data,
@@ -411,6 +451,107 @@ def _encode_limits(limits: ExecutionLimits) -> JsonObject:
     }
 
 
+def _decode_policy_reason(
+    data: JsonObject,
+    name: str = "policy_reason",
+) -> PolicyReason:
+    _require_exact_fields(
+        data,
+        {"code", "message", "rule_id"},
+        name,
+    )
+    return PolicyReason(
+        code=_require_string(data["code"], f"{name}.code"),
+        message=_require_string(data["message"], f"{name}.message"),
+        rule_id=_require_string(data["rule_id"], f"{name}.rule_id"),
+    )
+
+
+def _decode_policy_reasons(
+    value: object,
+    name: str,
+) -> tuple[PolicyReason, ...]:
+    if not isinstance(value, list):
+        raise TypeError(f"{name} must be an array")
+
+    return tuple(
+        _decode_policy_reason(
+            _require_object(item, f"{name}[{index}]"),
+            f"{name}[{index}]",
+        )
+        for index, item in enumerate(value)
+    )
+
+
+def _decode_capability_requirements(
+    data: JsonObject,
+    name: str = "capability_requirements",
+) -> CapabilityRequirements:
+    fields = {
+        "filesystem_isolation",
+        "network_isolation",
+        "memory_limits",
+        "cpu_limits",
+        "process_limits",
+        "timeout_enforcement",
+        "cancellation",
+    }
+    _require_exact_fields(data, fields, name)
+
+    return CapabilityRequirements(
+        filesystem_isolation=_require_string(
+            data["filesystem_isolation"],
+            f"{name}.filesystem_isolation",
+        ),  # type: ignore[arg-type]
+        network_isolation=_require_string(
+            data["network_isolation"],
+            f"{name}.network_isolation",
+        ),  # type: ignore[arg-type]
+        memory_limits=_require_string(
+            data["memory_limits"],
+            f"{name}.memory_limits",
+        ),  # type: ignore[arg-type]
+        cpu_limits=_require_string(
+            data["cpu_limits"],
+            f"{name}.cpu_limits",
+        ),  # type: ignore[arg-type]
+        process_limits=_require_string(
+            data["process_limits"],
+            f"{name}.process_limits",
+        ),  # type: ignore[arg-type]
+        timeout_enforcement=_require_string(
+            data["timeout_enforcement"],
+            f"{name}.timeout_enforcement",
+        ),  # type: ignore[arg-type]
+        cancellation=_require_string(
+            data["cancellation"],
+            f"{name}.cancellation",
+        ),  # type: ignore[arg-type]
+    )
+
+
+def _encode_policy_reason(reason: PolicyReason) -> JsonObject:
+    return {
+        "code": reason.code,
+        "message": reason.message,
+        "rule_id": reason.rule_id,
+    }
+
+
+def _encode_capability_requirements(
+    requirements: CapabilityRequirements,
+) -> JsonObject:
+    return {
+        "filesystem_isolation": requirements.filesystem_isolation,
+        "network_isolation": requirements.network_isolation,
+        "memory_limits": requirements.memory_limits,
+        "cpu_limits": requirements.cpu_limits,
+        "process_limits": requirements.process_limits,
+        "timeout_enforcement": requirements.timeout_enforcement,
+        "cancellation": requirements.cancellation,
+    }
+
+
 def _decode_limits(data: JsonObject) -> ExecutionLimits:
     _require_exact_fields(
         data,
@@ -481,8 +622,7 @@ def _decode_strings(value: object, name: str) -> tuple[str, ...]:
     if not isinstance(value, list):
         raise TypeError(f"{name} must be an array")
     return tuple(
-        _require_string(item, f"{name}[{index}]")
-        for index, item in enumerate(value)
+        _require_string(item, f"{name}[{index}]") for index, item in enumerate(value)
     )
 
 
