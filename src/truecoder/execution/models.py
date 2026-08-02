@@ -83,6 +83,12 @@ CapabilityLevel: TypeAlias = Literal[
     "enforced",
 ]
 
+CapabilityRequirementLevel: TypeAlias = Literal[
+    "none",
+    "best_effort",
+    "enforced",
+]
+
 TerminationReason: TypeAlias = Literal[
     "timeout",
     "cancellation",
@@ -137,6 +143,7 @@ FILESYSTEM_MODES: Final = frozenset({"host", "workspace-read", "workspace-write"
 WORKSPACE_FILESYSTEM_MODES: Final = frozenset({"workspace-read", "workspace-write"})
 
 CAPABILITY_LEVELS: Final = frozenset({"unsupported", "best_effort", "enforced"})
+CAPABILITY_REQUIREMENT_LEVELS: Final = frozenset({"none", "best_effort", "enforced"})
 
 TERMINATION_REASONS: Final = frozenset(
     {
@@ -452,22 +459,119 @@ class ExecutionRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class PolicyReason:
+    code: str
+    message: str
+    rule_id: str
+
+    def __post_init__(self) -> None:
+        for name, value in (("code", self.code), ("rule_id", self.rule_id)):
+            identifier = _require_nonempty_string(value, name)
+            _require_no_null_bytes(identifier, name)
+
+            if identifier != identifier.strip():
+                raise ValueError(f"{name} cannot have leading or trailing whitespace")
+
+            if (
+                not identifier.isascii()
+                or not identifier[0].isalnum()
+                or any(
+                    not (character.isalnum() or character in "._:/-")
+                    for character in identifier
+                )
+            ):
+                raise ValueError(
+                    f"{name} must be a stable ASCII identifier containing only "
+                    "letters, digits, '.', '_', ':', '/', or '-'"
+                )
+
+        message = _require_nonempty_string(self.message, "message")
+        _require_no_null_bytes(message, "message")
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityRequirements:
+    filesystem_isolation: CapabilityRequirementLevel = "none"
+    network_isolation: CapabilityRequirementLevel = "none"
+    memory_limits: CapabilityRequirementLevel = "none"
+    cpu_limits: CapabilityRequirementLevel = "none"
+    process_limits: CapabilityRequirementLevel = "none"
+    timeout_enforcement: CapabilityRequirementLevel = "none"
+    cancellation: CapabilityRequirementLevel = "none"
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("filesystem_isolation", self.filesystem_isolation),
+            ("network_isolation", self.network_isolation),
+            ("memory_limits", self.memory_limits),
+            ("cpu_limits", self.cpu_limits),
+            ("process_limits", self.process_limits),
+            ("timeout_enforcement", self.timeout_enforcement),
+            ("cancellation", self.cancellation),
+        ):
+            _require_choice(
+                value,
+                CAPABILITY_REQUIREMENT_LEVELS,
+                f"{name} requirement",
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class PolicyDecision:
     allowed: bool
-    reason: str | None
+    risk: RiskLevel
+    requires_approval: bool
     effective_limits: ExecutionLimits
+    requirements: CapabilityRequirements
+    reasons: tuple[PolicyReason, ...] = ()
 
     def __post_init__(self) -> None:
         _require_bool(self.allowed, "allowed")
+        _require_bool(self.requires_approval, "requires_approval")
+
+        if not isinstance(self.risk, RiskLevel):
+            raise TypeError("risk must be a RiskLevel")
 
         if not isinstance(self.effective_limits, ExecutionLimits):
             raise TypeError("effective_limits must be an ExecutionLimits instance")
 
-        if self.reason is not None:
-            _require_nonempty_string(self.reason, "reason")
+        if not isinstance(self.requirements, CapabilityRequirements):
+            raise TypeError("requirements must be a CapabilityRequirements instance")
 
-        if not self.allowed and self.reason is None:
-            raise ValueError("a denied policy decision must include a reason")
+        if not isinstance(self.reasons, tuple):
+            raise TypeError("reasons must be a tuple")
+
+        for index, reason in enumerate(self.reasons):
+            if not isinstance(reason, PolicyReason):
+                raise TypeError(f"reasons[{index}] must be a PolicyReason instance")
+
+        reason_codes = tuple(reason.code for reason in self.reasons)
+        if len(reason_codes) != len(set(reason_codes)):
+            raise ValueError("reason codes cannot repeat")
+
+        ordered_reasons = tuple(
+            sorted(
+                self.reasons,
+                key=lambda reason: (reason.rule_id, reason.code),
+            )
+        )
+        object.__setattr__(self, "reasons", ordered_reasons)
+
+        if not self.allowed:
+            if not self.reasons:
+                raise ValueError(
+                    "a denied policy decision must include at least one reason"
+                )
+            if self.requires_approval:
+                raise ValueError("a denied policy decision cannot require approval")
+
+        if (
+            self.effective_limits.max_return_bytes
+            > self.effective_limits.max_output_bytes
+        ):
+            raise ValueError(
+                "effective max_return_bytes cannot exceed max_output_bytes"
+            )
 
 
 # ---------------------Backend capability models--------------------
