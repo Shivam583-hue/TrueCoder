@@ -17,6 +17,12 @@ from truecoder.execution.models import (
     EXECUTION_STATUSES,
     FILESYSTEM_MODES,
     LIMIT_TERMINATION_REASONS,
+    MAX_ARGUMENT_BYTES,
+    MAX_COMMAND_BYTES,
+    MAX_ENVIRONMENT_NAME_BYTES,
+    MAX_ENVIRONMENT_VALUE_BYTES,
+    MAX_POLICY_IDENTIFIER_BYTES,
+    MAX_POLICY_MESSAGE_BYTES,
     RESOLVED_SHELL_KINDS,
     SHELL_KINDS,
     TERMINATION_REASONS,
@@ -25,6 +31,7 @@ from truecoder.execution.models import (
     BackendPreference,
     CapabilityCheck,
     CapabilityLevel,
+    CapabilityRequirements,
     ExecutionContext,
     ExecutionLifecycleEvent,
     ExecutionLifecycleStage,
@@ -37,7 +44,9 @@ from truecoder.execution.models import (
     FilesystemMode,
     NativeDiagnostic,
     PolicyDecision,
+    PolicyReason,
     ResolvedShellKind,
+    RiskLevel,
     ShellKind,
     TerminationReason,
     normalize_environment_name,
@@ -265,7 +274,7 @@ class ExecutionRequestTests(unittest.TestCase):
         request = exec_request(
             mode="shell",
             argv=None,
-            script="printf '%s\\n' \"$PATH\" \"$Path\"",
+            script='printf \'%s\\n\' "$PATH" "$Path"',
             shell_kind="posix",
             environment=(("PATH", "one"), ("Path", "two")),
         )
@@ -279,27 +288,106 @@ class ExecutionRequestTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             exec_request(limits={})  # type: ignore[arg-type]
 
+    def test_bounds_each_argument_and_the_combined_command(self):
+        self.assertEqual(
+            exec_request(argv=("x" * MAX_ARGUMENT_BYTES,)).argv,
+            ("x" * MAX_ARGUMENT_BYTES,),
+        )
+        with self.assertRaisesRegex(ValueError, "argv\\[0\\].*exceed"):
+            exec_request(argv=("x" * (MAX_ARGUMENT_BYTES + 1),))
+
+        arguments = tuple("x" * MAX_ARGUMENT_BYTES for _ in range(5))
+        self.assertGreater(sum(map(len, arguments)), MAX_COMMAND_BYTES)
+        with self.assertRaisesRegex(ValueError, "combined argv"):
+            exec_request(argv=arguments)
+
+    def test_bounds_individual_environment_names_and_values(self):
+        exec_request(
+            environment=(
+                (
+                    "X" * MAX_ENVIRONMENT_NAME_BYTES,
+                    "v" * MAX_ENVIRONMENT_VALUE_BYTES,
+                ),
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "environment\\[0\\].key"):
+            exec_request(environment=(("X" * (MAX_ENVIRONMENT_NAME_BYTES + 1), "v"),))
+        with self.assertRaisesRegex(ValueError, "environment\\[0\\].value"):
+            exec_request(environment=(("X", "v" * (MAX_ENVIRONMENT_VALUE_BYTES + 1)),))
+
 
 class DecisionAndCapabilityTests(unittest.TestCase):
     def test_policy_decision_requires_a_reason_when_denied(self):
         allowed = PolicyDecision(
             allowed=True,
-            reason=None,
+            risk=RiskLevel.LOW,
+            requires_approval=False,
             effective_limits=limits(),
+            requirements=CapabilityRequirements(),
         )
         denied = PolicyDecision(
             allowed=False,
-            reason="network access is forbidden",
+            risk=RiskLevel.CRITICAL,
+            requires_approval=False,
             effective_limits=limits(),
+            requirements=CapabilityRequirements(network_isolation="enforced"),
+            reasons=(
+                PolicyReason(
+                    code="network-denied",
+                    message="Network access is forbidden.",
+                    rule_id="policy.network.001",
+                ),
+            ),
         )
 
         self.assertTrue(allowed.allowed)
         self.assertFalse(denied.allowed)
-        with self.assertRaisesRegex(ValueError, "must include a reason"):
+        with self.assertRaisesRegex(ValueError, "must include at least one reason"):
             PolicyDecision(
                 allowed=False,
-                reason=None,
+                risk=RiskLevel.CRITICAL,
+                requires_approval=False,
                 effective_limits=limits(),
+                requirements=CapabilityRequirements(),
+            )
+        with self.assertRaisesRegex(ValueError, "cannot require approval"):
+            replace(denied, requires_approval=True)
+
+    def test_policy_reasons_are_bounded_stable_identifiers(self):
+        reason = PolicyReason(
+            code="policy-code",
+            message="A clear explanation.",
+            rule_id="policy.rule/1",
+        )
+        self.assertEqual(reason.code, "policy-code")
+
+        invalid = (
+            {"code": "not allowed!"},
+            {"code": "x" * (MAX_POLICY_IDENTIFIER_BYTES + 1)},
+            {"message": "x" * (MAX_POLICY_MESSAGE_BYTES + 1)},
+            {"rule_id": " leading"},
+        )
+        for changes in invalid:
+            with (
+                self.subTest(changes=changes),
+                self.assertRaises(ValueError),
+            ):
+                replace(reason, **changes)
+
+    def test_policy_reason_codes_cannot_repeat(self):
+        reason = PolicyReason(
+            code="same",
+            message="First.",
+            rule_id="policy.first",
+        )
+        with self.assertRaisesRegex(ValueError, "cannot repeat"):
+            PolicyDecision(
+                allowed=True,
+                risk=RiskLevel.LOW,
+                requires_approval=False,
+                effective_limits=limits(),
+                requirements=CapabilityRequirements(),
+                reasons=(reason, replace(reason, message="Second.")),
             )
 
     def test_backend_capabilities_validate_modes_and_shells(self):
@@ -505,9 +593,7 @@ class ContextDiagnosticAndEventTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expressed in UTC"):
             replace(
                 context,
-                launched_at_utc=UTC_NOW.astimezone(
-                    timezone(timedelta(hours=1))
-                ),
+                launched_at_utc=UTC_NOW.astimezone(timezone(timedelta(hours=1))),
             )
 
     def test_native_diagnostic_preserves_platform_specific_data(self):

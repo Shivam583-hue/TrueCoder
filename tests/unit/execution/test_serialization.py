@@ -11,6 +11,7 @@ from truecoder.execution.errors import ExecutionSerializationError
 from truecoder.execution.models import (
     BackendCapabilities,
     CapabilityCheck,
+    CapabilityRequirements,
     ExecutionContext,
     ExecutionLifecycleEvent,
     ExecutionLimits,
@@ -18,6 +19,8 @@ from truecoder.execution.models import (
     ExecutionResult,
     NativeDiagnostic,
     PolicyDecision,
+    PolicyReason,
+    RiskLevel,
 )
 from truecoder.execution.serialization import (
     SERIALIZATION_VERSION,
@@ -43,6 +46,18 @@ def limits() -> ExecutionLimits:
 
 def sample_models() -> tuple[object, ...]:
     shared_limits = limits()
+    policy_reason = PolicyReason(
+        code="network-denied",
+        message="Network access is disabled.",
+        rule_id="policy.network.001",
+    )
+    requirements = CapabilityRequirements(
+        filesystem_isolation="enforced",
+        network_isolation="enforced",
+        memory_limits="enforced",
+        timeout_enforcement="enforced",
+        cancellation="enforced",
+    )
     return (
         shared_limits,
         ExecutionRequest(
@@ -58,10 +73,15 @@ def sample_models() -> tuple[object, ...]:
             environment=(("CI", "1"), ("LANG", "C.UTF-8")),
             require_cancellation=True,
         ),
+        policy_reason,
+        requirements,
         PolicyDecision(
             allowed=False,
-            reason="network access is disabled",
+            risk=RiskLevel.CRITICAL,
+            requires_approval=False,
             effective_limits=shared_limits,
+            requirements=requirements,
+            reasons=(policy_reason,),
         ),
         BackendCapabilities(
             filesystem_isolation="enforced",
@@ -121,6 +141,10 @@ def sample_models() -> tuple[object, ...]:
     )
 
 
+def sample_model(model_type: type[object]) -> object:
+    return next(model for model in sample_models() if isinstance(model, model_type))
+
+
 class ExecutionSerializationTests(unittest.TestCase):
     def test_every_shared_domain_model_is_frozen_and_slotted(self):
         for model in sample_models():
@@ -141,7 +165,7 @@ class ExecutionSerializationTests(unittest.TestCase):
                 self.assertIs(type(restored), type(model))
 
     def test_serialization_is_deterministic_versioned_and_unicode_safe(self):
-        request = sample_models()[1]
+        request = sample_model(ExecutionRequest)
 
         first = serialize_execution_model(request)  # type: ignore[arg-type]
         second = serialize_execution_model(request)  # type: ignore[arg-type]
@@ -155,10 +179,14 @@ class ExecutionSerializationTests(unittest.TestCase):
 
     def test_restores_immutable_collection_and_host_types(self):
         request = deserialize_execution_model(
-            serialize_execution_model(sample_models()[1])  # type: ignore[arg-type]
+            serialize_execution_model(  # type: ignore[arg-type]
+                sample_model(ExecutionRequest)
+            )
         )
         context = deserialize_execution_model(
-            serialize_execution_model(sample_models()[6])  # type: ignore[arg-type]
+            serialize_execution_model(  # type: ignore[arg-type]
+                sample_model(ExecutionContext)
+            )
         )
 
         self.assertIsInstance(request, ExecutionRequest)
@@ -254,7 +282,7 @@ class ExecutionSerializationTests(unittest.TestCase):
             deserialize_execution_model(json.dumps(envelope))
 
     def test_rejects_malformed_nested_collections(self):
-        request = sample_models()[1]
+        request = sample_model(ExecutionRequest)
         envelope = json.loads(
             serialize_execution_model(request)  # type: ignore[arg-type]
         )
@@ -264,6 +292,28 @@ class ExecutionSerializationTests(unittest.TestCase):
             {"environment": {"CI": "1"}},
             {"limits": []},
             {"working_directory": str(PROJECT_ROOT)},
+        )
+
+        for changes in invalid_values:
+            malformed = json.loads(json.dumps(envelope))
+            malformed["data"].update(changes)
+            with (
+                self.subTest(changes=changes),
+                self.assertRaises(ExecutionSerializationError),
+            ):
+                deserialize_execution_model(json.dumps(malformed))
+
+    def test_rejects_malformed_structured_policy_fields(self):
+        decision = sample_model(PolicyDecision)
+        envelope = json.loads(
+            serialize_execution_model(decision)  # type: ignore[arg-type]
+        )
+        invalid_values = (
+            {"reasons": "network denied"},
+            {"reasons": [{"code": "missing-fields"}]},
+            {"requirements": []},
+            {"risk": "unknown"},
+            {"requires_approval": "yes"},
         )
 
         for changes in invalid_values:
