@@ -20,6 +20,7 @@ Shell tool (future phase)
 Execution service
  ├─ Execution context
  ├─ Cancellation registry
+ ├─ Durable audit service
  └─ Platform backends (future phases)
 
 UI
@@ -269,8 +270,59 @@ stale cleanup cannot remove a newer execution that happens to use the same ID.
 and unregister operations.
 
 This phase does not claim to execute or sandbox commands. Process creation,
-limits, environment filtering, output collection, audit persistence, and
-platform backends remain later execution phases.
+limits, environment filtering, live output collection, and platform backends
+remain later execution phases.
+
+## Durable execution audit
+
+The audit subsystem is the evidence boundary for future shell execution. An
+execution must first obtain an `AuditRunHandle` from `AuditService.admit()`.
+That handle is returned only after the pending run and its first event have
+committed to SQLite. If permissions, schema verification, database access, or
+the write fails, admission raises and no backend is authorized to start.
+
+Audit storage is separate from conversation sessions and lives in the operating
+system's user-data directory. The versioned SQLite schema contains:
+
+* one run row with execution, tool-call, session, turn, and workspace identities
+* an immutable ordered event log
+* at most one exact backend resource identifier
+* one atomic terminal finalization
+* SHA-256 output digests, byte counts, and bounded first/last previews
+
+Run state is a strict `pending → running → terminal` state machine. Policy
+denial, approval rejection, failed start, normal success, nonzero exit,
+timeout, cancellation, limit termination, cleanup failure, and recovery each
+use explicit terminal outcomes. A nonzero command exit is evidence, not an
+audit infrastructure exception.
+
+SQLite uses WAL journaling, full synchronous durability, foreign keys, an
+immediate transaction for every state change, and triggers that reject edits or
+deletions of events, resources, and terminal runs. Finalization inserts the one
+terminal event and updates the run in the same transaction. Retrying the exact
+same finalization is idempotent; a conflicting terminal result is rejected.
+
+The database directory and files are private by construction. POSIX uses
+directory mode `0700` and file mode `0600`, including SQLite sidecars. Windows
+removes inherited ACLs and grants full access only to the current user and
+LocalSystem. Failure to establish those restrictions makes audit storage
+unavailable rather than silently weakening it.
+
+`BoundedOutputEvidence` hashes every stdout and stderr byte while retaining only
+a fixed-size preview. When output is larger than the preview budget, it keeps
+both the beginning and end with a truncation marker. This preserves the final
+traceback without allowing audit memory or rows to grow with unbounded process
+output. Environment variable names may be summarized, but their values are
+never copied into audit metadata.
+
+Startup recovery leases every nonterminal row before acting on it. A recovery
+handler receives the exact persisted backend name, resource kind, native
+identifier, ownership token, host identity, and native details; it never
+searches for a process by a guessed or reused PID. Pending runs with no resource
+close as never started. Exact resources close as absent, terminated, or
+recovery failed. Every recovery path attempts one normal terminal
+finalization. Concrete POSIX, Windows Job Object, and container recovery
+handlers arrive with their respective backend phases.
 
 ## Design rules
 
@@ -285,5 +337,8 @@ Keep these invariants stable as the codebase grows:
 * approvals apply to exact fingerprints, never tool names alone
 * unsafe shell requests cannot receive reusable approval scopes
 * cancellation is addressed by execution ID and is idempotent
+* execution cannot start before its pending audit evidence is durable
+* every admitted execution ends in one immutable terminal audit state
+* startup recovery acts only on exact persisted backend resource identities
 * session saves happen only at completed-turn boundaries
 * restoring a session cannot partially replace agent state

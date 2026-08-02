@@ -13,6 +13,7 @@ from typing import TypeAlias
 from truecoder.execution.errors import (
     AuditPersistenceError,
     AuditUnavailableError,
+    ExecutionSerializationError,
 )
 
 from .codec import (
@@ -271,6 +272,14 @@ class SQLiteAuditStore:
                     operation="finalize_audit_run",
                 )
             resource = self._resource_for(connection, finalization.run_id)
+            if (
+                record.phase is AuditRunPhase.RUNNING
+                and finalization.resource != resource
+            ):
+                raise AuditPersistenceError(
+                    "a running finalization must preserve its resource evidence",
+                    operation="finalize_audit_run",
+                )
             if finalization.resource is not None and resource != finalization.resource:
                 raise AuditPersistenceError(
                     "finalization resource does not match durable resource evidence",
@@ -330,6 +339,11 @@ class SQLiteAuditStore:
                 return self._snapshot_from_row(connection, row)
         except AuditPersistenceError:
             raise
+        except (ExecutionSerializationError, TypeError, ValueError) as error:
+            raise AuditPersistenceError(
+                f"stored audit run is invalid: {error}",
+                operation="read_audit_run",
+            ) from error
         except sqlite3.Error as error:
             raise AuditPersistenceError(
                 f"could not read audit run: {error}",
@@ -353,6 +367,16 @@ class SQLiteAuditStore:
                 return tuple(self._event_from_row(row) for row in rows)
         except AuditPersistenceError:
             raise
+        except (
+            ExecutionSerializationError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as error:
+            raise AuditPersistenceError(
+                f"stored audit events are invalid: {error}",
+                operation="read_audit_events",
+            ) from error
         except sqlite3.Error as error:
             raise AuditPersistenceError(
                 f"could not read audit events: {error}",
@@ -461,7 +485,11 @@ class SQLiteAuditStore:
             return result
         except AuditPersistenceError:
             raise
-        except (sqlite3.Error, AuditUnavailableError) as error:
+        except (
+            sqlite3.Error,
+            AuditUnavailableError,
+            ExecutionSerializationError,
+        ) as error:
             raise AuditPersistenceError(
                 f"durable audit write failed: {error}",
                 operation=operation,

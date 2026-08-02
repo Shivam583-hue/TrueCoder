@@ -17,7 +17,10 @@ from truecoder.execution.audit.models import (
     TerminalOutcome,
 )
 from truecoder.execution.audit.store import SQLiteAuditStore
-from truecoder.execution.errors import AuditPersistenceError
+from truecoder.execution.errors import (
+    AuditPersistenceError,
+    AuditUnavailableError,
+)
 
 NOW = datetime(2026, 8, 2, 9, 0, tzinfo=UTC)
 
@@ -171,6 +174,51 @@ class SQLiteAuditStoreTests(unittest.TestCase):
                 connection.execute("DELETE FROM audit_runs")
         finally:
             connection.close()
+
+    def test_terminal_event_rolls_back_if_run_finalization_cannot_commit(self):
+        self.store.create_pending(admission())
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                """
+                CREATE TRIGGER reject_test_finalization
+                BEFORE UPDATE OF finalization_json ON audit_runs
+                WHEN NEW.finalization_json IS NOT NULL
+                BEGIN
+                    SELECT RAISE(ABORT, 'simulated finalization failure');
+                END
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(AuditPersistenceError):
+            self.store.finalize(
+                AuditFinalization(
+                    run_id="run-01",
+                    finalized_at=NOW,
+                    outcome=TerminalOutcome.POLICY_DENIED,
+                    command_started=False,
+                )
+            )
+
+        snapshot = self.store.get_run("run-01")
+        events = self.store.get_events("run-01")
+        self.assertEqual(snapshot.record.phase, AuditRunPhase.PENDING)
+        self.assertEqual(sum(event.terminal for event in events), 0)
+        self.assertEqual(len(events), 1)
+
+    def test_future_schema_version_fails_closed(self):
+        future_path = Path(self.directory.name) / "future.sqlite3"
+        connection = sqlite3.connect(future_path)
+        try:
+            connection.execute("PRAGMA user_version = 999")
+        finally:
+            connection.close()
+
+        with self.assertRaises(AuditUnavailableError):
+            SQLiteAuditStore(future_path, clock=lambda: NOW)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,11 @@ from typing import TypeAlias
 from truecoder.execution.models import BACKEND_NAMES
 
 Metadata: TypeAlias = tuple[tuple[str, str], ...]
+MAX_AUDIT_IDENTIFIER_CHARS = 512
+MAX_AUDIT_METADATA_ITEMS = 64
+MAX_AUDIT_METADATA_KEY_CHARS = 128
+MAX_AUDIT_METADATA_VALUE_CHARS = 4096
+MAX_AUDIT_PREVIEW_BYTES = 128 * 1024
 
 
 class AuditRunPhase(str, Enum):
@@ -113,6 +118,10 @@ def _validate_identifier(value: object, field_name: str) -> None:
         raise TypeError(f"{field_name} must be a string")
     if not value.strip():
         raise ValueError(f"{field_name} must not be empty")
+    if len(value) > MAX_AUDIT_IDENTIFIER_CHARS:
+        raise ValueError(
+            f"{field_name} must not exceed {MAX_AUDIT_IDENTIFIER_CHARS} characters"
+        )
 
 
 def _validate_timestamp(value: object, field_name: str) -> None:
@@ -127,6 +136,10 @@ def _validate_timestamp(value: object, field_name: str) -> None:
 def _validate_metadata(value: object, field_name: str = "metadata") -> None:
     if not isinstance(value, tuple):
         raise TypeError(f"{field_name} must be a tuple")
+    if len(value) > MAX_AUDIT_METADATA_ITEMS:
+        raise ValueError(
+            f"{field_name} must not contain more than {MAX_AUDIT_METADATA_ITEMS} items"
+        )
 
     seen: set[str] = set()
     for index, item in enumerate(value):
@@ -134,8 +147,18 @@ def _validate_metadata(value: object, field_name: str = "metadata") -> None:
             raise TypeError(f"{field_name}[{index}] must be a two-item tuple")
         key, item_value = item
         _validate_identifier(key, f"{field_name}[{index}].key")
+        if len(key) > MAX_AUDIT_METADATA_KEY_CHARS:
+            raise ValueError(
+                f"{field_name}[{index}].key must not exceed "
+                f"{MAX_AUDIT_METADATA_KEY_CHARS} characters"
+            )
         if not isinstance(item_value, str):
             raise TypeError(f"{field_name}[{index}].value must be a string")
+        if len(item_value) > MAX_AUDIT_METADATA_VALUE_CHARS:
+            raise ValueError(
+                f"{field_name}[{index}].value must not exceed "
+                f"{MAX_AUDIT_METADATA_VALUE_CHARS} characters"
+            )
         if key in seen:
             raise ValueError(f"{field_name} contains duplicate key {key!r}")
         seen.add(key)
@@ -212,6 +235,10 @@ class OutputEvidence:
         ):
             if not isinstance(value, str):
                 raise TypeError(f"{name} must be a string")
+            if len(value.encode("utf-8")) > MAX_AUDIT_PREVIEW_BYTES:
+                raise ValueError(
+                    f"{name} must not exceed {MAX_AUDIT_PREVIEW_BYTES} UTF-8 bytes"
+                )
 
         for name, value in (
             ("stdout_truncated", self.stdout_truncated),
