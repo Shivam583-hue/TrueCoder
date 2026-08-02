@@ -21,6 +21,7 @@ Execution service
  ├─ Execution context
  ├─ Cancellation registry
  ├─ Durable audit service
+ ├─ Pure policy, environment, and output components
  └─ Platform backends (future phases)
 
 UI
@@ -269,9 +270,49 @@ stale cleanup cannot remove a newer execution that happens to use the same ID.
 `ExecutionService` is the public owner of registration, lookup, cancellation,
 and unregister operations.
 
-This phase does not claim to execute or sandbox commands. Process creation,
-limits, environment filtering, live output collection, and platform backends
-remain later execution phases.
+This layer does not claim to execute or sandbox commands. Process creation and
+platform backends remain later execution phases.
+
+## Pure execution components
+
+Policy, child-environment construction, and output processing are deterministic
+components with no operating-system calls. They consume explicit platform and
+request data, which lets every future backend use the same decisions and makes
+their behavior testable without starting a process.
+
+The policy evaluator applies ordered rules to the validated execution request.
+It distinguishes known read-only, test, build, package, network, deletion,
+permission, Git, shell-script, and unknown commands. A policy decision contains
+the effective limits, risk level, stable structured reasons, approval
+requirement, and exact capability requirements. Requested limits can only be
+tightened against policy ceilings. Policy classification improves safety and
+approval UX, but it is not an isolation boundary.
+
+The environment builder never copies the complete parent environment. It starts
+from a small platform-specific allowlist, optionally includes explicitly
+configured names, then applies TrueCoder-defined and request-specific values in
+a fixed override order. Environment names use POSIX case-sensitive or Windows
+case-insensitive comparison as selected by the caller. Names matching known
+credential, cloud, token, password, private-key, or secret rules are removed.
+An explicitly requested sensitive name is also reported as a policy violation.
+Metadata records names and removal reasons only; values are excluded from
+representations and can be rendered only as `<redacted>`.
+
+Output processing treats produced, retained, and returned output as separate
+quantities. `BoundedByteStream` counts and hashes every raw byte while keeping
+only fixed-size first and last windows. `OutputCollector` drains stdout and
+stderr independently, incrementally decodes UTF-8, removes terminal control
+sequences, redacts configured secret values even when a match crosses chunk
+boundaries, and emits one signal when the combined production limit is crossed.
+Final stdout and stderr share one return-byte budget, use explicit truncation
+markers, and remain bounded regardless of total process output.
+
+The durable audit collector reuses the same bounded byte primitive, so audit and
+runtime evidence agree on complete byte counts, SHA-256 digests, sanitization,
+and truncation. Deterministic property-style tests vary chunk boundaries,
+Unicode splits, secret-name casing, command inputs, and limit values. The core
+invariant is that arbitrary chunking produces the same bounded result while
+memory grows only with configured retention and redaction bounds.
 
 ## Durable execution audit
 
@@ -337,6 +378,10 @@ Keep these invariants stable as the codebase grows:
 * approvals apply to exact fingerprints, never tool names alone
 * unsafe shell requests cannot receive reusable approval scopes
 * cancellation is addressed by execution ID and is idempotent
+* policy can tighten model requests but cannot weaken configured ceilings
+* child environments are constructed from an allowlist, never copied wholesale
+* output byte counts and digests cover the full raw streams
+* retained and model-visible output remain bounded as produced output grows
 * execution cannot start before its pending audit evidence is durable
 * every admitted execution ends in one immutable terminal audit state
 * startup recovery acts only on exact persisted backend resource identities
