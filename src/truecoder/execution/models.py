@@ -27,6 +27,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Final, Literal, TypeAlias
 
+MAX_ARGUMENT_COUNT: Final = 256
+MAX_ARGUMENT_BYTES: Final = 32 * 1024
+MAX_COMMAND_BYTES: Final = 128 * 1024
+MAX_SCRIPT_BYTES: Final = 128 * 1024
+
+MAX_ENVIRONMENT_ENTRIES: Final = 256
+MAX_ENVIRONMENT_BYTES: Final = 128 * 1024
+
 
 class RiskLevel(str, Enum):
     LOW = "low"
@@ -186,6 +194,24 @@ def _require_no_null_bytes(value: str, name: str) -> None:
 def _require_bool(value: object, name: str) -> None:
     if not isinstance(value, bool):
         raise TypeError(f"{name} must be a boolean")
+
+
+def _utf8_size(value: str) -> int:
+    return len(value.encode("utf-8"))
+
+
+def _require_utf8_size_at_most(
+    value: str,
+    *,
+    name: str,
+    maximum: int,
+) -> int:
+    size = _utf8_size(value)
+
+    if size > maximum:
+        raise ValueError(f"{name} cannot exceed {maximum} UTF-8 bytes; got {size}")
+
+    return size
 
 
 def _require_choice(
@@ -431,6 +457,27 @@ class ExecutionRequest:
             ),
         )
 
+        self._validate_environment_size()
+
+    def _validate_environment_size(self) -> None:
+        if len(self.environment) > MAX_ENVIRONMENT_ENTRIES:
+            raise ValueError(
+                "environment cannot contain more than "
+                f"{MAX_ENVIRONMENT_ENTRIES} entries"
+            )
+
+        total_environment_bytes = 0
+
+        for key, value in self.environment:
+            total_environment_bytes += _utf8_size(key) + 1 + _utf8_size(value)
+
+        if total_environment_bytes > MAX_ENVIRONMENT_BYTES:
+            raise ValueError(
+                "combined environment cannot exceed "
+                f"{MAX_ENVIRONMENT_BYTES} UTF-8 bytes; "
+                f"got {total_environment_bytes}"
+            )
+
     def _validate_exec_mode(self) -> None:
         if self.script is not None:
             raise ValueError("exec mode forbids script")
@@ -441,11 +488,31 @@ class ExecutionRequest:
         if not isinstance(self.argv, tuple) or not self.argv:
             raise ValueError("exec mode requires a non-empty argv tuple")
 
+        if len(self.argv) > MAX_ARGUMENT_COUNT:
+            raise ValueError(
+                f"argv cannot contain more than {MAX_ARGUMENT_COUNT} arguments"
+            )
+
+        total_command_bytes = 0
+
         for index, argument in enumerate(self.argv):
             argument = _require_string(argument, f"argv[{index}]")
             _require_no_null_bytes(argument, f"argv[{index}]")
 
+            total_command_bytes += _require_utf8_size_at_most(
+                argument,
+                name=f"argv[{index}]",
+                maximum=MAX_ARGUMENT_BYTES,
+            )
+
         _require_nonempty_string(self.argv[0], "argv[0]")
+
+        if total_command_bytes > MAX_COMMAND_BYTES:
+            raise ValueError(
+                "combined argv cannot exceed "
+                f"{MAX_COMMAND_BYTES} UTF-8 bytes; "
+                f"got {total_command_bytes}"
+            )
 
     def _validate_shell_mode(self) -> None:
         if self.argv is not None:
@@ -456,6 +523,12 @@ class ExecutionRequest:
 
         script = _require_nonempty_string(self.script, "script")
         _require_no_null_bytes(script, "script")
+
+        _require_utf8_size_at_most(
+            script,
+            name="script",
+            maximum=MAX_SCRIPT_BYTES,
+        )
 
 
 @dataclass(frozen=True, slots=True)
