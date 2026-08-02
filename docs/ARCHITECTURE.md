@@ -22,6 +22,7 @@ Execution service
  ├─ Cancellation registry
  ├─ Durable audit service
  ├─ Pure policy, environment, and output components
+ ├─ Backend discovery and capability selection
  └─ Platform backends (future phases)
 
 UI
@@ -314,6 +315,79 @@ Unicode splits, secret-name casing, command inputs, and limit values. The core
 invariant is that arbitrary chunking produces the same bounded result while
 memory grows only with configured retention and redaction bounds.
 
+## Backend protocol and discovery
+
+Phase 5 defines one backend lifecycle without implementing a model-facing shell
+or concrete process backend. `ExecutionBackend.start()` accepts the immutable
+request, execution context, and read-only cancellation token. A successful
+start returns an `ExecutionHandle` with the matching execution ID, one exact
+durable `BackendResourceIdentifier`, a single-owner raw output iterator, stable
+wait semantics, idempotent termination, and idempotent cleanup.
+
+Cleanup ownership transfers exactly once:
+
+1. During `start()`, the backend owns every partially acquired native resource.
+2. A failed start cleans those partial resources before raising.
+3. A successful return transfers all native ownership to the handle.
+4. The execution service owns that handle's lifecycle and must eventually call
+   cleanup after normal exit, termination, cancellation, or monitoring failure.
+
+Termination, waiting, and cleanup are separate operations. Termination asks the
+complete native resource to stop. Waiting observes and reaps its terminal state.
+Cleanup releases pipes, handles, temporary state, and other remaining
+resources. Repeating any of these operations must not target a guessed or reused
+native identifier. A reusable backend contract suite encodes these invariants
+before the POSIX, Windows, or container adapters exist.
+
+Discovery happens through an injected `DiscoveryIO` boundary. Unit tests can
+model Linux, macOS, Windows, and unknown hosts without depending on the CI
+runner. `SystemDiscoveryIO` is the only Phase 5 object that inspects the actual
+machine. It detects:
+
+* normalized operating-system family, architecture, and release
+* canonical installed POSIX, PowerShell, and Windows command-shell paths
+* Linux cgroup v2 mount, controller, membership, and delegated writability facts
+* Docker, Podman, and nerdctl client presence and versions
+* container service reachability and server versions
+* rootless mode as `yes`, `no`, or `unknown`
+
+Version and runtime probes use fixed executable argument vectors rather than a
+shell. They have short timeouts, bounded combined output, a minimal child
+environment, terminal sanitization, and explicit failure statuses. Discovery
+never pulls an image or runs project-controlled code. Client installation is
+not confused with service reachability, and a mounted cgroup filesystem is not
+confused with writable delegated enforcement.
+
+The resulting `DiscoverySnapshot` always describes POSIX, Windows, and
+container candidates. Backend capabilities are derived from measured host
+facts plus conservative backend knowledge; they are not optimistic class
+constants. An unavailable backend contains stable structured reasons. An
+available container descriptor identifies the exact inspected runtime.
+
+Capability matching is pure. It compares every field in Phase 4's
+`CapabilityRequirements` independently against a discovered descriptor:
+
+```text
+required none        accepts unsupported, best_effort, or enforced
+required best_effort accepts best_effort or enforced
+required enforced    accepts enforced only
+```
+
+Matching also checks execution mode, filesystem mode, and explicit or resolved
+shell support. It returns every mismatch instead of stopping at the first.
+Selection is deterministic and never mutates the request, effective limits, or
+requirements. `local` permits only the current host's local backend;
+`container` permits only the container backend; `auto` may move to another
+candidate only when that candidate satisfies the complete unchanged contract.
+An explicit shell is never silently substituted. If selection fails, the error
+preserves the reasons for every permitted candidate.
+
+`BackendDescriptor.available` means the host prerequisites for that adapter
+were discovered. It does not mean Phase 5 can start a command. Concrete POSIX,
+Windows Job Object, and container implementations arrive in later phases and
+must pass the shared contract suite before the execution service can register
+them.
+
 ## Durable execution audit
 
 The audit subsystem is the evidence boundary for future shell execution. An
@@ -382,6 +456,10 @@ Keep these invariants stable as the codebase grows:
 * child environments are constructed from an allowlist, never copied wholesale
 * output byte counts and digests cover the full raw streams
 * retained and model-visible output remain bounded as produced output grows
+* backend ownership transfers only through a successfully returned handle
+* discovery facts are bounded, explicit, and separated from pure selection
+* backend selection compares every capability requirement independently
+* an explicit backend or shell preference is never silently downgraded
 * execution cannot start before its pending audit evidence is durable
 * every admitted execution ends in one immutable terminal audit state
 * startup recovery acts only on exact persisted backend resource identities
