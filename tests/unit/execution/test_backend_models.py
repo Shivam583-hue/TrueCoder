@@ -119,6 +119,7 @@ class DiscoveryModelTests(unittest.TestCase):
                 mounted=True,
                 writable=True,
                 controllers=("cpu", "memory", "pids"),
+                delegated_path=ROOT / "cgroup",
             ).controllers,
             ("cpu", "memory", "pids"),
         )
@@ -215,6 +216,7 @@ class DiscoveryModelTests(unittest.TestCase):
                 mounted=True,
                 writable=False,
                 controllers=("cpu",),
+                delegated_path=ROOT / "cgroup",
             ),
             runtimes=(runtime(),),
             backends=backends,

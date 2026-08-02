@@ -209,6 +209,7 @@ class CgroupDiscoveryTests(unittest.TestCase):
             info.controllers,  # type: ignore[union-attr]
             ("cpu", "io", "memory", "pids"),
         )
+        self.assertEqual(info.delegated_path, delegated)  # type: ignore[union-attr]
 
     def test_malformed_membership_falls_back_to_cgroup_root(self):
         io = FakeDiscoveryIO()
@@ -220,6 +221,7 @@ class CgroupDiscoveryTests(unittest.TestCase):
         info = discover_cgroup_v2(discover_host(io), io)
 
         self.assertTrue(info.writable)  # type: ignore[union-attr]
+        self.assertEqual(info.delegated_path, root)  # type: ignore[union-attr]
 
 
 class RuntimeDiscoveryTests(unittest.IsolatedAsyncioTestCase):

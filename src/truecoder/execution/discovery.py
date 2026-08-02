@@ -359,6 +359,7 @@ def discover_cgroup_v2(
         mounted=True,
         writable=io.path_writable(delegated_path),
         controllers=controllers,
+        delegated_path=delegated_path,
     )
 
 

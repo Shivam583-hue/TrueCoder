@@ -155,6 +155,7 @@ class CgroupV2Info:
     mounted: bool
     writable: bool
     controllers: tuple[str, ...] = ()
+    delegated_path: Path | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.mounted, bool):
@@ -176,6 +177,19 @@ class CgroupV2Info:
                 "an unmounted cgroup v2 filesystem cannot be writable "
                 "or expose controllers"
             )
+        if self.delegated_path is not None:
+            object.__setattr__(
+                self,
+                "delegated_path",
+                _require_absolute_path(
+                    self.delegated_path,
+                    "delegated_path",
+                ),
+            )
+        if self.writable and self.delegated_path is None:
+            raise ValueError("a writable cgroup requires a delegated path")
+        if not self.mounted and self.delegated_path is not None:
+            raise ValueError("an unmounted cgroup cannot have a delegated path")
 
 
 @dataclass(frozen=True, slots=True)
