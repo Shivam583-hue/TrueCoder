@@ -10,7 +10,6 @@ from truecoder.execution.backends.posix_cgroup import (
     create_execution_cgroup,
     limit_reason,
 )
-from truecoder.execution.errors import BackendStartError
 from truecoder.execution.models import ExecutionLimits
 
 ROOT = Path("/sys/fs/cgroup/test.scope")
@@ -91,15 +90,18 @@ class PosixCgroupTests(unittest.TestCase):
         cleanup_cgroup(cgroup, io=io)
         self.assertNotIn(cgroup.path, io.directories)
 
-    def test_missing_enabled_controller_fails_instead_of_downgrading(self):
-        with self.assertRaises(BackendStartError):
-            create_execution_cgroup(
-                _info(enabled_controllers=("memory", "pids")),
-                execution_id="exec_two",
-                ownership_token="owner_two",
-                limits=_limits(),
-                io=FakeCgroupIO(),
-            )
+    def test_uses_only_controllers_discovery_marked_enforced(self):
+        cgroup = create_execution_cgroup(
+            _info(enabled_controllers=("memory", "pids")),
+            execution_id="exec_two",
+            ownership_token="owner_two",
+            limits=_limits(),
+            io=FakeCgroupIO(),
+        )
+
+        self.assertIsNotNone(cgroup)
+        assert cgroup is not None
+        self.assertEqual(cgroup.controllers, ("memory", "pids"))
 
     def test_limit_reason_uses_counter_deltas(self):
         io = FakeCgroupIO()

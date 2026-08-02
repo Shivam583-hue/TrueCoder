@@ -460,6 +460,9 @@ class PosixBackend:
             self._shells,
             execution_id=context.execution_id,
             cgroup_path=cgroup.path if cgroup is not None else None,
+            cgroup_controllers=(
+                cgroup.controllers if cgroup is not None else ()
+            ),
         )
         resources = _StartResources(cgroup=cgroup)
         try:
@@ -467,6 +470,7 @@ class PosixBackend:
             ready = await resources.read_start_frame(
                 self._startup_timeout,
                 expected="READY",
+                cancellation=cancellation,
             )
             supervisor_pid = int(ready.payload["supervisor_pid"])
             project_pgid = int(ready.payload["project_pgid"])
@@ -498,6 +502,7 @@ class PosixBackend:
             started = await resources.read_start_frame(
                 self._startup_timeout,
                 expected="STARTED",
+                cancellation=cancellation,
             )
             if int(started.payload["project_pid"]) != project_pgid:
                 raise BackendStartError(
@@ -649,13 +654,34 @@ class _StartResources:
         timeout: float,
         *,
         expected: str,
+        cancellation: CancellationToken,
     ) -> PosixFrame:
         if self.status_reader is None:
             raise RuntimeError("status reader was not initialized")
-        frame = await asyncio.wait_for(
-            read_frame_stream(self.status_reader),
-            timeout,
+        frame_task = asyncio.create_task(read_frame_stream(self.status_reader))
+        cancellation_task = asyncio.create_task(cancellation.wait())
+        done, _pending = await asyncio.wait(
+            {frame_task, cancellation_task},
+            timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
         )
+        if not done:
+            frame_task.cancel()
+            cancellation_task.cancel()
+            await asyncio.gather(
+                frame_task,
+                cancellation_task,
+                return_exceptions=True,
+            )
+            raise TimeoutError
+        if cancellation_task in done:
+            reason = cancellation_task.result()
+            frame_task.cancel()
+            await asyncio.gather(frame_task, return_exceptions=True)
+            raise CancellationRequested(reason)
+        cancellation_task.cancel()
+        await asyncio.gather(cancellation_task, return_exceptions=True)
+        frame = frame_task.result()
         if frame.type == "ERROR":
             raise BackendStartError(
                 _frame_error_message(frame),

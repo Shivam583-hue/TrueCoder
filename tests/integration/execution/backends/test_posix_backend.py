@@ -16,7 +16,10 @@ from truecoder.execution.backends.models import (
     DiscoveredProgram,
 )
 from truecoder.execution.backends.posix import PosixBackend
-from truecoder.execution.cancellation import CancellationSource
+from truecoder.execution.cancellation import (
+    CancellationRequested,
+    CancellationSource,
+)
 from truecoder.execution.errors import (
     BackendStartError,
     EnvironmentConstructionError,
@@ -223,6 +226,37 @@ class PosixBackendTests(unittest.IsolatedAsyncioTestCase):
                     _context("exec_rejected_gate"),
                     CancellationSource().token,
                     reject,
+                )
+
+            self.assertFalse(marker.exists())
+
+    async def test_cancellation_during_registration_never_releases_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "marker"
+            source = CancellationSource()
+
+            async def cancel_during_registration(
+                _resource: BackendResourceIdentifier,
+            ) -> None:
+                source.cancel("cancel while blocked")
+                await asyncio.sleep(0)
+
+            with self.assertRaisesRegex(
+                CancellationRequested,
+                "cancel while blocked",
+            ):
+                await _backend().start(
+                    _request(
+                        (
+                            sys.executable,
+                            str(HELPERS / "write_marker.py"),
+                            str(marker),
+                        ),
+                        directory=Path(directory),
+                    ),
+                    _context("exec_cancelled_gate"),
+                    source.token,
+                    cancel_during_registration,
                 )
 
             self.assertFalse(marker.exists())

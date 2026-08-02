@@ -324,13 +324,7 @@ def _cgroup_limit_reason(plan: PosixLaunchPlan) -> str | None:
             path=plan.cgroup_path,
             delegated_root=plan.cgroup_path.parent,
             controllers=tuple(
-                name
-                for name, value in (
-                    ("cpu", plan.limits.cpu_seconds),
-                    ("memory", plan.limits.memory_bytes),
-                    ("pids", plan.limits.max_processes),
-                )
-                if value is not None
+                plan.cgroup_controllers
             ),
             baseline=CgroupCounters(0, 0, 0),
         )

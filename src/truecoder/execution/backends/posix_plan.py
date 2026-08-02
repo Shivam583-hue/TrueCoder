@@ -26,6 +26,7 @@ class PosixLaunchPlan:
     limits: ExecutionLimits
     shell_kind: ResolvedShellKind | None
     cgroup_path: Path | None = None
+    cgroup_controllers: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.protocol_version != POSIX_PROTOCOL_VERSION:
@@ -80,6 +81,17 @@ class PosixLaunchPlan:
                 "cgroup_path",
                 self.cgroup_path.resolve(strict=False),
             )
+        if not isinstance(self.cgroup_controllers, tuple) or any(
+            controller not in {"cpu", "memory", "pids"}
+            for controller in self.cgroup_controllers
+        ):
+            raise ValueError("cgroup_controllers contains an unknown controller")
+        if tuple(sorted(set(self.cgroup_controllers))) != self.cgroup_controllers:
+            raise ValueError("cgroup_controllers must be sorted and unique")
+        if self.cgroup_path is None and self.cgroup_controllers:
+            raise ValueError("cgroup controllers require a cgroup path")
+        if self.cgroup_path is not None and not self.cgroup_controllers:
+            raise ValueError("a cgroup path requires at least one controller")
 
 
 def build_posix_launch_plan(
@@ -90,6 +102,7 @@ def build_posix_launch_plan(
     *,
     execution_id: str,
     cgroup_path: Path | None = None,
+    cgroup_controllers: tuple[str, ...] = (),
 ) -> PosixLaunchPlan:
     if not isinstance(request, ExecutionRequest):
         raise TypeError("request must be ExecutionRequest")
@@ -139,6 +152,7 @@ def build_posix_launch_plan(
         limits=request.limits,
         shell_kind=shell_kind,
         cgroup_path=cgroup_path,
+        cgroup_controllers=cgroup_controllers,
     )
 
 
@@ -165,6 +179,7 @@ def plan_to_payload(plan: PosixLaunchPlan) -> dict[str, object]:
         "cgroup_path": (
             str(plan.cgroup_path) if plan.cgroup_path is not None else None
         ),
+        "cgroup_controllers": list(plan.cgroup_controllers),
     }
 
 
@@ -180,6 +195,7 @@ def plan_from_payload(payload: object) -> PosixLaunchPlan:
             "limits",
             "shell_kind",
             "cgroup_path",
+            "cgroup_controllers",
         },
         "plan",
     )
@@ -212,10 +228,15 @@ def plan_from_payload(payload: object) -> PosixLaunchPlan:
     )
     shell_kind = data["shell_kind"]
     cgroup_path = data["cgroup_path"]
+    cgroup_controllers = data["cgroup_controllers"]
     if shell_kind not in {None, "posix", "powershell"}:
         raise ValueError("plan.shell_kind is invalid")
     if cgroup_path is not None and not isinstance(cgroup_path, str):
         raise TypeError("plan.cgroup_path must be a string or null")
+    if not isinstance(cgroup_controllers, list) or any(
+        not isinstance(controller, str) for controller in cgroup_controllers
+    ):
+        raise TypeError("plan.cgroup_controllers must be a list of strings")
     return PosixLaunchPlan(
         protocol_version=_require_int(
             data["protocol_version"],
@@ -264,6 +285,7 @@ def plan_from_payload(payload: object) -> PosixLaunchPlan:
         ),
         shell_kind=shell_kind,
         cgroup_path=Path(cgroup_path) if cgroup_path is not None else None,
+        cgroup_controllers=tuple(cgroup_controllers),
     )
 
 

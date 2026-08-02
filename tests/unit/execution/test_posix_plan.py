@@ -164,6 +164,7 @@ class PosixLaunchPlanTests(unittest.TestCase):
             (),
             execution_id="exec_wire",
             cgroup_path=ROOT / "cgroup" / "exec",
+            cgroup_controllers=("cpu", "memory", "pids"),
         )
 
         decoded = plan_from_payload(plan_to_payload(plan))

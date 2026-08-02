@@ -91,14 +91,6 @@ def create_execution_cgroup(
     enforced = tuple(sorted(required & enabled))
     if not enforced:
         return None
-    missing = required - enabled
-    if missing:
-        raise BackendStartError(
-            "selected cgroup capabilities are no longer available",
-            execution_id=execution_id,
-            backend="posix",
-            operation="create_cgroup",
-        )
 
     adapter = io or SystemCgroupIO()
     root = info.delegated_path.resolve(strict=False)
