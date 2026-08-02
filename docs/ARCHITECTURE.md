@@ -23,7 +23,9 @@ Execution service
  ├─ Durable audit service
  ├─ Pure policy, environment, and output components
  ├─ Backend discovery and capability selection
- └─ Platform backends (future phases)
+ └─ Platform backends
+     ├─ POSIX local
+     └─ Windows and container (future phases)
 
 UI
  ↓
@@ -271,8 +273,8 @@ stale cleanup cannot remove a newer execution that happens to use the same ID.
 `ExecutionService` is the public owner of registration, lookup, cancellation,
 and unregister operations.
 
-This layer does not claim to execute or sandbox commands. Process creation and
-platform backends remain later execution phases.
+This layer does not itself execute or sandbox commands. It supplies identities
+and cancellation authority to the selected platform backend.
 
 ## Pure execution components
 
@@ -352,7 +354,8 @@ machine. It detects:
 
 * normalized operating-system family, architecture, and release
 * canonical installed POSIX, PowerShell, and Windows command-shell paths
-* Linux cgroup v2 mount, controller, membership, and delegated writability facts
+* Linux cgroup v2 mount, available and enabled controllers, exact delegated
+  path, and delegated writability facts
 * Docker, Podman, and nerdctl client presence and versions
 * container service reachability and server versions
 * rootless mode as `yes`, `no`, or `unknown`
@@ -389,10 +392,75 @@ An explicit shell is never silently substituted. If selection fails, the error
 preserves the reasons for every permitted candidate.
 
 `BackendDescriptor.available` means the host prerequisites for that adapter
-were discovered. It does not mean Phase 5 can start a command. Concrete POSIX,
-Windows Job Object, and container implementations arrive in later phases and
-must pass the shared contract suite before the execution service can register
-them.
+were discovered. It does not by itself authorize a command. Every concrete
+backend must pass the shared contract suite before the execution service can
+register it.
+
+## POSIX local backend
+
+The POSIX backend is a trusted local process backend for Linux and macOS. It
+provides reliable process lifecycle management, not filesystem or network
+isolation. Its descriptor supports only `filesystem_mode="host"` and continues
+to report filesystem and network isolation as unsupported.
+
+Launch planning is pure. Exec mode preserves the original argv tuple exactly.
+Shell mode resolves one canonical shell path from discovery and passes the
+complete script as one argument. The child environment is built by the shared
+environment component before native resources are acquired. Sensitive
+requested variables fail before process creation, while inherited secrets are
+removed.
+
+Each execution uses a small trusted supervisor:
+
+```text
+TrueCoder
+  └─ supervisor (new POSIX session)
+       └─ blocked project leader (new process group)
+            ├─ child
+            └─ grandchild
+```
+
+The supervisor forks the project leader before reporting readiness, but that
+leader waits on a private launch pipe and has not executed project code. This
+makes the project PGID available for the durable
+`BackendResourceIdentifier`. TrueCoder awaits the audit resource-registration
+callback and sends `START` only after it commits. Failed registration,
+cancellation, malformed protocol data, or parent lifetime-pipe EOF kills the
+blocked group without executing the requested command.
+
+Parent and supervisor communicate with bounded, versioned, length-prefixed JSON
+frames. Command text and environment values travel through the private config
+pipe rather than process arguments. Structured exec never uses a shell.
+Supervisor error frames distinguish failed process setup or `execve` from a
+normal command exit.
+
+The returned handle starts one stdout pump and one stderr pump. Each emits raw
+chunks into a bounded queue and preserves order within its own stream. The
+backend does not decode, redact, hash, sanitize, or retain output; those remain
+the shared output collector's responsibility. Only one consumer may claim the
+iterator.
+
+`wait()`, `terminate()`, and `cleanup()` each cache their first task. Repeated or
+concurrent calls therefore share one terminal observation and one cleanup
+operation. The first termination reason wins. Normal termination asks the
+supervisor to stop the complete project group, waits for the requested grace
+period, then escalates to `SIGKILL`. The lifetime pipe gives the supervisor the
+same cleanup responsibility if TrueCoder disappears.
+
+Linux hard limits use only controllers that discovery found both available and
+enabled in the writable delegated subtree. Each execution receives a
+token-derived child cgroup. `memory.max` and `pids.max` apply hard tree-wide
+limits, while cgroup CPU accounting allows the supervisor to detect total
+execution CPU consumption. Missing controllers remain explicitly best effort
+and use POSIX rlimits where available. macOS uses the same lifecycle contract
+with best-effort rlimits and no cgroup claims.
+
+Recovery never trusts a PID alone. The durable identity includes the supervisor
+PID, project PGID, host identity, Linux boot ID and process start ticks,
+protocol version, ownership token, and optional owned cgroup path. Linux
+recovery signals only a complete exact match. An absent supervisor is recorded
+as absent. A live macOS resource fails closed after restart when exact ownership
+cannot be proven with the available facts.
 
 ## Durable execution audit
 
@@ -464,6 +532,9 @@ Keep these invariants stable as the codebase grows:
 * retained and model-visible output remain bounded as produced output grows
 * backend ownership transfers only through a successfully returned handle
 * project-controlled code stays gated until its resource identity is durable
+* POSIX project commands run in a supervisor-owned process group
+* closing the POSIX parent-lifetime pipe terminates and reaps the project tree
+* local POSIX execution never claims filesystem or network isolation
 * discovery facts are bounded, explicit, and separated from pure selection
 * backend selection compares every capability requirement independently
 * an explicit backend or shell preference is never silently downgraded
