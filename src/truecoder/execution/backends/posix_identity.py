@@ -184,7 +184,8 @@ def process_group_exists(process_group_id: int) -> bool:
 
 
 def process_exists(pid: int) -> bool:
-    return read_process_facts(pid) is not None
+    facts = read_process_facts(pid)
+    return facts is not None and facts.state != "Z"
 
 
 def _read_linux_process_facts(pid: int) -> PosixProcessFacts | None:

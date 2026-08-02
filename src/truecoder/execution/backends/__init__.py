@@ -14,6 +14,7 @@ from .models import (
     UnavailableReason,
 )
 from .posix import PosixBackend, PosixExecutionHandle
+from .posix_recovery import PosixRecoveryHandler
 
 __all__ = [
     "BackendCompatibility",
@@ -31,6 +32,7 @@ __all__ = [
     "HostPlatformInfo",
     "PosixBackend",
     "PosixExecutionHandle",
+    "PosixRecoveryHandler",
     "SelectedBackend",
     "UnavailableReason",
 ]
