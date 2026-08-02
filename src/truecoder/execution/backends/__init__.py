@@ -1,4 +1,4 @@
-from .base import ExecutionBackend, ExecutionHandle
+from .base import BackendResourceRegistrar, ExecutionBackend, ExecutionHandle
 from .models import (
     BackendCompatibility,
     BackendDescriptor,
@@ -19,6 +19,7 @@ __all__ = [
     "BackendDescriptor",
     "BackendExit",
     "BackendOutputChunk",
+    "BackendResourceRegistrar",
     "CgroupV2Info",
     "CleanupResult",
     "ContainerRuntimeInfo",

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from truecoder.execution.audit.models import BackendResourceIdentifier
 from truecoder.execution.backends.base import ExecutionBackend, ExecutionHandle
 from truecoder.execution.backends.models import BackendExit, BackendOutputChunk
 from truecoder.execution.cancellation import CancellationRequested, CancellationToken
@@ -17,6 +19,8 @@ class BackendContractTracker:
     native_terminations: int = 0
     native_cleanups: int = 0
     partial_start_cleanups: int = 0
+    resource_registrations: int = 0
+    registered_resource: BackendResourceIdentifier | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +32,7 @@ class BackendContractCase:
     tracker: BackendContractTracker
     expected_output: tuple[BackendOutputChunk, ...]
     expected_exit: BackendExit
+    register_resource: Callable[[BackendResourceIdentifier], Awaitable[None]]
 
 
 class BackendContractMixin:
@@ -52,27 +57,32 @@ class BackendContractMixin:
     ) -> BackendContractCase:
         raise NotImplementedError
 
+    async def start_case(
+        self,
+        case: BackendContractCase,
+    ) -> ExecutionHandle:
+        return await case.backend.start(
+            case.request,
+            case.context,
+            case.cancellation,
+            case.register_resource,
+        )
+
     async def test_backend_and_handle_satisfy_runtime_protocols(self):
         case = await self.make_backend_case()
 
         self.assertIsInstance(case.backend, ExecutionBackend)
-        handle = await case.backend.start(
-            case.request,
-            case.context,
-            case.cancellation,
-        )
+        handle = await self.start_case(case)
         self.assertIsInstance(handle, ExecutionHandle)
         await handle.cleanup()
 
     async def test_successful_start_transfers_exact_resource_identity(self):
         case = await self.make_backend_case()
 
-        handle = await case.backend.start(
-            case.request,
-            case.context,
-            case.cancellation,
-        )
+        handle = await self.start_case(case)
 
+        self.assertEqual(case.tracker.resource_registrations, 1)
+        self.assertEqual(case.tracker.registered_resource, handle.resource)
         self.assertEqual(handle.execution_id, case.context.execution_id)
         self.assertEqual(handle.resource.backend, case.backend.descriptor.name)
         self.assertEqual(handle.resource.resource_id, case.context.execution_id)
@@ -81,11 +91,7 @@ class BackendContractMixin:
 
     async def test_output_has_one_owner_and_reaches_end_of_stream(self):
         case = await self.make_backend_case()
-        handle = await case.backend.start(
-            case.request,
-            case.context,
-            case.cancellation,
-        )
+        handle = await self.start_case(case)
 
         output = handle.output()
         with self.assertRaises(RuntimeError):
@@ -97,11 +103,7 @@ class BackendContractMixin:
 
     async def test_wait_is_idempotent_and_observes_native_exit_once(self):
         case = await self.make_backend_case()
-        handle = await case.backend.start(
-            case.request,
-            case.context,
-            case.cancellation,
-        )
+        handle = await self.start_case(case)
 
         first = await handle.wait()
         second = await handle.wait()
@@ -113,11 +115,7 @@ class BackendContractMixin:
 
     async def test_nonzero_exit_is_normal_backend_data(self):
         case = await self.make_backend_case(exit_code=7)
-        handle = await case.backend.start(
-            case.request,
-            case.context,
-            case.cancellation,
-        )
+        handle = await self.start_case(case)
 
         result = await handle.wait()
 
@@ -127,11 +125,7 @@ class BackendContractMixin:
 
     async def test_terminate_is_idempotent_and_wait_remains_stable(self):
         case = await self.make_backend_case()
-        handle = await case.backend.start(
-            case.request,
-            case.context,
-            case.cancellation,
-        )
+        handle = await self.start_case(case)
 
         await handle.terminate("cancellation", 0.1)
         await handle.terminate("timeout", 0.1)
@@ -145,11 +139,7 @@ class BackendContractMixin:
 
     async def test_cleanup_is_idempotent_and_releases_resource_once(self):
         case = await self.make_backend_case()
-        handle = await case.backend.start(
-            case.request,
-            case.context,
-            case.cancellation,
-        )
+        handle = await self.start_case(case)
 
         first = await handle.cleanup()
         second = await handle.cleanup()
@@ -167,6 +157,7 @@ class BackendContractMixin:
                 case.request,
                 case.context,
                 case.cancellation,
+                case.register_resource,
             )
 
         self.assertEqual(case.tracker.partial_start_cleanups, 1)
@@ -180,9 +171,31 @@ class BackendContractMixin:
                 case.request,
                 case.context,
                 case.cancellation,
+                case.register_resource,
             )
 
         self.assertEqual(case.tracker.live_resources, 0)
+        self.assertEqual(case.tracker.resource_registrations, 0)
+
+    async def test_resource_registration_failure_cleans_before_raising(self):
+        case = await self.make_backend_case()
+
+        async def reject_registration(
+            resource: BackendResourceIdentifier,
+        ) -> None:
+            del resource
+            raise RuntimeError("injected durable registration failure")
+
+        with self.assertRaises(RuntimeError):
+            await case.backend.start(
+                case.request,
+                case.context,
+                case.cancellation,
+                reject_registration,
+            )
+
+        self.assertEqual(case.tracker.live_resources, 0)
+        self.assertEqual(case.tracker.partial_start_cleanups, 1)
 
 
 BackendContractTestCase = unittest.IsolatedAsyncioTestCase

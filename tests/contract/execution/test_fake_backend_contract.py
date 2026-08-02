@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -156,6 +156,10 @@ class FakeBackend:
         request: ExecutionRequest,
         context: ExecutionContext,
         cancellation: CancellationToken,
+        register_resource: Callable[
+            [BackendResourceIdentifier],
+            Awaitable[None],
+        ],
     ) -> ExecutionHandle:
         del request
         cancellation.raise_if_cancelled()
@@ -169,12 +173,19 @@ class FakeBackend:
                 backend="posix",
                 operation="start",
             )
-        return FakeExecutionHandle(
+        handle = FakeExecutionHandle(
             context=context,
             tracker=self._tracker,
             output=self._output,
             exit_code=self._exit_code,
         )
+        try:
+            await register_resource(handle.resource)
+        except Exception:
+            self._tracker.partial_start_cleanups += 1
+            await handle.cleanup()
+            raise
+        return handle
 
 
 class FakeBackendContractTests(
@@ -191,6 +202,13 @@ class FakeBackendContractTests(
             BackendOutputChunk(stream="stdout", data=b"hello\n"),
             BackendOutputChunk(stream="stderr", data=b"warning\n"),
         )
+
+        async def register_resource(
+            resource: BackendResourceIdentifier,
+        ) -> None:
+            tracker.resource_registrations += 1
+            tracker.registered_resource = resource
+
         return BackendContractCase(
             backend=FakeBackend(
                 tracker=tracker,
@@ -203,6 +221,7 @@ class FakeBackendContractTests(
             tracker=tracker,
             expected_output=output,
             expected_exit=BackendExit(exit_code=exit_code),
+            register_resource=register_resource,
         )
 
     async def make_failing_start_case(
@@ -214,6 +233,13 @@ class FakeBackendContractTests(
         source = CancellationSource()
         if cancelled:
             source.cancel("test cancellation")
+
+        async def register_resource(
+            resource: BackendResourceIdentifier,
+        ) -> None:
+            tracker.resource_registrations += 1
+            tracker.registered_resource = resource
+
         return BackendContractCase(
             backend=FakeBackend(
                 tracker=tracker,
@@ -227,6 +253,7 @@ class FakeBackendContractTests(
             tracker=tracker,
             expected_output=(),
             expected_exit=BackendExit(exit_code=0),
+            register_resource=register_resource,
         )
 
     async def test_cancellation_uses_the_domain_exception(self):
@@ -237,6 +264,7 @@ class FakeBackendContractTests(
                 case.request,
                 case.context,
                 case.cancellation,
+                case.register_resource,
             )
 
 

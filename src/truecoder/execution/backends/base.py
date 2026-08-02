@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from typing import Protocol, runtime_checkable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Protocol, TypeAlias, runtime_checkable
 
 from ..audit.models import BackendResourceIdentifier
 from ..cancellation import CancellationToken
@@ -16,6 +16,11 @@ from .models import (
     BackendOutputChunk,
     CleanupResult,
 )
+
+BackendResourceRegistrar: TypeAlias = Callable[
+    [BackendResourceIdentifier],
+    Awaitable[None],
+]
 
 
 @runtime_checkable
@@ -49,7 +54,15 @@ class ExecutionHandle(Protocol):
 
 @runtime_checkable
 class ExecutionBackend(Protocol):
-    """Start executions only after discovery and capability selection."""
+    """Start executions only after discovery and capability selection.
+
+    A backend may acquire a native resource before calling
+    ``register_resource``, but it must keep project-controlled code behind a
+    launch gate until that awaited callback succeeds. If registration fails,
+    the backend still owns the partial resource and must clean it before
+    propagating the error. A returned handle therefore always has durable
+    recovery identity.
+    """
 
     @property
     def descriptor(self) -> BackendDescriptor: ...
@@ -59,4 +72,5 @@ class ExecutionBackend(Protocol):
         request: ExecutionRequest,
         context: ExecutionContext,
         cancellation: CancellationToken,
+        register_resource: BackendResourceRegistrar,
     ) -> ExecutionHandle: ...
