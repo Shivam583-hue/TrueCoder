@@ -162,6 +162,7 @@ def snapshot(
                 mounted=True,
                 writable=True,
                 controllers=("cpu", "memory", "pids"),
+                enabled_controllers=("cpu", "memory", "pids"),
                 delegated_path=ROOT / "cgroup",
             )
             if system == "linux"

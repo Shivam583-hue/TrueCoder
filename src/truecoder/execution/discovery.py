@@ -50,6 +50,7 @@ CGROUP_READ_LIMIT_BYTES: Final = 16 * 1024
 
 _CGROUP_ROOT: Final = Path("/sys/fs/cgroup")
 _CGROUP_CONTROLLERS: Final = _CGROUP_ROOT / "cgroup.controllers"
+_CGROUP_SUBTREE_CONTROL: Final = "cgroup.subtree_control"
 _PROC_SELF_CGROUP: Final = Path("/proc/self/cgroup")
 _VERSION_PATTERN = re.compile(r"\b\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z._-]+)?\b")
 
@@ -355,10 +356,28 @@ def discover_cgroup_v2(
         )
     )
     delegated_path = _discover_delegated_cgroup_path(io)
+    subtree_control = delegated_path / _CGROUP_SUBTREE_CONTROL
+    enabled_controllers = (
+        tuple(
+            sorted(
+                {
+                    controller
+                    for controller in io.read_text(
+                        subtree_control,
+                        CGROUP_READ_LIMIT_BYTES,
+                    ).split()
+                    if _valid_discovery_identifier(controller)
+                }
+            )
+        )
+        if io.path_exists(subtree_control)
+        else ()
+    )
     return CgroupV2Info(
         mounted=True,
         writable=io.path_writable(delegated_path),
         controllers=controllers,
+        enabled_controllers=enabled_controllers,
         delegated_path=delegated_path,
     )
 
@@ -724,7 +743,7 @@ def _posix_capabilities(
     cgroup_v2: CgroupV2Info | None,
 ) -> BackendCapabilities:
     controllers = (
-        frozenset(cgroup_v2.controllers)
+        frozenset(cgroup_v2.enabled_controllers)
         if cgroup_v2 is not None and cgroup_v2.mounted and cgroup_v2.writable
         else frozenset()
     )

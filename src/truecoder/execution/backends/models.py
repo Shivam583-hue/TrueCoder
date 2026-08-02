@@ -155,6 +155,7 @@ class CgroupV2Info:
     mounted: bool
     writable: bool
     controllers: tuple[str, ...] = ()
+    enabled_controllers: tuple[str, ...] = ()
     delegated_path: Path | None = None
 
     def __post_init__(self) -> None:
@@ -166,13 +167,30 @@ class CgroupV2Info:
             raise TypeError("controllers must be a tuple")
         if len(self.controllers) > MAX_CGROUP_CONTROLLERS:
             raise ValueError("too many cgroup controllers")
-        for index, controller in enumerate(self.controllers):
-            _require_identifier(controller, f"controllers[{index}]")
-        if len(self.controllers) != len(set(self.controllers)):
-            raise ValueError("controllers must not contain duplicates")
-        if tuple(sorted(self.controllers)) != self.controllers:
-            raise ValueError("controllers must be sorted")
-        if not self.mounted and (self.writable or self.controllers):
+        for field_name, values in (
+            ("controllers", self.controllers),
+            ("enabled_controllers", self.enabled_controllers),
+        ):
+            if not isinstance(values, tuple):
+                raise TypeError(f"{field_name} must be a tuple")
+            if len(values) > MAX_CGROUP_CONTROLLERS:
+                raise ValueError(f"too many {field_name}")
+            for index, controller in enumerate(values):
+                _require_identifier(
+                    controller,
+                    f"{field_name}[{index}]",
+                )
+            if len(values) != len(set(values)):
+                raise ValueError(f"{field_name} must not contain duplicates")
+            if tuple(sorted(values)) != values:
+                raise ValueError(f"{field_name} must be sorted")
+        if not set(self.enabled_controllers).issubset(self.controllers):
+            raise ValueError("enabled controllers must be available controllers")
+        if not self.mounted and (
+            self.writable
+            or self.controllers
+            or self.enabled_controllers
+        ):
             raise ValueError(
                 "an unmounted cgroup v2 filesystem cannot be writable "
                 "or expose controllers"

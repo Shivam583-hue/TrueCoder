@@ -199,6 +199,7 @@ class CgroupDiscoveryTests(unittest.TestCase):
         delegated = Path("/sys/fs/cgroup/user.slice/test.scope")
         io.files[CGROUP_CONTROLLERS] = "pids memory cpu io\n"
         io.files[PROC_SELF_CGROUP] = "0::/user.slice/test.scope\n"
+        io.files[delegated / "cgroup.subtree_control"] = "memory pids cpu\n"
         io.writable.add(delegated)
 
         info = discover_cgroup_v2(discover_host(io), io)
@@ -208,6 +209,10 @@ class CgroupDiscoveryTests(unittest.TestCase):
         self.assertEqual(
             info.controllers,  # type: ignore[union-attr]
             ("cpu", "io", "memory", "pids"),
+        )
+        self.assertEqual(
+            info.enabled_controllers,  # type: ignore[union-attr]
+            ("cpu", "memory", "pids"),
         )
         self.assertEqual(info.delegated_path, delegated)  # type: ignore[union-attr]
 
@@ -319,6 +324,9 @@ class BackendDescriptorDerivationTests(unittest.IsolatedAsyncioTestCase):
         io.executables["sh"] = ROOT / "sh"
         io.files[CGROUP_CONTROLLERS] = "cpu memory pids\n"
         io.files[PROC_SELF_CGROUP] = "0::/\n"
+        io.files[Path("/sys/fs/cgroup/cgroup.subtree_control")] = (
+            "cpu memory pids\n"
+        )
         io.writable.add(Path("/sys/fs/cgroup"))
 
         snapshot = await discover_execution_environment(io)
