@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import TypeAlias
+
+from truecoder.execution.models import BACKEND_NAMES
 
 Metadata: TypeAlias = tuple[tuple[str, str], ...]
 
@@ -30,6 +32,30 @@ class TerminalOutcome(str, Enum):
     RECOVERED_RESOURCE_ABSENT = "recovered_resource_absent"
     RECOVERED_TERMINATED = "recovered_terminated"
     RECOVERY_FAILED = "recovery_failed"
+
+
+class AuditEventType(str, Enum):
+    RUN_CREATED = "run_created"
+    POLICY_ALLOWED = "policy_allowed"
+    POLICY_DENIED = "policy_denied"
+    APPROVAL_REQUESTED = "approval_requested"
+    APPROVAL_GRANTED = "approval_granted"
+    APPROVAL_REJECTED = "approval_rejected"
+    RESOURCE_RESERVED = "resource_reserved"
+    BACKEND_STARTING = "backend_starting"
+    BACKEND_STARTED = "backend_started"
+    CANCELLATION_REQUESTED = "cancellation_requested"
+    TIMEOUT_REACHED = "timeout_reached"
+    LIMIT_REACHED = "limit_reached"
+    TERMINATION_STARTED = "termination_started"
+    CLEANUP_STARTED = "cleanup_started"
+    CLEANUP_COMPLETED = "cleanup_completed"
+    CLEANUP_FAILED = "cleanup_failed"
+    RECOVERY_STARTED = "recovery_started"
+    RECOVERY_RESOURCE_ABSENT = "recovery_resource_absent"
+    RECOVERY_TERMINATED = "recovery_terminated"
+    RECOVERY_FAILED = "recovery_failed"
+    RUN_FINALIZED = "run_finalized"
 
 
 RECOVERY_OUTCOMES = frozenset(
@@ -82,14 +108,37 @@ def validate_transition(
         )
 
 
-def _validate_identifier(value: str, field_name: str) -> None:
-    if not value or not value.strip():
+def _validate_identifier(value: object, field_name: str) -> None:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string")
+    if not value.strip():
         raise ValueError(f"{field_name} must not be empty")
 
 
-def _validate_timestamp(value: datetime, field_name: str) -> None:
+def _validate_timestamp(value: object, field_name: str) -> None:
+    if not isinstance(value, datetime):
+        raise TypeError(f"{field_name} must be a datetime")
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{field_name} must be timezone-aware")
+    if value.utcoffset() != timedelta(0):
+        raise ValueError(f"{field_name} must be expressed in UTC")
+
+
+def _validate_metadata(value: object, field_name: str = "metadata") -> None:
+    if not isinstance(value, tuple):
+        raise TypeError(f"{field_name} must be a tuple")
+
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, tuple) or len(item) != 2:
+            raise TypeError(f"{field_name}[{index}] must be a two-item tuple")
+        key, item_value = item
+        _validate_identifier(key, f"{field_name}[{index}].key")
+        if not isinstance(item_value, str):
+            raise TypeError(f"{field_name}[{index}].value must be a string")
+        if key in seen:
+            raise ValueError(f"{field_name} contains duplicate key {key!r}")
+        seen.add(key)
 
 
 def _validate_sha256(value: str | None, field_name: str) -> None:
@@ -117,9 +166,19 @@ class BackendResourceIdentifier:
     native_details: tuple[tuple[str, str], ...]
 
     def __post_init__(self) -> None:
+        if isinstance(self.version, bool) or not isinstance(self.version, int):
+            raise TypeError("version must be an integer")
+        if self.version < 1:
+            raise ValueError("version must be at least one")
         _validate_identifier(self.backend, "backend")
+        if self.backend not in BACKEND_NAMES:
+            raise ValueError(f"unknown backend: {self.backend!r}")
         _validate_identifier(self.resource_kind, "resource_type")
         _validate_identifier(self.resource_id, "resource_id")
+        _validate_identifier(self.ownership_token, "ownership_token")
+        _validate_identifier(self.host_id, "host_id")
+        _validate_timestamp(self.created_at_utc, "created_at_utc")
+        _validate_metadata(self.native_details, "native_details")
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,18 +187,81 @@ class OutputEvidence:
     stderr_sha256: str | None = None
     stdout_bytes: int = 0
     stderr_bytes: int = 0
+    stdout_preview: str = ""
+    stderr_preview: str = ""
     stdout_truncated: bool = False
     stderr_truncated: bool = False
+    complete: bool = True
 
     def __post_init__(self) -> None:
         _validate_sha256(self.stdout_sha256, "stdout_sha256")
         _validate_sha256(self.stderr_sha256, "stderr_sha256")
 
-        if self.stdout_bytes < 0:
-            raise ValueError("stdout_bytes must not be negative")
+        for name, value in (
+            ("stdout_bytes", self.stdout_bytes),
+            ("stderr_bytes", self.stderr_bytes),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer")
+            if value < 0:
+                raise ValueError(f"{name} must not be negative")
 
-        if self.stderr_bytes < 0:
-            raise ValueError("stderr_bytes must not be negative")
+        for name, value in (
+            ("stdout_preview", self.stdout_preview),
+            ("stderr_preview", self.stderr_preview),
+        ):
+            if not isinstance(value, str):
+                raise TypeError(f"{name} must be a string")
+
+        for name, value in (
+            ("stdout_truncated", self.stdout_truncated),
+            ("stderr_truncated", self.stderr_truncated),
+            ("complete", self.complete),
+        ):
+            if not isinstance(value, bool):
+                raise TypeError(f"{name} must be a boolean")
+
+        if self.stdout_bytes and self.stdout_sha256 is None:
+            raise ValueError("non-empty stdout requires stdout_sha256")
+        if self.stderr_bytes and self.stderr_sha256 is None:
+            raise ValueError("non-empty stderr requires stderr_sha256")
+
+
+@dataclass(frozen=True, slots=True)
+class AuditRunAdmission:
+    run_id: str
+    execution_id: str
+    tool_call_id: str
+    session_id: str
+    turn_id: str
+    workspace_id: str
+    request_sha256: str
+    request_summary: Metadata
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("run_id", self.run_id),
+            ("execution_id", self.execution_id),
+            ("tool_call_id", self.tool_call_id),
+            ("session_id", self.session_id),
+            ("turn_id", self.turn_id),
+            ("workspace_id", self.workspace_id),
+        ):
+            _validate_identifier(value, field_name)
+        _validate_sha256(self.request_sha256, "request_sha256")
+        _validate_metadata(self.request_summary, "request_summary")
+        _validate_timestamp(self.created_at, "created_at")
+
+
+@dataclass(frozen=True, slots=True)
+class AuditRunHandle:
+    run_id: str
+    execution_id: str
+
+    def __post_init__(self) -> None:
+        _validate_identifier(self.run_id, "run_id")
+        _validate_identifier(self.execution_id, "execution_id")
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +274,12 @@ class AuditRunStart:
     def __post_init__(self) -> None:
         _validate_identifier(self.run_id, "run_id")
         _validate_timestamp(self.started_at, "started_at")
+        if self.resource is not None and not isinstance(
+            self.resource,
+            BackendResourceIdentifier,
+        ):
+            raise TypeError("resource must be a BackendResourceIdentifier or None")
+        _validate_metadata(self.metadata)
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +294,17 @@ class RecoveryResult:
     def __post_init__(self) -> None:
         _validate_identifier(self.run_id, "run_id")
         _validate_timestamp(self.attempted_at, "attempted_at")
+        if not isinstance(self.previous_phase, AuditRunPhase):
+            raise TypeError("previous_phase must be an AuditRunPhase")
+        if not isinstance(self.outcome, TerminalOutcome):
+            raise TypeError("outcome must be a TerminalOutcome")
+        if self.resource is not None and not isinstance(
+            self.resource,
+            BackendResourceIdentifier,
+        ):
+            raise TypeError("resource must be a BackendResourceIdentifier or None")
+        if self.detail is not None:
+            _validate_identifier(self.detail, "detail")
 
         if self.previous_phase is AuditRunPhase.TERMINAL:
             raise ValueError(
@@ -220,6 +359,26 @@ class AuditFinalization:
     def __post_init__(self) -> None:
         _validate_identifier(self.run_id, "run_id")
         _validate_timestamp(self.finalized_at, "finalized_at")
+        if not isinstance(self.outcome, TerminalOutcome):
+            raise TypeError("outcome must be a TerminalOutcome")
+        if self.command_started is not None and not isinstance(
+            self.command_started,
+            bool,
+        ):
+            raise TypeError("command_started must be a boolean or None")
+        if self.exit_code is not None and (
+            isinstance(self.exit_code, bool) or not isinstance(self.exit_code, int)
+        ):
+            raise TypeError("exit_code must be an integer or None")
+        if self.output is not None and not isinstance(self.output, OutputEvidence):
+            raise TypeError("output must be OutputEvidence or None")
+        if self.resource is not None and not isinstance(
+            self.resource,
+            BackendResourceIdentifier,
+        ):
+            raise TypeError("resource must be BackendResourceIdentifier or None")
+        if self.detail is not None:
+            _validate_identifier(self.detail, "detail")
 
         self._validate_recovery()
         self._validate_cleanup_failure()
@@ -281,6 +440,8 @@ class AuditFinalization:
 
         if not self.command_started and self.exit_code is not None:
             raise ValueError("A run that never started cannot have an exit code")
+        if not self.command_started and self.output is not None:
+            raise ValueError("A run that never started cannot contain output evidence")
 
         if self.outcome in PRE_EXECUTION_OUTCOMES:
             if self.command_started:
@@ -303,6 +464,16 @@ class AuditFinalization:
             if self.exit_code is None or self.exit_code == 0:
                 raise ValueError("failed requires a nonzero exit code")
 
+        if self.outcome in {
+            TerminalOutcome.TIMED_OUT,
+            TerminalOutcome.CANCELLED,
+            TerminalOutcome.LIMIT_EXCEEDED,
+        }:
+            if not self.command_started:
+                raise ValueError(f"{self.outcome.value} requires command_started=True")
+            if self.exit_code is not None:
+                raise ValueError(f"{self.outcome.value} must not have an exit code")
+
 
 @dataclass(frozen=True, slots=True)
 class AuditEvent:
@@ -311,18 +482,40 @@ class AuditEvent:
     sequence: int
     occurred_at: datetime
     phase: AuditRunPhase
-    event_type: str
+    event_type: AuditEventType
     message: str | None = None
     metadata: Metadata = ()
+    terminal: bool = False
 
     def __post_init__(self) -> None:
         _validate_identifier(self.event_id, "event_id")
         _validate_identifier(self.run_id, "run_id")
-        _validate_identifier(self.event_type, "event_type")
         _validate_timestamp(self.occurred_at, "occurred_at")
+        if not isinstance(self.phase, AuditRunPhase):
+            raise TypeError("phase must be an AuditRunPhase")
+        if not isinstance(self.event_type, AuditEventType):
+            raise TypeError("event_type must be an AuditEventType")
 
+        if isinstance(self.sequence, bool) or not isinstance(self.sequence, int):
+            raise TypeError("sequence must be an integer")
         if self.sequence < 0:
             raise ValueError("sequence must not be negative")
+        if self.message is not None:
+            _validate_identifier(self.message, "message")
+        _validate_metadata(self.metadata)
+        if not isinstance(self.terminal, bool):
+            raise TypeError("terminal must be a boolean")
+        if self.terminal and (
+            self.phase is not AuditRunPhase.TERMINAL
+            or self.event_type is not AuditEventType.RUN_FINALIZED
+        ):
+            raise ValueError("terminal events must be terminal run_finalized events")
+        if (
+            self.phase is AuditRunPhase.TERMINAL
+            and self.event_type is AuditEventType.RUN_FINALIZED
+            and not self.terminal
+        ):
+            raise ValueError("run_finalized events must be terminal")
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,6 +538,8 @@ class AuditRunRecord:
 
         if self.revision < 0:
             raise ValueError("revision must not be negative")
+        if not isinstance(self.phase, AuditRunPhase):
+            raise TypeError("phase must be an AuditRunPhase")
 
         if self.start is not None and self.start.run_id != self.run_id:
             raise ValueError("AuditRunStart run_id must match AuditRunRecord run_id")
@@ -448,3 +643,32 @@ class AuditRunRecord:
             updated_at=finalization.finalized_at,
             revision=self.revision + 1,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class AuditRunSnapshot:
+    admission: AuditRunAdmission
+    record: AuditRunRecord
+    resource: BackendResourceIdentifier | None = None
+    recovery_owner: str | None = None
+    recovery_lease_until: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.admission, AuditRunAdmission):
+            raise TypeError("admission must be an AuditRunAdmission")
+        if not isinstance(self.record, AuditRunRecord):
+            raise TypeError("record must be an AuditRunRecord")
+        if self.admission.run_id != self.record.run_id:
+            raise ValueError("admission and record run IDs must match")
+        if self.resource is not None and not isinstance(
+            self.resource,
+            BackendResourceIdentifier,
+        ):
+            raise TypeError("resource must be BackendResourceIdentifier or None")
+        if self.recovery_owner is not None:
+            _validate_identifier(self.recovery_owner, "recovery_owner")
+        if self.recovery_lease_until is not None:
+            _validate_timestamp(
+                self.recovery_lease_until,
+                "recovery_lease_until",
+            )
