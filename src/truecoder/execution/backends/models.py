@@ -131,7 +131,7 @@ class HostPlatformInfo:
 class DiscoveredProgram:
     name: str
     path: Path
-    shell_kind: ResolvedShellKind
+    shell_kind: ResolvedShellKind | None
     version: str | None = None
 
     def __post_init__(self) -> None:
@@ -141,7 +141,7 @@ class DiscoveredProgram:
             "path",
             _require_absolute_path(self.path, "program path"),
         )
-        if self.shell_kind not in RESOLVED_SHELL_KINDS:
+        if self.shell_kind is not None and self.shell_kind not in RESOLVED_SHELL_KINDS:
             raise ValueError(f"unknown shell kind: {self.shell_kind!r}")
         _require_optional_text(
             self.version,
