@@ -513,6 +513,97 @@ recovery failed. Every recovery path attempts one normal terminal
 finalization. Concrete POSIX, Windows Job Object, and container recovery
 handlers arrive with their respective backend phases.
 
+## Execution orchestration
+
+`ExecutionRunner` owns one execution from durable admission to one normalized
+result.
+It walks a fixed order: admission, policy, exact preparation, approval, active
+registration, resource-gated backend start, supervision, termination, drain,
+cleanup, and one durable finalization.
+
+`prepare_execution` resolves everything a backend would otherwise recompute.
+A `PreparedExecution` carries the effective request, the selected backend
+descriptor, the constructed child environment, and the resolved shell, so no
+backend re-derives environment, shell, limits, or capabilities.
+`BackendRegistry.get_exact` then returns the live backend only when its current
+descriptor still equals the descriptor that preparation selected; any drift is
+an explicit unavailable error rather than a substitution.
+
+Lifecycle state is separate from the transient event vocabulary.
+`LifecycleState` validates every internal transition and rejects backwards or
+skipped moves, including the pre-start paths into finalization used by policy
+denial, approval rejection, and a starting event that cannot be stored.
+
+Terminal outcomes are arbitrated, never inferred from task scheduling.
+The runner creates one output task and four watchers for backend exit,
+cancellation, timeout, and the output limit.
+Because `asyncio.wait` can return several completed tasks at once, every
+completed signal becomes a candidate claim and `resolve_terminal_claim` ranks
+them by a fixed priority: natural backend exit, output limit, resource limit,
+cancellation, then timeout.
+A command that exits at its deadline is therefore never labelled as timed out,
+and an enforced limit is never rewritten as a generic timeout.
+`TerminalArbiter` records the winner once; later claims, including a late
+cancellation, receive the original claim and cannot replace it.
+
+The output task is the only owner of the backend output iterator.
+It reads each raw byte once and accounts for it twice: the collector hashes and
+counts the exact bytes for audit evidence, and the same update supplies bounded
+sanitized text for the interface.
+Digests always cover the raw stream, never the sanitized or redacted preview.
+After a winner exists the runner cancels the watchers it no longer needs but
+keeps draining output, so a backend pipe cannot deadlock behind a full buffer.
+
+Two different deadlines apply during a run.
+The request timeout is a user-visible execution outcome.
+A short internal safety deadline, used while waiting for a broken backend to
+finish terminating or to close its pipes, is an infrastructure failure and is
+reported as one.
+Output that cannot reach EOF within that deadline marks the audit evidence
+incomplete instead of claiming complete evidence.
+
+Every audit write has a defined failure rule, and audit is a mandatory
+dependency rather than best-effort logging.
+Admission failure refuses the run before any selection, approval, registration,
+or backend call.
+A pre-start event failure never starts the backend and attempts one
+infrastructure finalization only while the store remains usable.
+A durable attachment failure leaves the backend launch gate closed, so no
+unrecorded project process can run.
+A mark-running failure terminates and cleans the returned handle while the
+exact resource stays attached for startup recovery.
+Losing a runtime event is fatal to the run rather than something to continue
+past.
+A finalization failure withholds the result entirely and leaves a nonterminal
+row for recovery; no terminal row is ever faked in memory.
+
+Only one method calls `audit.finalize`, and it receives an immutable
+`TerminalMaterial`.
+The pure functions in `results.py` convert that material into an
+`AuditFinalization` and convert the persisted record into the public
+`ExecutionResult`, including its exact audit ID.
+Durations come from injected monotonic time; audit timestamps remain UTC wall
+time.
+Incomplete cleanup is never reported as success: the row records
+`cleanup_failed` over the real command outcome and the caller receives a typed
+cleanup error.
+
+Lifecycle events are transient and bounded.
+`LifecyclePublisher` assigns dense sequence numbers, keeps a reserved slot so
+the single terminal event survives a saturated buffer, drops the oldest
+transient events under pressure, and never lets a slow or failing sink block or
+fail a run.
+
+Cancellation remains a request rather than a terminal event.
+The service signals the token first and only then records a durable
+cancellation-request event, so cancellation never depends on a successful
+write.
+The active entry carries the audit handle for that routing instead of a global
+side map.
+Repeat requests report `ALREADY_REQUESTED`, unknown IDs report `NOT_FOUND`, and
+a cancellation arriving after a natural exit has already won stays a harmless
+request outcome.
+
 ## Design rules
 
 Keep these invariants stable as the codebase grows:
@@ -540,6 +631,16 @@ Keep these invariants stable as the codebase grows:
 * an explicit backend or shell preference is never silently downgraded
 * execution cannot start before its pending audit evidence is durable
 * every admitted execution ends in one immutable terminal audit state
+* no backend re-resolves environment, shell, limits, or capabilities
+* a backend runs only when its descriptor still matches the prepared one
+* terminal outcomes are ranked by fixed priority, never by task scheduling
+* the first terminal claim wins and can never be replaced
+* exactly one owner reads the backend output iterator
+* command timeouts are outcomes; internal safety deadlines are failures
+* audit finalization failure withholds the result instead of faking one
+* incomplete cleanup is an error, never a successful command result
+* every task the runner creates is awaited or cancelled before it returns
+* lifecycle events are bounded and never block or fail an execution
 * startup recovery acts only on exact persisted backend resource identities
 * session saves happen only at completed-turn boundaries
 * restoring a session cannot partially replace agent state
