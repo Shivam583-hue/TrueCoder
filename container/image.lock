@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "reference": "sha256:def2b407daf10859b7ecabcaaeafede6f2e172a46c57e435b25f0abafbd2e93b",
+  "digest": "sha256:def2b407daf10859b7ecabcaaeafede6f2e172a46c57e435b25f0abafbd2e93b",
+  "platform": "linux/amd64",
+  "user": "65532:65532",
+  "entrypoint_version": "1",
+  "tag": "truecoder-exec:1",
+  "base_image": "python@sha256:399babc8b49529dabfd9c922f2b5eea81d611e4512e3ed250d75bd2e7683f4b0"
+}
