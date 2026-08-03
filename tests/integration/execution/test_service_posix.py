@@ -166,7 +166,7 @@ class PosixServiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await service.run(
+        result = await service.run_prepared(
             prepared(launch),
             decision(),
             context("exec-integration-ok"),
@@ -201,7 +201,7 @@ class PosixServiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await service.run(
+        result = await service.run_prepared(
             prepared(launch),
             decision(),
             context("exec-integration-fail"),
@@ -220,7 +220,7 @@ class PosixServiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
             timeout_seconds=0.3,
         )
 
-        result = await service.run(
+        result = await service.run_prepared(
             prepared(launch),
             decision(),
             context("exec-integration-timeout"),
@@ -246,7 +246,7 @@ class PosixServiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
             max_return_bytes=512,
         )
 
-        result = await service.run(
+        result = await service.run_prepared(
             prepared(launch),
             decision(),
             context("exec-integration-limit"),
@@ -273,7 +273,7 @@ class PosixServiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
             )
 
             with self.assertRaises(BackendStartError):
-                await service.run(
+                await service.run_prepared(
                     prepared(launch),
                     decision(),
                     context("exec-integration-gate"),
@@ -286,7 +286,7 @@ class PosixServiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
         service = self.service()
         launch = request((sys.executable, "-c", "print('done')"))
 
-        result = await service.run(
+        result = await service.run_prepared(
             prepared(launch),
             decision(),
             context("exec-integration-reopen"),

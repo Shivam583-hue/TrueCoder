@@ -24,6 +24,8 @@ from truecoder.execution.output import CollectedOutput, StreamOutput
 
 MAX_AUDIT_PREVIEW_BYTES: Final = 128 * 1024
 
+CANCELLED_BEFORE_START: Final = "cancelled_before_start"
+
 OUTCOME_BY_STATUS: Final[dict[ExecutionStatus, TerminalOutcome]] = {
     "completed": TerminalOutcome.COMPLETED,
     "failed": TerminalOutcome.FAILED,
@@ -240,6 +242,42 @@ def build_execution_result(
         backend=None if status == "denied" else backend,
         audit_id=record.run_id,
     )
+
+
+def build_cancelled_before_start_result(
+    record: AuditRunRecord,
+    material: TerminalMaterial,
+    *,
+    backend: BackendName,
+    reason: TerminationReason,
+) -> ExecutionResult:
+    if record.finalization is None:
+        raise ValueError("a terminal audit record requires a finalization")
+    if record.finalization.outcome is not TerminalOutcome.FAILED_TO_START:
+        raise ValueError(
+            "a pre-start cancellation must be recorded as failed_to_start"
+        )
+    if reason not in {"cancellation", "shutdown"}:
+        raise ValueError(f"unknown cancellation reason: {reason!r}")
+
+    return ExecutionResult(
+        status="cancelled",
+        exit_code=None,
+        stdout=material.output.stdout.text,
+        stderr=material.output.stderr.text,
+        duration_seconds=material.duration_seconds,
+        stdout_bytes=material.output.stdout.byte_count,
+        stderr_bytes=material.output.stderr.byte_count,
+        stdout_truncated=material.output.stdout.truncated,
+        stderr_truncated=material.output.stderr.truncated,
+        termination_reason=reason,
+        backend=backend,
+        audit_id=record.run_id,
+    )
+
+
+def cancellation_reason(text: str) -> TerminationReason:
+    return "shutdown" if text.strip().lower() == "shutdown" else "cancellation"
 
 
 def public_status(finalization: AuditFinalization) -> ExecutionStatus:

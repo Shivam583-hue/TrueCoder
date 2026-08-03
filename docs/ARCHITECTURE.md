@@ -594,7 +594,22 @@ the single terminal event survives a saturated buffer, drops the oldest
 transient events under pressure, and never lets a slow or failing sink block or
 fail a run.
 
+`ExecutionService.execute` owns the whole request-to-result lifecycle.
+It evaluates policy, selects a backend from the discovery snapshot, prepares
+the exact launch, and then calls the runner.
+A policy denial and an unavailable backend both still reach one durable
+terminal row, so no route escapes audit.
+`run_prepared` remains the lower-level entry point for callers that already
+hold a prepared execution and a decision.
+
 Cancellation remains a request rather than a terminal event.
+The active control entry is registered immediately after durable admission and
+before approval is awaited, so an execution is addressable by ID for its whole
+life rather than only once it reaches the backend.
+The runner checks the token after every awaited pre-start boundary.
+A cancellation that lands before the command starts records `failed_to_start`
+with a `cancelled_before_start` detail, because the command genuinely never
+ran, while the caller receives a `cancelled` result carrying the reason.
 The service signals the token first and only then records a durable
 cancellation-request event, so cancellation never depends on a successful
 write.
@@ -640,6 +655,8 @@ Keep these invariants stable as the codebase grows:
 * audit finalization failure withholds the result instead of faking one
 * incomplete cleanup is an error, never a successful command result
 * every task the runner creates is awaited or cancelled before it returns
+* an execution is cancellable by ID from admission, not only once it starts
+* pre-start cancellation returns cancelled and records that nothing started
 * lifecycle events are bounded and never block or fail an execution
 * startup recovery acts only on exact persisted backend resource identities
 * session saves happen only at completed-turn boundaries

@@ -35,7 +35,7 @@ _ALLOWED_TRANSITIONS: Final[dict[RunState, frozenset[RunState]]] = {
         {RunState.PREPARED, RunState.FINALIZING},
     ),
     RunState.PREPARED: frozenset(
-        {RunState.AWAITING_APPROVAL, RunState.REGISTERED},
+        {RunState.AWAITING_APPROVAL, RunState.REGISTERED, RunState.FINALIZING},
     ),
     RunState.AWAITING_APPROVAL: frozenset(
         {RunState.REGISTERED, RunState.FINALIZING},

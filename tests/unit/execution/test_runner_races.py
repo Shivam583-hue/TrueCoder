@@ -178,7 +178,7 @@ class OrchestrationTestCase(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
 
     async def run_once(self, runner: ExecutionRunner, **kwargs):
-        return await runner.run(
+        return await runner.run_prepared(
             kwargs.pop("prepared_execution", prepared()),
             kwargs.pop("policy_decision", decision()),
             kwargs.pop("execution_context", context()),
@@ -729,9 +729,58 @@ class ApprovalRouteTests(OrchestrationTestCase):
         approval.release()
         result = await run
 
-        self.assertIs(outcome, CancellationOutcome.NOT_FOUND)
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(backend.start_count, 1)
+        self.assertIs(outcome, CancellationOutcome.REQUESTED)
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(result.termination_reason, "cancellation")
+        self.assertIsNone(result.exit_code)
+        self.assertEqual(backend.start_count, 0)
+        self.assertFalse(backend.target_gate_opened)
+        assert self.spy.finalization is not None
+        self.assertIs(
+            self.spy.finalization.outcome,
+            TerminalOutcome.FAILED_TO_START,
+        )
+        self.assertEqual(
+            self.spy.finalization.detail,
+            "cancelled_before_start",
+        )
+        self.assertFalse(self.spy.finalization.command_started)
+        self.assertEqual(await self.registry.active_execution_ids(), ())
+
+    async def test_cancelling_from_inside_the_approval_gate_never_starts(self):
+        service = ExecutionService(
+            self.registry,
+            audit=self.audit,
+        )
+        outcomes: list[CancellationOutcome] = []
+
+        async def cancel_then_approve(_prepared, _context) -> bool:
+            outcomes.append(await service.cancel("exec-race-01"))
+            return True
+
+        runner, backend = self.build(approval_gate=cancel_then_approve)
+
+        result = await self.run_once(runner)
+
+        self.assertEqual(outcomes, [CancellationOutcome.REQUESTED])
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(backend.start_count, 0)
+        self.assertFalse(backend.target_gate_opened)
+        self.assertEqual(await self.registry.active_execution_ids(), ())
+
+    async def test_the_entry_is_registered_from_admission(self):
+        approval = FakeApproval(approve=True, gate=True)
+        runner, _backend = self.build(approval_gate=approval)
+        run = asyncio.create_task(self.run_once(runner))
+        await approval.requested.wait()
+
+        entry = await self.registry.get("exec-race-01")
+
+        assert entry is not None
+        assert entry.audit_handle is not None
+        self.assertEqual(entry.audit_handle.run_id, self.spy.run_id)
+        approval.release()
+        await run
 
 
 class TaskOwnershipTests(OrchestrationTestCase):

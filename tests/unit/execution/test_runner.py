@@ -349,7 +349,7 @@ class RunnerTestCase(unittest.IsolatedAsyncioTestCase):
         return await self.audit.get_run(RUN_ID)
 
     async def start_run(self, runner: ExecutionRunner, **kwargs):
-        return await runner.run(
+        return await runner.run_prepared(
             kwargs.pop("prepared_execution", prepared()),
             kwargs.pop("policy_decision", decision()),
             kwargs.pop("execution_context", context()),
@@ -495,9 +495,11 @@ class ResourceBoundaryTests(RunnerTestCase):
 
         runner, backend = self.build_runner(CancellingBackend(descriptor()))
 
-        with self.assertRaises(CancellationRequested):
-            await self.start_run(runner)
+        result = await self.start_run(runner)
 
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(result.termination_reason, "cancellation")
+        self.assertIsNone(result.exit_code)
         self.assertEqual(backend.starts, 1)
         snapshot = await self.newest_run()
         assert snapshot.record.finalization is not None

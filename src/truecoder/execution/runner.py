@@ -57,11 +57,14 @@ from truecoder.execution.output import CollectedOutput, OutputCollector
 from truecoder.execution.preparation import PreparedExecution
 from truecoder.execution.registry import ActiveExecution, ExecutionRegistry
 from truecoder.execution.results import (
+    CANCELLED_BEFORE_START,
     TERMINAL_STAGE_BY_STATUS,
     TerminalMaterial,
+    build_cancelled_before_start_result,
     build_execution_result,
     build_finalization,
     build_output_evidence,
+    cancellation_reason,
     claim_for_cancellation,
     claim_for_exit,
     claim_for_output_limit,
@@ -139,7 +142,7 @@ class ExecutionRunner:
         self._event_capacity = event_capacity
         self._safety_deadline = float(safety_deadline_seconds)
 
-    async def run(
+    async def run_prepared(
         self,
         prepared: PreparedExecution,
         decision: PolicyDecision,
@@ -152,18 +155,68 @@ class ExecutionRunner:
         if not isinstance(context, ExecutionContext):
             raise TypeError("context must be an ExecutionContext")
 
-        publisher = LifecyclePublisher(
-            context.execution_id,
-            self._event_sink,
-            self._clock,
-            capacity=self._event_capacity,
-        )
+        publisher = self._publisher(context)
         state = LifecycleState(context.execution_id)
         try:
             await publisher.publish("requested")
             return await self._run(prepared, decision, context, state, publisher)
         finally:
             await publisher.aclose()
+
+    async def deny(
+        self,
+        request: ExecutionRequest,
+        decision: PolicyDecision,
+        context: ExecutionContext,
+    ) -> ExecutionResult:
+        if decision.allowed:
+            raise ValueError("deny requires a policy decision that refused the request")
+
+        publisher = self._publisher(context)
+        state = LifecycleState(context.execution_id)
+        try:
+            await publisher.publish("requested")
+            handle = await self._admit(request, context)
+            state.transition(RunState.POLICY_EVALUATED)
+            await publisher.publish("policy_evaluated")
+            return await self._deny(handle, state, context, decision, publisher)
+        finally:
+            await publisher.aclose()
+
+    async def refuse(
+        self,
+        request: ExecutionRequest,
+        context: ExecutionContext,
+        *,
+        detail: str,
+        error: BaseException,
+    ) -> ExecutionResult:
+        publisher = self._publisher(context)
+        state = LifecycleState(context.execution_id)
+        try:
+            await publisher.publish("requested")
+            handle = await self._admit(request, context)
+            state.transition(RunState.POLICY_EVALUATED)
+            await publisher.publish("policy_evaluated")
+            return await self._fail_to_start(
+                handle,
+                state,
+                context,
+                None,
+                publisher,
+                detail=detail,
+                error=error,
+            )
+        finally:
+            await publisher.aclose()
+
+    def _publisher(self, context: ExecutionContext) -> LifecyclePublisher:
+        return LifecyclePublisher(
+            context.execution_id,
+            self._event_sink,
+            self._clock,
+            capacity=self._event_capacity,
+        )
 
     async def _run(
         self,
@@ -174,7 +227,40 @@ class ExecutionRunner:
         publisher: LifecyclePublisher,
     ) -> ExecutionResult:
         handle = await self._admit(prepared.request, context)
+        entry = ActiveExecution(
+            context=context,
+            cancellation_source=CancellationSource(),
+            audit_handle=handle,
+        )
+        await self._registry.register(entry)
+        token = entry.cancellation_source.token
 
+        try:
+            return await self._route(
+                handle,
+                token,
+                prepared,
+                decision,
+                context,
+                state,
+                publisher,
+            )
+        finally:
+            await self._registry.unregister(
+                context.execution_id,
+                expected=entry,
+            )
+
+    async def _route(
+        self,
+        handle: AuditRunHandle,
+        token: CancellationToken,
+        prepared: PreparedExecution,
+        decision: PolicyDecision,
+        context: ExecutionContext,
+        state: LifecycleState,
+        publisher: LifecyclePublisher,
+    ) -> ExecutionResult:
         state.transition(RunState.POLICY_EVALUATED)
         await publisher.publish("policy_evaluated")
         if not decision.allowed:
@@ -187,6 +273,15 @@ class ExecutionRunner:
             AuditEventType.POLICY_ALLOWED,
             publisher,
         )
+        if token.cancelled:
+            return await self._cancel_before_start(
+                handle,
+                state,
+                context,
+                prepared,
+                token,
+                publisher,
+            )
 
         state.transition(RunState.PREPARED)
         await publisher.publish(
@@ -194,16 +289,64 @@ class ExecutionRunner:
             details=(("backend", prepared.backend.name),),
         )
 
-        if not await self._approve(handle, state, prepared, context, publisher):
-            return await self._reject(handle, state, context, publisher)
-
-        return await self._start_and_supervise(
+        approved = await self._approve(
             handle,
             state,
             prepared,
             context,
             publisher,
         )
+        if token.cancelled:
+            return await self._cancel_before_start(
+                handle,
+                state,
+                context,
+                prepared,
+                token,
+                publisher,
+            )
+        if not approved:
+            return await self._reject(handle, state, context, publisher)
+
+        return await self._start_and_supervise(
+            handle,
+            token,
+            state,
+            prepared,
+            context,
+            publisher,
+        )
+
+    async def _cancel_before_start(
+        self,
+        handle: AuditRunHandle,
+        state: LifecycleState,
+        context: ExecutionContext,
+        prepared: PreparedExecution,
+        token: CancellationToken,
+        publisher: LifecyclePublisher,
+        *,
+        resource: BackendResourceIdentifier | None = None,
+    ) -> ExecutionResult:
+        if state.current is not RunState.FINALIZING:
+            state.transition(RunState.FINALIZING)
+        material = self._pre_start_material("failed_to_start", "failed_to_start")
+        record = await self._settle(
+            handle,
+            material,
+            context,
+            resource=resource,
+            detail=CANCELLED_BEFORE_START,
+        )
+        state.transition(RunState.TERMINAL)
+        result = build_cancelled_before_start_result(
+            record,
+            material,
+            backend=prepared.backend.name,
+            reason=cancellation_reason(token.reason or "user"),
+        )
+        await publisher.publish("cancelled")
+        return result
 
     async def _admit(
         self,
@@ -296,52 +439,50 @@ class ExecutionRunner:
     async def _start_and_supervise(
         self,
         handle: AuditRunHandle,
+        token: CancellationToken,
         state: LifecycleState,
         prepared: PreparedExecution,
         context: ExecutionContext,
         publisher: LifecyclePublisher,
     ) -> ExecutionResult:
-        source = CancellationSource()
-        entry = ActiveExecution(
-            context=context,
-            cancellation_source=source,
-            audit_handle=handle,
-        )
-        await self._registry.register(entry)
         state.transition(RunState.REGISTERED)
 
         try:
-            try:
-                await self._audit.append_event(
-                    handle,
-                    AuditEventType.BACKEND_STARTING,
-                )
-            except Exception as error:  # noqa: BLE001
-                return await self._fail_to_start(
-                    handle,
-                    state,
-                    context,
-                    prepared.backend.name,
-                    publisher,
-                    detail="starting_event_unavailable",
-                    error=error,
-                )
-
-            state.transition(RunState.STARTING)
-            await publisher.publish("starting")
-            return await self._supervise(
+            await self._audit.append_event(
+                handle,
+                AuditEventType.BACKEND_STARTING,
+            )
+        except Exception as error:  # noqa: BLE001
+            return await self._fail_to_start(
                 handle,
                 state,
-                prepared,
                 context,
-                source.token,
+                prepared.backend.name,
+                publisher,
+                detail="starting_event_unavailable",
+                error=error,
+            )
+
+        if token.cancelled:
+            return await self._cancel_before_start(
+                handle,
+                state,
+                context,
+                prepared,
+                token,
                 publisher,
             )
-        finally:
-            await self._registry.unregister(
-                context.execution_id,
-                expected=entry,
-            )
+
+        state.transition(RunState.STARTING)
+        await publisher.publish("starting")
+        return await self._supervise(
+            handle,
+            state,
+            prepared,
+            context,
+            token,
+            publisher,
+        )
 
     async def _supervise(
         self,
@@ -370,17 +511,15 @@ class ExecutionRunner:
                 cancellation,
                 attach,
             )
-        except CancellationRequested as error:
-            return await self._fail_to_start(
+        except CancellationRequested:
+            return await self._cancel_before_start(
                 handle,
                 state,
                 context,
-                prepared.backend.name,
+                prepared,
+                cancellation,
                 publisher,
-                detail="cancelled_before_start",
-                error=error,
                 resource=attached[0] if attached else None,
-                raise_original=True,
             )
         except Exception as error:  # noqa: BLE001
             return await self._fail_to_start(
@@ -717,7 +856,7 @@ class ExecutionRunner:
         handle: AuditRunHandle,
         state: LifecycleState,
         context: ExecutionContext,
-        backend: BackendName,
+        backend: BackendName | None,
         publisher: LifecyclePublisher,
         *,
         detail: str,

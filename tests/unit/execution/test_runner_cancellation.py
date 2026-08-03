@@ -124,12 +124,11 @@ class CancellationRoutingTests(OrchestrationTestCase):
 
         outcome = await service.cancel(EXECUTION_ID)
         backend.start_allowed_to_return.set()
-
-        with self.assertRaises(Exception) as caught:
-            await run
+        result = await run
 
         self.assertIs(outcome, CancellationOutcome.REQUESTED)
-        self.assertEqual(type(caught.exception).__name__, "CancellationRequested")
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(result.termination_reason, "cancellation")
         assert self.spy.finalization is not None
         self.assertIs(
             self.spy.finalization.outcome,
@@ -192,7 +191,7 @@ class ServiceCompositionTests(unittest.IsolatedAsyncioTestCase):
         service = ExecutionService()
 
         with self.assertRaises(RuntimeError):
-            await service.run(prepared(), decision(), context())
+            await service.run_prepared(prepared(), decision(), context())
 
     async def test_cancellation_without_audit_still_signals_the_token(self):
         service = ExecutionService()
