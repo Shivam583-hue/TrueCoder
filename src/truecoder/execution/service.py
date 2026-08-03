@@ -80,11 +80,18 @@ class ExecutionService:
         self,
         request: ExecutionRequest,
         context: ExecutionContext,
+        *,
+        cancellation_source: CancellationSource | None = None,
     ) -> ExecutionResult:
         if not isinstance(request, ExecutionRequest):
             raise TypeError("request must be an ExecutionRequest")
         if not isinstance(context, ExecutionContext):
             raise TypeError("context must be an ExecutionContext")
+        if cancellation_source is not None and not isinstance(
+            cancellation_source,
+            CancellationSource,
+        ):
+            raise TypeError("cancellation_source must be a CancellationSource")
 
         runner = self._require_runner()
         if self._policy_config is None:
@@ -111,15 +118,27 @@ class ExecutionService:
             host_environment=self._host_environment,
             environment_policy=self._environment_policy,
         )
-        return await runner.run_prepared(prepared, decision, context)
+        return await runner.run_prepared(
+            prepared,
+            decision,
+            context,
+            cancellation_source=cancellation_source,
+        )
 
     async def run_prepared(
         self,
         prepared: PreparedExecution,
         decision: PolicyDecision,
         context: ExecutionContext,
+        *,
+        cancellation_source: CancellationSource | None = None,
     ) -> ExecutionResult:
-        return await self._require_runner().run_prepared(prepared, decision, context)
+        return await self._require_runner().run_prepared(
+            prepared,
+            decision,
+            context,
+            cancellation_source=cancellation_source,
+        )
 
     async def register(self, context: ExecutionContext) -> ActiveExecution:
         entry = ActiveExecution(

@@ -150,6 +150,8 @@ class ExecutionRunner:
         prepared: PreparedExecution,
         decision: PolicyDecision,
         context: ExecutionContext,
+        *,
+        cancellation_source: CancellationSource | None = None,
     ) -> ExecutionResult:
         if not isinstance(prepared, PreparedExecution):
             raise TypeError("prepared must be a PreparedExecution")
@@ -157,12 +159,24 @@ class ExecutionRunner:
             raise TypeError("decision must be a PolicyDecision")
         if not isinstance(context, ExecutionContext):
             raise TypeError("context must be an ExecutionContext")
+        if cancellation_source is not None and not isinstance(
+            cancellation_source,
+            CancellationSource,
+        ):
+            raise TypeError("cancellation_source must be a CancellationSource")
 
         publisher = self._publisher(context)
         state = LifecycleState(context.execution_id)
         try:
             await publisher.publish("requested")
-            return await self._run(prepared, decision, context, state, publisher)
+            return await self._run(
+                prepared,
+                decision,
+                context,
+                state,
+                publisher,
+                cancellation_source or CancellationSource(),
+            )
         finally:
             await publisher.aclose()
 
@@ -228,11 +242,12 @@ class ExecutionRunner:
         context: ExecutionContext,
         state: LifecycleState,
         publisher: LifecyclePublisher,
+        cancellation_source: CancellationSource,
     ) -> ExecutionResult:
         handle = await self._admit(prepared.request, context)
         entry = ActiveExecution(
             context=context,
-            cancellation_source=CancellationSource(),
+            cancellation_source=cancellation_source,
             audit_handle=handle,
         )
         await self._registry.register(entry)

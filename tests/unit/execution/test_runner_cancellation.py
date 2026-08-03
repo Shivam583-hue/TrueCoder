@@ -14,6 +14,7 @@ from tests.unit.execution.test_runner_races import (
 )
 from truecoder.execution.audit.models import TerminalOutcome
 from truecoder.execution.audit.service import AuditService
+from truecoder.execution.cancellation import CancellationSource
 from truecoder.execution.errors import AuditPersistenceError
 from truecoder.execution.registry import CancellationOutcome
 from truecoder.execution.service import ExecutionService
@@ -41,6 +42,31 @@ class CancellationRoutingTests(OrchestrationTestCase):
         assert backend.handle is not None
         self.assertEqual(backend.handle.terminate_count, 1)
         await self.assert_universal_postconditions(backend, handle_returned=True)
+
+    async def test_caller_owned_source_is_the_registered_control(self):
+        backend = ScriptedBackend(descriptor(), handle_options={"gate_exit": True})
+        runner, backend = self.build(backend)
+        source = CancellationSource()
+        run = asyncio.create_task(
+            runner.run_prepared(
+                prepared(),
+                decision(),
+                context(),
+                cancellation_source=source,
+            )
+        )
+        await self.wait_until_watching(backend)
+
+        entry = await self.registry.get(EXECUTION_ID)
+        assert entry is not None
+        self.assertIs(entry.cancellation_source, source)
+        source.cancel("agent_cancelled")
+        result = await run
+
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(result.termination_reason, "cancellation")
+        assert backend.handle is not None
+        self.assertEqual(backend.handle.terminate_count, 1)
 
     async def test_shutdown_reason_maps_to_a_shutdown_cancellation(self):
         backend = ScriptedBackend(descriptor(), handle_options={"gate_exit": True})
