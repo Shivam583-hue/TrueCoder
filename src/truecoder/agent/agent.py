@@ -23,6 +23,11 @@ from truecoder.agent.project_instructions import (
 from truecoder.agent.state import AgentState
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType, TokenUsage
+from truecoder.execution.bootstrap import (
+    ExecutionBootstrapConfig,
+    ExecutionRuntime,
+    bootstrap_execution,
+)
 from truecoder.execution.cancellation import CancellationSource
 from truecoder.execution.context import ExecutionContextFactory, workspace_id_for
 from truecoder.session import (
@@ -42,6 +47,8 @@ from truecoder.tools.builtin import (
     GrepTool,
     ListDirTool,
     ReadFileTool,
+    ShellDefaults,
+    ShellTool,
     WriteFileTool,
 )
 from truecoder.tools.registry import ToolRegistry
@@ -67,6 +74,7 @@ class Agent:
         approval_identity_provider: ApprovalIdentityProvider | None = None,
         project_root: Path | None = None,
         execution_context_factory: ExecutionContextFactory | None = None,
+        execution_bootstrap_config: ExecutionBootstrapConfig | None = None,
     ) -> None:
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
@@ -87,6 +95,13 @@ class Agent:
         ):
             raise TypeError(
                 "execution_context_factory must be an ExecutionContextFactory."
+            )
+        if execution_bootstrap_config is not None and not isinstance(
+            execution_bootstrap_config,
+            ExecutionBootstrapConfig,
+        ):
+            raise TypeError(
+                "execution_bootstrap_config must be an ExecutionBootstrapConfig."
             )
 
         root = project_root or Path.cwd()
@@ -112,6 +127,9 @@ class Agent:
         self._execution_context_factory = (
             execution_context_factory or ExecutionContextFactory()
         )
+        self._execution_bootstrap_config = execution_bootstrap_config
+        self._execution_runtime: ExecutionRuntime | None = None
+        self._execution_initialized = False
         self._default_approval_identity = ApprovalIdentity(
             session_id=f"session_{uuid.uuid4().hex}",
             workspace_id=workspace_id_for(self._project_root),
@@ -151,11 +169,43 @@ class Agent:
     def messages(self) -> list[ModelMessage]:
         return self.state.messages
 
+    @property
+    def execution_runtime(self) -> ExecutionRuntime | None:
+        return self._execution_runtime
+
+    async def initialize_execution(self) -> ExecutionRuntime | None:
+        if self._execution_initialized:
+            return self._execution_runtime
+        if self._execution_bootstrap_config is None:
+            self._execution_initialized = True
+            return None
+
+        runtime = await bootstrap_execution(
+            self.approval_service,
+            config=self._execution_bootstrap_config,
+        )
+        self._execution_runtime = runtime
+        self._execution_initialized = True
+        if runtime.shell_available and runtime.service is not None:
+            if "shell" not in self.tool_registry:
+                self.tool_registry.register(
+                    ShellTool(
+                        self._project_root,
+                        runtime.service,
+                        ShellDefaults(
+                            self._execution_bootstrap_config.policy_config.limit_ceiling
+                        ),
+                    )
+                )
+            self.context_builder.enable_shell_tool()
+        return runtime
+
     async def run(self, prompt: str) -> AsyncGenerator[AgentEvent, None]:
         prompt = prompt.strip()
         if not prompt:
             yield AgentEvent.agent_error("The prompt cannot be empty.")
             return
+        await self.initialize_execution()
         try:
             self.state.begin_turn(prompt)
         except (ValueError, RuntimeError) as error:
@@ -383,6 +433,7 @@ def run() -> None:
         context_builder=context_builder,
         tool_registry=tool_registry,
         project_root=project_root,
+        execution_bootstrap_config=ExecutionBootstrapConfig(),
     )
     session_store = SQLiteSessionStore(default_session_database_path())
     session_manager = SessionManager(session_store, state, project_root)

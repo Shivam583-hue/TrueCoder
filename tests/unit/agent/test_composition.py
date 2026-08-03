@@ -91,6 +91,9 @@ class CompositionRootTests(unittest.TestCase):
             agent_type.call_args.kwargs["context_builder"],
             context_builder,
         )
+        self.assertTrue(
+            agent_type.call_args.kwargs["execution_bootstrap_config"].enabled
+        )
         state = agent_type.call_args.kwargs["state"]
         resolve_database.assert_called_once_with()
         store_type.assert_called_once_with(database_path)

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from truecoder.agent import (
     Agent,
@@ -15,11 +16,18 @@ from truecoder.agent import (
     ApprovalScope,
     ContextBuilder,
 )
+from truecoder.agent.prompts import SHELL_TOOL_GUIDANCE
 from truecoder.client.response import (
     EventType,
     StreamEvent,
     TextDelta,
     TokenUsage,
+)
+from truecoder.execution.bootstrap import (
+    BackendHealth,
+    ExecutionBootstrapConfig,
+    ExecutionHealthReport,
+    ExecutionRuntime,
 )
 from truecoder.tools import (
     ToolApproval,
@@ -160,6 +168,7 @@ def make_agent(
     tool_registry: ToolRegistry | None = None,
     max_iterations: int = 25,
     approval_handler=None,
+    execution_bootstrap_config: ExecutionBootstrapConfig | None = None,
 ) -> Agent:
     return Agent(
         llm_client=client,
@@ -172,6 +181,7 @@ def make_agent(
         tool_registry=tool_registry,
         max_iterations=max_iterations,
         approval_handler=approval_handler,
+        execution_bootstrap_config=execution_bootstrap_config,
     )
 
 
@@ -369,6 +379,89 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(agent.messages, [])
         self.assertTrue(client.closed)
+
+    async def test_healthy_execution_registers_shell_once(self):
+        class Service:
+            async def execute(self, request, context, *, cancellation_source):
+                raise AssertionError("shell should not execute")
+
+        service = Service()
+        runtime = ExecutionRuntime(
+            service=service,  # type: ignore[arg-type]
+            audit=None,
+            discovery=None,
+            backends=(),
+            health=ExecutionHealthReport(
+                enabled=True,
+                audit_ready=True,
+                recovery_ready=True,
+                backends=(
+                    BackendHealth(
+                        name="posix",
+                        discovered=True,
+                        registered=True,
+                    ),
+                ),
+            ),
+        )
+        config = ExecutionBootstrapConfig()
+        agent = make_agent(
+            FakeLLMClient([]),
+            execution_bootstrap_config=config,
+        )
+
+        with patch(
+            "truecoder.agent.agent.bootstrap_execution",
+            return_value=runtime,
+        ) as bootstrap:
+            first = await agent.initialize_execution()
+            second = await agent.initialize_execution()
+
+        self.assertIs(first, runtime)
+        self.assertIs(second, runtime)
+        self.assertIn("shell", agent.tool_registry)
+        self.assertEqual(
+            agent.context_builder.system_prompt.count(
+                SHELL_TOOL_GUIDANCE.strip()
+            ),
+            1,
+        )
+        bootstrap.assert_awaited_once_with(
+            agent.approval_service,
+            config=config,
+        )
+
+    async def test_unhealthy_execution_does_not_expose_shell(self):
+        runtime = ExecutionRuntime(
+            service=None,
+            audit=None,
+            discovery=None,
+            backends=(),
+            health=ExecutionHealthReport(
+                enabled=True,
+                audit_ready=False,
+                recovery_ready=False,
+                backends=(),
+                failure_code="audit_unavailable",
+            ),
+        )
+        agent = make_agent(
+            FakeLLMClient([]),
+            execution_bootstrap_config=ExecutionBootstrapConfig(),
+        )
+
+        with patch(
+            "truecoder.agent.agent.bootstrap_execution",
+            return_value=runtime,
+        ):
+            result = await agent.initialize_execution()
+
+        self.assertIs(result, runtime)
+        self.assertNotIn("shell", agent.tool_registry)
+        self.assertNotIn(
+            SHELL_TOOL_GUIDANCE.strip(),
+            agent.context_builder.system_prompt,
+        )
 
 
 class AgentToolLoopTests(unittest.IsolatedAsyncioTestCase):

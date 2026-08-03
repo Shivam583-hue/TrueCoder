@@ -141,8 +141,9 @@ class TrueCoderApp(App[None]):
             max_input_tokens=self.agent.context_builder.max_input_tokens,
         )
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.screen.add_class("empty-chat")
+        await self.agent.initialize_execution()
         self.query_one(PromptInput).focus()
 
     async def on_unmount(self) -> None:
