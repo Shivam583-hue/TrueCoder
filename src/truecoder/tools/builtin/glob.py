@@ -20,6 +20,7 @@ from truecoder.tools.builtin.filesystem import (
     resolve_existing_workspace_path,
     validate_workspace_root,
 )
+from truecoder.tools.context import ToolInvocationContext
 
 MAX_GLOB_MATCHES = 500
 MAX_GLOB_SCANNED_ENTRIES = 20_000
@@ -66,7 +67,12 @@ class GlobTool(BaseTool[GlobArguments]):
     def workspace_root(self) -> Path:
         return self._workspace_root
 
-    async def run(self, arguments: GlobArguments) -> GlobOutput:
+    async def run(
+        self,
+        arguments: GlobArguments,
+        invocation: ToolInvocationContext | None = None,
+    ) -> GlobOutput:
+        del invocation
         pattern_parts = self._validate_pattern(arguments.pattern)
         base_directory = resolve_existing_workspace_path(
             self._workspace_root,

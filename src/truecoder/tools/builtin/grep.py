@@ -20,6 +20,7 @@ from truecoder.tools.builtin.filesystem import (
     resolve_existing_workspace_path,
     validate_workspace_root,
 )
+from truecoder.tools.context import ToolInvocationContext
 
 MAX_GREP_MATCHES = 200
 MAX_GREP_PATTERN_CHARACTERS = 1_024
@@ -77,7 +78,12 @@ class GrepTool(BaseTool[GrepArguments]):
     def workspace_root(self) -> Path:
         return self._workspace_root
 
-    async def run(self, arguments: GrepArguments) -> GrepOutput:
+    async def run(
+        self,
+        arguments: GrepArguments,
+        invocation: ToolInvocationContext | None = None,
+    ) -> GrepOutput:
+        del invocation
         try:
             expression = re.compile(arguments.pattern)
         except re.error as error:

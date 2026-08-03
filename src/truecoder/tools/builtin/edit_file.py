@@ -20,6 +20,7 @@ from truecoder.tools.builtin.filesystem import (
     resolve_existing_workspace_path,
     validate_workspace_root,
 )
+from truecoder.tools.context import ToolInvocationContext
 
 MAX_EDIT_FILE_BYTES = 1024 * 1024
 MAX_EDIT_TEXT_BYTES = 32 * 1024
@@ -89,7 +90,12 @@ class EditFileTool(BaseTool[EditFileArguments]):
     def workspace_root(self) -> Path:
         return self._workspace_root
 
-    async def run(self, arguments: EditFileArguments) -> EditFileOutput:
+    async def run(
+        self,
+        arguments: EditFileArguments,
+        invocation: ToolInvocationContext | None = None,
+    ) -> EditFileOutput:
+        del invocation
         old_text = self._encode_edit_text(arguments.old_text, field_name="old_text")
         new_text = self._encode_edit_text(arguments.new_text, field_name="new_text")
         if len(old_text) > MAX_EDIT_TEXT_BYTES or len(new_text) > MAX_EDIT_TEXT_BYTES:

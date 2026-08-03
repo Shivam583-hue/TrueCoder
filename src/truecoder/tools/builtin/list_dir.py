@@ -18,6 +18,7 @@ from truecoder.tools.builtin.filesystem import (
     resolve_existing_workspace_path,
     validate_workspace_root,
 )
+from truecoder.tools.context import ToolInvocationContext
 
 MAX_DIRECTORY_ENTRIES = 500
 MAX_SCANNED_DIRECTORY_ENTRIES = 5_000
@@ -62,7 +63,12 @@ class ListDirTool(BaseTool[ListDirArguments]):
     def workspace_root(self) -> Path:
         return self._workspace_root
 
-    async def run(self, arguments: ListDirArguments) -> ListDirOutput:
+    async def run(
+        self,
+        arguments: ListDirArguments,
+        invocation: ToolInvocationContext | None = None,
+    ) -> ListDirOutput:
+        del invocation
         directory = resolve_existing_workspace_path(
             self._workspace_root,
             arguments.path,

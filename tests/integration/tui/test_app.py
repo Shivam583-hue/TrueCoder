@@ -66,7 +66,8 @@ class GuardedTool(BaseTool[GuardedArguments]):
     def __init__(self) -> None:
         self.runs = 0
 
-    async def run(self, arguments: GuardedArguments) -> dict[str, str]:
+    async def run(self, arguments: GuardedArguments, invocation=None) -> dict[str, str]:
+        del invocation
         self.runs += 1
         return {"echoed": arguments.text}
 

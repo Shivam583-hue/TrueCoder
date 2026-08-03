@@ -11,6 +11,7 @@ from truecoder.tools.base import (
     ToolExecutionError,
     ToolResult,
 )
+from truecoder.tools.context import ToolInvocationContext
 from truecoder.tools.registry import ToolNotFoundError, ToolRegistry
 
 
@@ -32,11 +33,16 @@ class ToolExecutor:
         call: ToolCall,
         *,
         approved: bool = False,
+        invocation: ToolInvocationContext | None = None,
     ) -> ToolResult:
         prepared = self.prepare(call)
         if isinstance(prepared, ToolResult):
             return prepared
-        return await self.execute_prepared(prepared, approved=approved)
+        return await self.execute_prepared(
+            prepared,
+            approved=approved,
+            invocation=invocation,
+        )
 
     def prepare(self, call: ToolCall) -> PreparedToolCall | ToolResult:
         """Resolve and validate a call without requesting approval or running it."""
@@ -70,6 +76,7 @@ class ToolExecutor:
         prepared: PreparedToolCall,
         *,
         approved: bool = False,
+        invocation: ToolInvocationContext | None = None,
     ) -> ToolResult:
         """Run exactly the tool and validated arguments approved by the caller."""
 
@@ -85,7 +92,7 @@ class ToolExecutor:
             )
 
         try:
-            output = await tool.run(prepared.arguments)
+            output = await tool.run(prepared.arguments, invocation)
         except asyncio.CancelledError:
             raise
         except ToolExecutionError as error:

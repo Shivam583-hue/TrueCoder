@@ -43,7 +43,8 @@ class EchoTool(BaseTool[EchoArguments]):
     arguments_type = EchoArguments
     approval = ToolApproval.NOT_REQUIRED
 
-    async def run(self, arguments: EchoArguments) -> dict[str, str]:
+    async def run(self, arguments: EchoArguments, invocation=None) -> dict[str, str]:
+        del invocation
         return {"echoed": arguments.text}
 
 
@@ -56,7 +57,8 @@ class GuardedTool(BaseTool[EchoArguments]):
     def __init__(self) -> None:
         self.ran = False
 
-    async def run(self, arguments: EchoArguments) -> dict[str, str]:
+    async def run(self, arguments: EchoArguments, invocation=None) -> dict[str, str]:
+        del invocation
         self.ran = True
         return {"echoed": arguments.text}
 

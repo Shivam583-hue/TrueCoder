@@ -9,6 +9,7 @@ from truecoder.tools.base import (
     ToolResult,
     ToolResultStatus,
 )
+from truecoder.tools.context import ToolInvocationContext
 from truecoder.tools.executor import PreparedToolCall, ToolExecutor
 from truecoder.tools.registry import (
     DuplicateToolError,
@@ -28,6 +29,7 @@ __all__ = [
     "ToolDefinition",
     "ToolExecutionError",
     "ToolExecutor",
+    "ToolInvocationContext",
     "ToolNotFoundError",
     "ToolRegistry",
     "ToolResult",

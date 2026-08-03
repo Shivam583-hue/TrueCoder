@@ -23,13 +23,14 @@ from truecoder.agent.project_instructions import (
 from truecoder.agent.state import AgentState
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType, TokenUsage
-from truecoder.execution.context import workspace_id_for
+from truecoder.execution.cancellation import CancellationSource
+from truecoder.execution.context import ExecutionContextFactory, workspace_id_for
 from truecoder.session import (
     SessionManager,
     SQLiteSessionStore,
     default_session_database_path,
 )
-from truecoder.tools import ToolExecutor, serialize_tool_result
+from truecoder.tools import ToolExecutor, ToolInvocationContext, serialize_tool_result
 from truecoder.tools.base import (
     ToolApproval,
     ToolCall,
@@ -64,6 +65,8 @@ class Agent:
         approval_handler: CompatibleApprovalHandler | None = None,
         approval_service: ApprovalService | None = None,
         approval_identity_provider: ApprovalIdentityProvider | None = None,
+        project_root: Path | None = None,
+        execution_context_factory: ExecutionContextFactory | None = None,
     ) -> None:
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
@@ -78,6 +81,21 @@ class Agent:
             approval_identity_provider
         ):
             raise TypeError("approval_identity_provider must be callable.")
+        if execution_context_factory is not None and not isinstance(
+            execution_context_factory,
+            ExecutionContextFactory,
+        ):
+            raise TypeError(
+                "execution_context_factory must be an ExecutionContextFactory."
+            )
+
+        root = project_root or Path.cwd()
+        try:
+            self._project_root = root.resolve(strict=True)
+        except OSError as error:
+            raise ValueError("project_root must exist and be accessible.") from error
+        if not self._project_root.is_dir():
+            raise ValueError("project_root must be a directory.")
 
         self.llm_client = llm_client if llm_client is not None else LLMClient()
         self.state = state if state is not None else AgentState()
@@ -91,9 +109,12 @@ class Agent:
         )
         self.tool_executor = ToolExecutor(self.tool_registry)
         self.max_iterations = max_iterations
+        self._execution_context_factory = (
+            execution_context_factory or ExecutionContextFactory()
+        )
         self._default_approval_identity = ApprovalIdentity(
             session_id=f"session_{uuid.uuid4().hex}",
-            workspace_id=workspace_id_for(Path.cwd().resolve(strict=True)),
+            workspace_id=workspace_id_for(self._project_root),
         )
         self._approval_identity_provider = (
             approval_identity_provider
@@ -259,10 +280,20 @@ class Agent:
                         "approval_rejected",
                     )
                 else:
-                    result = await self.tool_executor.execute_prepared(
-                        prepared,
-                        approved=True,
+                    invocation = self._tool_invocation(call)
+                    task = asyncio.create_task(
+                        self.tool_executor.execute_prepared(
+                            prepared,
+                            approved=True,
+                            invocation=invocation,
+                        )
                     )
+                    try:
+                        result = await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        invocation.cancellation_source.cancel("agent_cancelled")
+                        await asyncio.gather(task, return_exceptions=True)
+                        raise
 
             content = serialize_tool_result(result)
             self.state.record_tool_result(call.call_id, content)
@@ -284,6 +315,26 @@ class Agent:
                 "approval identity provider must return an ApprovalIdentity."
             )
         return identity
+
+    def _tool_invocation(self, call: ToolCall) -> ToolInvocationContext:
+        turn_id = self.state.pending_turn_id
+        if turn_id is None:
+            raise RuntimeError("A tool call requires an active turn identity.")
+        identity = self._approval_identity()
+        execution = self._execution_context_factory.create(
+            tool_call_id=call.call_id,
+            session_id=identity.session_id,
+            turn_id=turn_id,
+            project_root=self._project_root,
+        )
+        if execution.workspace_id != identity.workspace_id:
+            raise RuntimeError(
+                "The approval identity does not match the active project workspace."
+            )
+        return ToolInvocationContext(
+            execution=execution,
+            cancellation_source=CancellationSource(),
+        )
 
     async def _invoke_approval_handler(
         self,
@@ -331,6 +382,7 @@ def run() -> None:
         state=state,
         context_builder=context_builder,
         tool_registry=tool_registry,
+        project_root=project_root,
     )
     session_store = SQLiteSessionStore(default_session_database_path())
     session_manager = SessionManager(session_store, state, project_root)

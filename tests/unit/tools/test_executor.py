@@ -1,6 +1,10 @@
 import asyncio
 import unittest
+from datetime import UTC, datetime
+from pathlib import Path
 
+from truecoder.execution.cancellation import CancellationSource
+from truecoder.execution.context import ExecutionContextFactory
 from truecoder.tools import (
     BaseTool,
     PreparedToolCall,
@@ -9,6 +13,7 @@ from truecoder.tools import (
     ToolCall,
     ToolExecutionError,
     ToolExecutor,
+    ToolInvocationContext,
     ToolRegistry,
     ToolResultStatus,
 )
@@ -26,9 +31,11 @@ class RecordingTool(BaseTool[NumberArguments]):
 
     def __init__(self) -> None:
         self.calls: list[NumberArguments] = []
+        self.invocations: list[ToolInvocationContext | None] = []
 
-    async def run(self, arguments: NumberArguments) -> int:
+    async def run(self, arguments: NumberArguments, invocation=None) -> int:
         self.calls.append(arguments)
+        self.invocations.append(invocation)
         return arguments.value * 2
 
 
@@ -40,14 +47,16 @@ class ApprovalTool(RecordingTool):
 class FailingTool(RecordingTool):
     name = "fail"
 
-    async def run(self, arguments: NumberArguments) -> int:
+    async def run(self, arguments: NumberArguments, invocation=None) -> int:
+        del invocation
         raise RuntimeError(f"Cannot process {arguments.value}")
 
 
 class MissingFileTool(RecordingTool):
     name = "missing_file"
 
-    async def run(self, arguments: NumberArguments) -> int:
+    async def run(self, arguments: NumberArguments, invocation=None) -> int:
+        del invocation
         raise ToolExecutionError(
             "The requested file does not exist.",
             code="file_not_found",
@@ -57,7 +66,8 @@ class MissingFileTool(RecordingTool):
 class CancellingTool(RecordingTool):
     name = "cancel"
 
-    async def run(self, arguments: NumberArguments) -> int:
+    async def run(self, arguments: NumberArguments, invocation=None) -> int:
+        del arguments, invocation
         raise asyncio.CancelledError
 
 
@@ -77,6 +87,30 @@ class ToolExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, ToolResultStatus.SUCCESS)
         self.assertEqual(result.output, 8)
         self.assertEqual(tool.calls, [NumberArguments(value=4)])
+
+    async def test_forwards_the_exact_invocation_context(self):
+        tool = RecordingTool()
+        self.registry.register(tool)
+        invocation = ToolInvocationContext(
+            execution=ExecutionContextFactory(
+                execution_id_factory=lambda: "exec-tool-context",
+                clock=lambda: datetime(2026, 8, 3, tzinfo=UTC),
+            ).create(
+                tool_call_id="call-tool-context",
+                session_id="session-tool-context",
+                turn_id="turn-tool-context",
+                project_root=Path.cwd(),
+            ),
+            cancellation_source=CancellationSource(),
+        )
+
+        result = await self.executor.execute(
+            ToolCall("call-tool-context", "double", '{"value": 4}'),
+            invocation=invocation,
+        )
+
+        self.assertEqual(result.status, ToolResultStatus.SUCCESS)
+        self.assertEqual(tool.invocations, [invocation])
 
     async def test_unknown_tool_returns_structured_error(self):
         result = await self.executor.execute(

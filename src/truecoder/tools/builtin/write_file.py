@@ -16,6 +16,7 @@ from truecoder.tools.base import (
     ToolExecutionError,
 )
 from truecoder.tools.builtin.filesystem import is_sensitive_path
+from truecoder.tools.context import ToolInvocationContext
 
 MAX_WRITE_BYTES = 32 * 1024
 
@@ -206,13 +207,18 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
 
     # -------------------------------
 
-    async def run(self, arguments: WriteFileArguments) -> WriteFileOutput:
+    async def run(
+        self,
+        arguments: WriteFileArguments,
+        invocation: ToolInvocationContext | None = None,
+    ) -> WriteFileOutput:
         """Write a bounded UTF-8 text file atomically.
 
         Once dispatched to the worker thread, cancellation cannot guarantee
         rollback because the atomic replacement may already have completed.
         """
 
+        del invocation
         if not isinstance(arguments.content, str):
             raise ToolExecutionError(
                 "Only text content is supported.",

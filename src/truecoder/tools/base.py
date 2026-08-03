@@ -10,6 +10,8 @@ from typing import Any, ClassVar, Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from truecoder.tools.context import ToolInvocationContext
+
 _TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -286,7 +288,11 @@ class BaseTool(ABC, Generic[ArgumentsT]):
             ) from error
 
     @abstractmethod
-    async def run(self, arguments: ArgumentsT) -> Any:
+    async def run(
+        self,
+        arguments: ArgumentsT,
+        invocation: ToolInvocationContext | None = None,
+    ) -> Any:
         """Execute the tool using previously validated arguments."""
 
         raise NotImplementedError

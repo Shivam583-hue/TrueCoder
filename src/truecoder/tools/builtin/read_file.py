@@ -14,6 +14,7 @@ from truecoder.tools.base import (
     ToolExecutionError,
 )
 from truecoder.tools.builtin.filesystem import is_sensitive_path
+from truecoder.tools.context import ToolInvocationContext
 
 MAX_LINE_COUNT = 500
 
@@ -93,7 +94,12 @@ class ReadFileTool(BaseTool[ReadFileArguments]):
 
     # -------------------------------
 
-    async def run(self, arguments: ReadFileArguments) -> ReadFileOutput:
+    async def run(
+        self,
+        arguments: ReadFileArguments,
+        invocation: ToolInvocationContext | None = None,
+    ) -> ReadFileOutput:
+        del invocation
         resolved_path = self._resolve_requested_path(arguments.path)
         return await asyncio.to_thread(
             self._read_lines,
