@@ -14,8 +14,10 @@ Agent
  ├─ LLM client
  ├─ Approval service
  └─ Tools
+     ├─ Workspace filesystem tools
+     └─ Shell adapter
 
-Shell tool (future phase)
+Shell adapter
  ↓
 Execution service
  ├─ Execution context
@@ -25,7 +27,8 @@ Execution service
  ├─ Backend discovery and capability selection
  └─ Platform backends
      ├─ POSIX local
-     └─ Windows and container (future phases)
+     ├─ Linux Docker sandbox
+     └─ Windows local (not implemented)
 
 UI
  ↓
@@ -319,8 +322,8 @@ memory grows only with configured retention and redaction bounds.
 
 ## Backend protocol and discovery
 
-Phase 5 defines one backend lifecycle without implementing a model-facing shell
-or concrete process backend. `ExecutionBackend.start()` accepts the immutable
+The backend protocol defines one lifecycle shared by every process adapter.
+`ExecutionBackend.start()` accepts the immutable
 request, execution context, read-only cancellation token, and an awaited
 resource-registration callback. A backend may acquire a native process group,
 Job Object, or container before invoking that callback, but project-controlled
@@ -672,6 +675,97 @@ external canary, no runtime socket is visible, every capability is dropped with
 no-new-privileges active, exceeding memory normalizes to `memory_limit`, streams
 stay separate and raw, and no container, client, or temporary file leaks.
 
+Container discovery does not trust a matching image name. It inspects the exact
+locally available digest and verifies its platform, non-root user, and
+TrueCoder entrypoint labels against `container/image.lock`. A missing or
+mismatched image keeps the container backend unavailable; startup never pulls
+or substitutes another image.
+
+Container recovery receives the complete immutable container ID stored in the
+audit row and rechecks the management, audit-run, execution, ownership, host,
+and protocol labels before removing anything. An absent exact container is
+safe to finalize as absent. A shortened ID, label mismatch, foreign host, or
+failed absence check fails closed and leaves evidence for investigation.
+
+## Shell tool and startup composition
+
+`tools/builtin/shell.py` is the model boundary, not an executor. Its Pydantic
+schema defaults to structured `argv` execution and makes shell-script mode an
+explicit choice for pipelines, redirects, chaining, expansion, and other real
+shell syntax. Exec and shell inputs are mutually exclusive. Working
+directories are workspace-relative, canonicalized, required to exist, and
+rejected if an absolute path or symlink escapes the project root.
+
+The adapter performs only four operations:
+
+1. Convert validated model arguments into an `ExecutionRequest`.
+2. Reuse the exact `ExecutionContext` and `CancellationSource` supplied by the
+   active agent tool call.
+3. Await `ExecutionService.execute()` exactly once.
+4. Format the bounded `ExecutionResult` into a stable JSON tool payload.
+
+It contains no subprocess, Docker, policy, approval, environment, output,
+audit, or TUI logic. Requested time, output, memory, CPU, and process limits can
+only tighten the configured defaults. Policy tightens them against the
+administrator ceiling again before backend selection.
+
+Every model-requested tool call receives a `ToolInvocationContext` created by
+the agent. It binds a fresh execution ID to the provider's exact tool-call ID,
+the pending turn ID, active session ID, canonical workspace identity, and
+project root. The same invocation owns one cancellation source. If the outer
+agent task is cancelled, the agent signals that source, shields the tool task
+from abrupt cancellation, and waits for execution termination, cleanup, and
+audit finalization before propagating cancellation. The interrupted turn is
+then aborted without persisting an unmatched tool call.
+
+Shell uses the shared approval service only inside execution orchestration,
+after policy and backend selection have produced the effective security
+contract. Its generic tool approval flag is therefore `NOT_REQUIRED`; asking
+again at the outer tool layer would approve different, incomplete data.
+Execution approval carries the selected backend, capabilities, effective
+limits, risk, reasons, working directory, command, session, and workspace.
+Shell requests permit approve-once only.
+
+All ordinary execution outcomes are successful tool payloads. That includes
+exit zero, normal nonzero exits, policy denial, approval rejection, timeout,
+cancellation, limit termination, and backend unavailability. The payload keeps
+status, exit code, duration, separate bounded stdout and stderr, raw byte
+counts, truncation flags, termination reason, backend, and audit ID. Audit or
+cleanup failures are different: they become a sanitized infrastructure tool
+error because no trustworthy public result exists.
+
+`execution/bootstrap.py` is the composition root for this subsystem. Startup
+proceeds in this order:
+
+```text
+open and secure audit storage
+→ discover host, shells, cgroups, runtimes, and pinned image
+→ construct only exact implemented backend instances
+→ recover every nonterminal audit resource
+→ build registry, approval gate, runner, and service
+→ publish a health report
+→ register ShellTool only when the report is healthy
+```
+
+Audit failure, discovery failure, recovery failure, disabled execution, or no
+registered backend leaves `shell` absent from the model schema. An available
+Windows descriptor is not enough because the Windows backend is still a
+placeholder. POSIX is registered only on a supported POSIX host, and container
+is registered only for the certified Linux Docker profile with the verified
+pinned image.
+
+Shell-specific system guidance is also conditional. The model is told to
+prefer argv, request only necessary capabilities, use relative working
+directories, and inspect nonzero exits only after the tool has actually been
+registered. Direct `Agent` users can initialize lazily on the first valid
+turn; the Textual application initializes execution during mount so its first
+model request has the final tool schema and prompt.
+
+The current TUI still renders shell through the existing generic tool-call and
+approval widgets. Typed live execution cards and output streaming are a
+separate presentation layer; their absence does not weaken process cleanup,
+bounded final output, cancellation, or durable audit guarantees.
+
 ## Design rules
 
 Keep these invariants stable as the codebase grows:
@@ -716,5 +810,12 @@ Keep these invariants stable as the codebase grows:
 * project code stays stopped until its container identity is durable
 * container recovery acts only on a full immutable ID plus an exact label match
 * startup recovery acts only on exact persisted backend resource identities
+* the shell adapter never reimplements execution policy or process management
+* every shell invocation uses the active call, session, turn, and workspace IDs
+* outer cancellation waits for execution cleanup before aborting the turn
+* shell approval happens once, after effective capabilities and limits exist
+* normal nonzero exits remain bounded successful tool payloads
+* shell is advertised only after audit, recovery, and a backend are healthy
+* shell-specific prompt guidance exists only while the tool is registered
 * session saves happen only at completed-turn boundaries
 * restoring a session cannot partially replace agent state
