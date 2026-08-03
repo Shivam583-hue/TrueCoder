@@ -11,6 +11,7 @@ from truecoder.agent import (
     AgentEventType,
     AgentState,
     ApprovalDecision,
+    ApprovalIdentity,
     ApprovalRequest,
     ApprovalResponse,
     ApprovalScope,
@@ -29,6 +30,7 @@ from truecoder.execution.bootstrap import (
     ExecutionHealthReport,
     ExecutionRuntime,
 )
+from truecoder.execution.context import workspace_id_for
 from truecoder.tools import (
     ToolApproval,
     ToolArguments,
@@ -69,6 +71,31 @@ class GuardedTool(BaseTool[EchoArguments]):
         del invocation
         self.ran = True
         return {"echoed": arguments.text}
+
+
+class BlockingTool(BaseTool[EchoArguments]):
+    name = "blocking"
+    description = "Wait for invocation cancellation."
+    arguments_type = EchoArguments
+    approval = ToolApproval.NOT_REQUIRED
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.invocation = None
+        self.cancellation_reason = None
+        self.cleaned = False
+
+    async def run(self, arguments: EchoArguments, invocation=None) -> dict[str, str]:
+        del arguments
+        assert invocation is not None
+        self.invocation = invocation
+        self.started.set()
+        self.cancellation_reason = (
+            await invocation.cancellation_source.token.wait()
+        )
+        await asyncio.sleep(0)
+        self.cleaned = True
+        return {"status": "cancelled"}
 
 
 class RecordingApprovalHandler:
@@ -551,6 +578,79 @@ class AgentToolLoopTests(unittest.IsolatedAsyncioTestCase):
         # The second request carried the recorded tool result back to the model.
         second_request_messages = client.calls[1]["messages"]
         self.assertEqual(second_request_messages[-1]["role"], "tool")
+
+    async def test_tool_cancellation_uses_exact_invocation_and_waits_for_cleanup(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory).resolve()
+            tool = BlockingTool()
+            registry = ToolRegistry()
+            registry.register(tool)
+            client = ScriptedLLMClient(
+                [
+                    [
+                        StreamEvent(
+                            type=EventType.MESSAGE_COMPLETE,
+                            tool_calls=(
+                                ToolCall(
+                                    "call-blocking",
+                                    "blocking",
+                                    '{"text":"wait"}',
+                                ),
+                            ),
+                        )
+                    ]
+                ]
+            )
+            agent = Agent(
+                llm_client=client,  # type: ignore[arg-type]
+                context_builder=ContextBuilder(
+                    system_prompt="test system",
+                    max_input_tokens=100,
+                    token_counter=FixedTokenCounter(),
+                ),
+                tool_registry=registry,
+                project_root=root,
+                approval_identity_provider=lambda: ApprovalIdentity(
+                    session_id="session-blocking",
+                    workspace_id=workspace_id_for(root),
+                ),
+            )
+            stream = agent.run("wait")
+
+            self.assertEqual(
+                (await anext(stream)).type,
+                AgentEventType.AGENT_START,
+            )
+            self.assertEqual(
+                (await anext(stream)).type,
+                AgentEventType.TOOL_CALL,
+            )
+            pending = asyncio.create_task(anext(stream))
+            await tool.started.wait()
+            pending.cancel()
+
+            with self.assertRaises(asyncio.CancelledError):
+                await pending
+
+            assert tool.invocation is not None
+            self.assertEqual(
+                tool.invocation.execution.tool_call_id,
+                "call-blocking",
+            )
+            self.assertEqual(
+                tool.invocation.execution.session_id,
+                "session-blocking",
+            )
+            self.assertEqual(tool.invocation.execution.project_root, root)
+            self.assertEqual(
+                tool.invocation.execution.workspace_id,
+                workspace_id_for(root),
+            )
+            self.assertTrue(tool.invocation.execution.turn_id)
+            self.assertEqual(tool.cancellation_reason, "agent_cancelled")
+            self.assertTrue(tool.cleaned)
+            self.assertFalse(agent.state.turn_active)
+            self.assertEqual(agent.messages, [])
 
     async def test_approved_write_file_round_trip_updates_the_workspace(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
