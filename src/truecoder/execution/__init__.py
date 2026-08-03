@@ -10,6 +10,14 @@ from truecoder.execution.approval import (
     ExecutionApprovalGate,
     RiskLevel,
 )
+from truecoder.execution.bootstrap import (
+    BackendHealth,
+    ExecutionBootstrapConfig,
+    ExecutionHealthReport,
+    ExecutionRuntime,
+    bootstrap_execution,
+    default_policy_config,
+)
 from truecoder.execution.cancellation import (
     CancellationRequested,
     CancellationSource,
@@ -32,15 +40,21 @@ __all__ = [
     "ApprovalResponse",
     "ApprovalScope",
     "ApprovalService",
+    "BackendHealth",
     "CancellationOutcome",
     "CancellationRequested",
     "CancellationSource",
     "CancellationToken",
     "ExecutionApprovalDetails",
     "ExecutionApprovalGate",
+    "ExecutionBootstrapConfig",
     "ExecutionContextFactory",
+    "ExecutionHealthReport",
     "ExecutionRegistry",
+    "ExecutionRuntime",
     "ExecutionService",
     "RiskLevel",
+    "bootstrap_execution",
+    "default_policy_config",
     "workspace_id_for",
 ]

@@ -26,9 +26,9 @@ DEFAULT_SHELL_LIMITS = ExecutionLimits(
     timeout_seconds=120,
     max_output_bytes=1024 * 1024,
     max_return_bytes=64 * 1024,
-    memory_bytes=1024 * 1024 * 1024,
+    memory_bytes=None,
     cpu_seconds=None,
-    max_processes=128,
+    max_processes=None,
     termination_grace_seconds=2,
 )
 
