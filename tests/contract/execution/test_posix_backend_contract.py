@@ -15,6 +15,7 @@ from tests.integration.execution.backends.test_posix_backend import (
     HELPERS,
     _backend,
     _context,
+    _prepared,
     _registrar,
     _request,
 )
@@ -39,6 +40,7 @@ from truecoder.execution.models import (
     ExecutionRequest,
     TerminationReason,
 )
+from truecoder.execution.preparation import PreparedExecution
 
 
 class TrackingHandle:
@@ -103,6 +105,7 @@ class TrackingBackend:
 
     async def start(
         self,
+        prepared: PreparedExecution,
         request: ExecutionRequest,
         context: ExecutionContext,
         cancellation: CancellationToken,
@@ -110,6 +113,7 @@ class TrackingBackend:
     ) -> ExecutionHandle:
         try:
             handle = await self._inner.start(
+                prepared,
                 request,
                 context,
                 cancellation,
@@ -142,18 +146,20 @@ class PosixBackendContractTests(
             tracker.registered_resource = resource
             tracker.lifecycle_events.append("registered")
 
+        request = _request(
+            (
+                sys.executable,
+                str(HELPERS / "emit_output.py"),
+                "--stdout",
+                "hello\n",
+                "--exit-code",
+                str(exit_code),
+            )
+        )
         return BackendContractCase(
             backend=TrackingBackend(_backend(), tracker),
-            request=_request(
-                (
-                    sys.executable,
-                    str(HELPERS / "emit_output.py"),
-                    "--stdout",
-                    "hello\n",
-                    "--exit-code",
-                    str(exit_code),
-                )
-            ),
+            prepared=_prepared(request),
+            request=request,
             context=_context("exec_contract_posix"),
             cancellation=CancellationSource().token,
             tracker=tracker,
@@ -172,9 +178,11 @@ class PosixBackendContractTests(
         if cancelled:
             source.cancel("contract cancellation")
 
+        request = _request(("/truecoder/contract-missing-executable",))
         return BackendContractCase(
             backend=TrackingBackend(_backend(), tracker),
-            request=_request(("/truecoder/contract-missing-executable",)),
+            prepared=_prepared(request),
+            request=request,
             context=_context("exec_contract_failure"),
             cancellation=source.token,
             tracker=tracker,

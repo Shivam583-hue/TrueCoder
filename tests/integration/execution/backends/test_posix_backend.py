@@ -20,6 +20,7 @@ from truecoder.execution.cancellation import (
     CancellationRequested,
     CancellationSource,
 )
+from truecoder.execution.environment import construct_environment
 from truecoder.execution.errors import (
     BackendStartError,
     EnvironmentConstructionError,
@@ -30,9 +31,15 @@ from truecoder.execution.models import (
     ExecutionLimits,
     ExecutionRequest,
 )
+from truecoder.execution.preparation import PreparedExecution
 
 ROOT = Path.cwd().resolve()
 HELPERS = ROOT / "tests" / "helpers" / "execution"
+HOST_ENVIRONMENT = {
+    "PATH": os.defpath,
+    "LANG": "C.UTF-8",
+    "GITHUB_TOKEN": "never-inherit",
+}
 
 
 def _descriptor() -> BackendDescriptor:
@@ -67,11 +74,6 @@ def _backend() -> PosixBackend:
                 shell_kind="posix",
             ),
         ),
-        inherited_environment={
-            "PATH": os.defpath,
-            "LANG": "C.UTF-8",
-            "GITHUB_TOKEN": "never-inherit",
-        },
     )
 
 
@@ -98,6 +100,19 @@ def _request(
     )
 
 
+def _prepared(request: ExecutionRequest) -> PreparedExecution:
+    return PreparedExecution(
+        request=request,
+        backend=_descriptor(),
+        environment=construct_environment(
+            platform="posix",
+            inherited=HOST_ENVIRONMENT,
+            requested=request.environment,
+        ),
+        resolved_shell=None,
+    )
+
+
 def _context(execution_id: str) -> ExecutionContext:
     return ExecutionContext(
         execution_id=execution_id,
@@ -114,19 +129,21 @@ def _context(execution_id: str) -> ExecutionContext:
 class PosixBackendTests(unittest.IsolatedAsyncioTestCase):
     async def test_exec_streams_both_outputs_and_returns_nonzero_as_data(self):
         registered: list[BackendResourceIdentifier] = []
+        request = _request(
+            (
+                sys.executable,
+                str(HELPERS / "emit_output.py"),
+                "--stdout",
+                "hello",
+                "--stderr",
+                "warning",
+                "--exit-code",
+                "7",
+            )
+        )
         handle = await _backend().start(
-            _request(
-                (
-                    sys.executable,
-                    str(HELPERS / "emit_output.py"),
-                    "--stdout",
-                    "hello",
-                    "--stderr",
-                    "warning",
-                    "--exit-code",
-                    "7",
-                )
-            ),
+            _prepared(request),
+            request,
             _context("exec_output"),
             CancellationSource().token,
             _registrar(registered),
@@ -149,17 +166,19 @@ class PosixBackendTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue((await handle.cleanup()).complete)
 
     async def test_child_receives_filtered_environment_only(self):
-        handle = await _backend().start(
-            _request(
-                (
-                    sys.executable,
-                    str(HELPERS / "print_environment.py"),
-                    "PATH",
-                    "GITHUB_TOKEN",
-                    "ADDED",
-                ),
-                environment=(("ADDED", "yes"),),
+        request = _request(
+            (
+                sys.executable,
+                str(HELPERS / "print_environment.py"),
+                "PATH",
+                "GITHUB_TOKEN",
+                "ADDED",
             ),
+            environment=(("ADDED", "yes"),),
+        )
+        handle = await _backend().start(
+            _prepared(request),
+            request,
             _context("exec_environment"),
             CancellationSource().token,
             _registrar([]),
@@ -187,15 +206,17 @@ class PosixBackendTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0)
                 self.assertFalse(marker.exists())
 
-            handle = await _backend().start(
-                _request(
-                    (
-                        sys.executable,
-                        str(HELPERS / "write_marker.py"),
-                        str(marker),
-                    ),
-                    directory=Path(directory),
+            request = _request(
+                (
+                    sys.executable,
+                    str(HELPERS / "write_marker.py"),
+                    str(marker),
                 ),
+                directory=Path(directory),
+            )
+            handle = await _backend().start(
+                _prepared(request),
+                request,
                 _context("exec_gate"),
                 CancellationSource().token,
                 register,
@@ -213,16 +234,18 @@ class PosixBackendTests(unittest.IsolatedAsyncioTestCase):
             async def reject(_resource: BackendResourceIdentifier) -> None:
                 raise RuntimeError("audit unavailable")
 
+            request = _request(
+                (
+                    sys.executable,
+                    str(HELPERS / "write_marker.py"),
+                    str(marker),
+                ),
+                directory=Path(directory),
+            )
             with self.assertRaisesRegex(RuntimeError, "audit unavailable"):
                 await _backend().start(
-                    _request(
-                        (
-                            sys.executable,
-                            str(HELPERS / "write_marker.py"),
-                            str(marker),
-                        ),
-                        directory=Path(directory),
-                    ),
+                    _prepared(request),
+                    request,
                     _context("exec_rejected_gate"),
                     CancellationSource().token,
                     reject,
@@ -241,19 +264,21 @@ class PosixBackendTests(unittest.IsolatedAsyncioTestCase):
                 source.cancel("cancel while blocked")
                 await asyncio.sleep(0)
 
+            request = _request(
+                (
+                    sys.executable,
+                    str(HELPERS / "write_marker.py"),
+                    str(marker),
+                ),
+                directory=Path(directory),
+            )
             with self.assertRaisesRegex(
                 CancellationRequested,
                 "cancel while blocked",
             ):
                 await _backend().start(
-                    _request(
-                        (
-                            sys.executable,
-                            str(HELPERS / "write_marker.py"),
-                            str(marker),
-                        ),
-                        directory=Path(directory),
-                    ),
+                    _prepared(request),
+                    request,
                     _context("exec_cancelled_gate"),
                     source.token,
                     cancel_during_registration,
@@ -262,13 +287,15 @@ class PosixBackendTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(marker.exists())
 
     async def test_termination_escalates_and_preserves_first_reason(self):
+        request = _request(
+            (
+                sys.executable,
+                str(HELPERS / "ignore_term.py"),
+            )
+        )
         handle = await _backend().start(
-            _request(
-                (
-                    sys.executable,
-                    str(HELPERS / "ignore_term.py"),
-                )
-            ),
+            _prepared(request),
+            request,
             _context("exec_terminate"),
             CancellationSource().token,
             _registrar([]),
@@ -290,9 +317,11 @@ class PosixBackendTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_executable_is_failed_start_not_exit_127(self):
         registered: list[BackendResourceIdentifier] = []
+        request = _request(("/truecoder/does-not-exist",))
         with self.assertRaises(BackendStartError):
             await _backend().start(
-                _request(("/truecoder/does-not-exist",)),
+                _prepared(request),
+                request,
                 _context("exec_missing"),
                 CancellationSource().token,
                 _registrar(registered),
@@ -302,12 +331,14 @@ class PosixBackendTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sensitive_requested_environment_fails_before_registration(self):
         registered: list[BackendResourceIdentifier] = []
+        request = _request(
+            (sys.executable, "-c", "pass"),
+            environment=(("OPENAI_API_KEY", "secret"),),
+        )
         with self.assertRaises(EnvironmentConstructionError):
             await _backend().start(
-                _request(
-                    (sys.executable, "-c", "pass"),
-                    environment=(("OPENAI_API_KEY", "secret"),),
-                ),
+                _prepared(request),
+                request,
                 _context("exec_bad_environment"),
                 CancellationSource().token,
                 _registrar(registered),

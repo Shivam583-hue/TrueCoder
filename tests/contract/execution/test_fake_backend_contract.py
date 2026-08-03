@@ -23,6 +23,7 @@ from truecoder.execution.cancellation import (
     CancellationSource,
     CancellationToken,
 )
+from truecoder.execution.environment import construct_environment
 from truecoder.execution.errors import BackendStartError
 from truecoder.execution.models import (
     BackendCapabilities,
@@ -31,6 +32,7 @@ from truecoder.execution.models import (
     ExecutionRequest,
     TerminationReason,
 )
+from truecoder.execution.preparation import PreparedExecution
 
 ROOT = Path.cwd().resolve()
 NOW = datetime(2026, 8, 2, 8, 0, tzinfo=timezone.utc)
@@ -153,6 +155,7 @@ class FakeBackend:
 
     async def start(
         self,
+        prepared: PreparedExecution,
         request: ExecutionRequest,
         context: ExecutionContext,
         cancellation: CancellationToken,
@@ -161,7 +164,7 @@ class FakeBackend:
             Awaitable[None],
         ],
     ) -> ExecutionHandle:
-        del request
+        del prepared, request
         cancellation.raise_if_cancelled()
         self._tracker.live_resources += 1
         self._tracker.lifecycle_events.append("acquired")
@@ -214,13 +217,16 @@ class FakeBackendContractTests(
             tracker.registered_resource = resource
             tracker.lifecycle_events.append("registered")
 
+        backend = FakeBackend(
+            tracker=tracker,
+            exit_code=exit_code,
+            output=output,
+        )
+        request = _request()
         return BackendContractCase(
-            backend=FakeBackend(
-                tracker=tracker,
-                exit_code=exit_code,
-                output=output,
-            ),
-            request=_request(),
+            backend=backend,
+            prepared=_prepared(backend.descriptor, request),
+            request=request,
             context=_context(),
             cancellation=CancellationSource().token,
             tracker=tracker,
@@ -246,14 +252,17 @@ class FakeBackendContractTests(
             tracker.registered_resource = resource
             tracker.lifecycle_events.append("registered")
 
+        backend = FakeBackend(
+            tracker=tracker,
+            exit_code=0,
+            output=(),
+            fail_after_acquire=not cancelled,
+        )
+        request = _request()
         return BackendContractCase(
-            backend=FakeBackend(
-                tracker=tracker,
-                exit_code=0,
-                output=(),
-                fail_after_acquire=not cancelled,
-            ),
-            request=_request(),
+            backend=backend,
+            prepared=_prepared(backend.descriptor, request),
+            request=request,
             context=_context(),
             cancellation=source.token,
             tracker=tracker,
@@ -267,6 +276,7 @@ class FakeBackendContractTests(
 
         with self.assertRaises(CancellationRequested):
             await case.backend.start(
+                case.prepared,
                 case.request,
                 case.context,
                 case.cancellation,
@@ -287,6 +297,22 @@ def _request() -> ExecutionRequest:
         ),
         network_access=True,
         filesystem_mode="host",
+    )
+
+
+def _prepared(
+    descriptor: BackendDescriptor,
+    request: ExecutionRequest,
+) -> PreparedExecution:
+    return PreparedExecution(
+        request=request,
+        backend=descriptor,
+        environment=construct_environment(
+            platform="posix",
+            inherited={},
+            requested=request.environment,
+        ),
+        resolved_shell=None,
     )
 
 

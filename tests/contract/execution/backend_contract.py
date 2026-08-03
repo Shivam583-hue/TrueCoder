@@ -10,6 +10,7 @@ from truecoder.execution.backends.models import BackendExit, BackendOutputChunk
 from truecoder.execution.cancellation import CancellationRequested, CancellationToken
 from truecoder.execution.errors import ExecutionInfrastructureError
 from truecoder.execution.models import ExecutionContext, ExecutionRequest
+from truecoder.execution.preparation import PreparedExecution
 
 
 @dataclass(slots=True)
@@ -27,6 +28,7 @@ class BackendContractTracker:
 @dataclass(frozen=True, slots=True)
 class BackendContractCase:
     backend: ExecutionBackend
+    prepared: PreparedExecution
     request: ExecutionRequest
     context: ExecutionContext
     cancellation: CancellationToken
@@ -63,6 +65,7 @@ class BackendContractMixin:
         case: BackendContractCase,
     ) -> ExecutionHandle:
         return await case.backend.start(
+            case.prepared,
             case.request,
             case.context,
             case.cancellation,
@@ -159,6 +162,7 @@ class BackendContractMixin:
 
         with self.assertRaises(ExecutionInfrastructureError):
             await case.backend.start(
+                case.prepared,
                 case.request,
                 case.context,
                 case.cancellation,
@@ -173,6 +177,7 @@ class BackendContractMixin:
 
         with self.assertRaises(CancellationRequested):
             await case.backend.start(
+                case.prepared,
                 case.request,
                 case.context,
                 case.cancellation,
@@ -193,6 +198,7 @@ class BackendContractMixin:
 
         with self.assertRaises(RuntimeError):
             await case.backend.start(
+                case.prepared,
                 case.request,
                 case.context,
                 case.cancellation,

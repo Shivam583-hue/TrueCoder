@@ -9,6 +9,7 @@ from tests.integration.execution.backends.test_posix_backend import (
     HELPERS,
     _backend,
     _context,
+    _prepared,
     _registrar,
     _request,
 )
@@ -20,13 +21,15 @@ from truecoder.execution.cancellation import CancellationSource
 @unittest.skipUnless(os.name == "posix", "requires POSIX process semantics")
 class PosixRecoveryIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_recovery_terminates_a_live_exact_resource(self):
+        request = _request(
+            (
+                sys.executable,
+                str(HELPERS / "ignore_term.py"),
+            )
+        )
         handle = await _backend().start(
-            _request(
-                (
-                    sys.executable,
-                    str(HELPERS / "ignore_term.py"),
-                )
-            ),
+            _prepared(request),
+            request,
             _context("exec_live_recovery"),
             CancellationSource().token,
             _registrar([]),
