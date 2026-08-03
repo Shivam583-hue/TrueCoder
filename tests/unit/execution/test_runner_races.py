@@ -120,11 +120,15 @@ def prepared(
     )
 
 
-def decision(*, allowed: bool = True) -> PolicyDecision:
+def decision(
+    *,
+    allowed: bool = True,
+    requires_approval: bool = False,
+) -> PolicyDecision:
     return PolicyDecision(
         allowed=allowed,
         risk=RiskLevel.LOW if allowed else RiskLevel.HIGH,
-        requires_approval=False,
+        requires_approval=requires_approval,
         effective_limits=request().limits,
         requirements=CapabilityRequirements(),
         reasons=()
@@ -697,7 +701,10 @@ class ApprovalRouteTests(OrchestrationTestCase):
         approval = FakeApproval(approve=False)
         runner, backend = self.build(approval_gate=approval)
 
-        result = await self.run_once(runner)
+        result = await self.run_once(
+            runner,
+            policy_decision=decision(requires_approval=True),
+        )
 
         self.assertEqual(result.status, "denied")
         self.assertEqual(backend.start_count, 0)
@@ -709,9 +716,14 @@ class ApprovalRouteTests(OrchestrationTestCase):
         runner, backend = self.build(approval_gate=approval)
         launch = prepared()
 
-        await self.run_once(runner, prepared_execution=launch)
+        policy = decision(requires_approval=True)
+        await self.run_once(
+            runner,
+            prepared_execution=launch,
+            policy_decision=policy,
+        )
 
-        self.assertIs(approval.requests[0], launch)
+        self.assertEqual(approval.requests[0], (launch, policy))
         self.assertIs(backend.prepared_seen[0], launch)
 
     async def test_cancellation_while_approval_is_open_never_starts(self):
@@ -722,7 +734,12 @@ class ApprovalRouteTests(OrchestrationTestCase):
             runner=runner,
             audit=self.audit,
         )
-        run = asyncio.create_task(self.run_once(runner))
+        run = asyncio.create_task(
+            self.run_once(
+                runner,
+                policy_decision=decision(requires_approval=True),
+            )
+        )
         await approval.requested.wait()
 
         outcome = await service.cancel("exec-race-01")
@@ -754,13 +771,16 @@ class ApprovalRouteTests(OrchestrationTestCase):
         )
         outcomes: list[CancellationOutcome] = []
 
-        async def cancel_then_approve(_prepared, _context) -> bool:
+        async def cancel_then_approve(_prepared, _decision, _context) -> bool:
             outcomes.append(await service.cancel("exec-race-01"))
             return True
 
         runner, backend = self.build(approval_gate=cancel_then_approve)
 
-        result = await self.run_once(runner)
+        result = await self.run_once(
+            runner,
+            policy_decision=decision(requires_approval=True),
+        )
 
         self.assertEqual(outcomes, [CancellationOutcome.REQUESTED])
         self.assertEqual(result.status, "cancelled")
@@ -771,7 +791,12 @@ class ApprovalRouteTests(OrchestrationTestCase):
     async def test_the_entry_is_registered_from_admission(self):
         approval = FakeApproval(approve=True, gate=True)
         runner, _backend = self.build(approval_gate=approval)
-        run = asyncio.create_task(self.run_once(runner))
+        run = asyncio.create_task(
+            self.run_once(
+                runner,
+                policy_decision=decision(requires_approval=True),
+            )
+        )
         await approval.requested.wait()
 
         entry = await self.registry.get("exec-race-01")

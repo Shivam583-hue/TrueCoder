@@ -452,9 +452,9 @@ class FakeApproval:
         if not gate:
             self.allowed.set()
 
-    async def __call__(self, prepared, context) -> bool:
+    async def __call__(self, prepared, decision, context) -> bool:
         del context
-        self.requests.append(prepared)
+        self.requests.append((prepared, decision))
         self.requested.set()
         await self.allowed.wait()
         if self._error is not None:

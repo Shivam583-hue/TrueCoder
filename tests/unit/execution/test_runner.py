@@ -297,11 +297,15 @@ def prepared(execution_request: ExecutionRequest | None = None) -> PreparedExecu
     )
 
 
-def decision(*, allowed: bool = True) -> PolicyDecision:
+def decision(
+    *,
+    allowed: bool = True,
+    requires_approval: bool = False,
+) -> PolicyDecision:
     return PolicyDecision(
         allowed=allowed,
         risk=RiskLevel.LOW if allowed else RiskLevel.HIGH,
-        requires_approval=False,
+        requires_approval=requires_approval,
         effective_limits=request().limits,
         requirements=CapabilityRequirements(),
         reasons=()
@@ -400,14 +404,17 @@ class PreStartEventBoundaryTests(RunnerTestCase):
         self.assertIsNone(snapshot.record.finalization)
 
     async def test_approval_event_failure_fails_closed(self):
-        async def approve(_prepared, _context) -> bool:
+        async def approve(_prepared, _decision, _context) -> bool:
             return True
 
         runner, backend = self.build_runner(approval_gate=approve)
         self.store.fail_on.add("append_event:approval_requested")
 
         with self.assertRaises(AuditPersistenceError):
-            await self.start_run(runner)
+            await self.start_run(
+                runner,
+                policy_decision=decision(requires_approval=True),
+            )
 
         self.assertEqual(backend.starts, 0)
         snapshot = await self.newest_run()
@@ -448,16 +455,36 @@ class DenialBoundaryTests(RunnerTestCase):
         self.assertEqual(result.audit_id, snapshot.admission.run_id)
 
     async def test_approval_rejection_finalizes_as_approval_rejected(self):
-        async def reject(_prepared, _context) -> bool:
+        async def reject(_prepared, _decision, _context) -> bool:
             return False
 
         runner, backend = self.build_runner(approval_gate=reject)
 
-        result = await self.start_run(runner)
+        result = await self.start_run(
+            runner,
+            policy_decision=decision(requires_approval=True),
+        )
 
         self.assertEqual(result.status, "denied")
         self.assertEqual(backend.starts, 0)
         self.assertIn("approval_rejected", self.store.event_calls())
+        snapshot = await self.newest_run()
+        assert snapshot.record.finalization is not None
+        self.assertIs(
+            snapshot.record.finalization.outcome,
+            TerminalOutcome.APPROVAL_REJECTED,
+        )
+
+    async def test_required_approval_without_a_gate_fails_closed(self):
+        runner, backend = self.build_runner()
+
+        result = await self.start_run(
+            runner,
+            policy_decision=decision(requires_approval=True),
+        )
+
+        self.assertEqual(result.status, "denied")
+        self.assertEqual(backend.starts, 0)
         snapshot = await self.newest_run()
         assert snapshot.record.finalization is not None
         self.assertIs(

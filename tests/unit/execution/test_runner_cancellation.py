@@ -201,7 +201,12 @@ class ApprovalInterruptionTests(OrchestrationTestCase):
         approval = FakeApproval(approve=True, gate=True)
         backend = ScriptedBackend(descriptor(), handle_options={"exit_code": 0})
         runner, backend = self.build(backend, approval_gate=approval)
-        run = asyncio.create_task(self.run_once(runner))
+        run = asyncio.create_task(
+            self.run_once(
+                runner,
+                policy_decision=decision(requires_approval=True),
+            )
+        )
         await approval.requested.wait()
 
         approval.release(approve=False)

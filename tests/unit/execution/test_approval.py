@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 
 from truecoder.execution.approval import (
@@ -11,14 +12,25 @@ from truecoder.execution.approval import (
     ApprovalScope,
     ApprovalService,
     ExecutionApprovalDetails,
+    ExecutionApprovalGate,
     RiskLevel,
 )
+from truecoder.execution.backends.models import (
+    BackendDescriptor,
+    ContainerRuntimeInfo,
+)
+from truecoder.execution.environment import construct_environment
 from truecoder.execution.errors import ApprovalError
 from truecoder.execution.models import (
     BackendCapabilities,
+    CapabilityRequirements,
+    ExecutionContext,
     ExecutionLimits,
     ExecutionRequest,
+    PolicyDecision,
+    PolicyReason,
 )
+from truecoder.execution.preparation import PreparedExecution
 
 
 def limits(timeout_seconds: float = 30) -> ExecutionLimits:
@@ -257,6 +269,108 @@ class ApprovalServiceTests(unittest.IsolatedAsyncioTestCase):
             await service.authorize(
                 request(execution=execution_details(mode="shell"))
             )
+
+
+class ExecutionApprovalGateTests(unittest.IsolatedAsyncioTestCase):
+    def prepared(self) -> PreparedExecution:
+        details = execution_details(mode="shell", risk=RiskLevel.HIGH)
+        descriptor = BackendDescriptor(
+            name="container",
+            available=True,
+            capabilities=details.capabilities,
+            version="test",
+            runtime=ContainerRuntimeInfo(
+                name="docker",
+                executable=Path("/usr/bin/docker"),
+                client_version="test",
+                server_version="test",
+                daemon_reachable=True,
+                rootless="unknown",
+            ),
+        )
+        return PreparedExecution(
+            request=details.request,
+            backend=descriptor,
+            environment=construct_environment(
+                platform="posix",
+                inherited={},
+                requested=(),
+            ),
+            resolved_shell="posix",
+        )
+
+    def context(self) -> ExecutionContext:
+        return ExecutionContext(
+            execution_id="exec_gate",
+            tool_call_id="call_gate",
+            session_id="session_gate",
+            turn_id="turn_gate",
+            workspace_id="workspace_gate",
+            project_root=Path.cwd(),
+            launched_at_utc=datetime(2026, 8, 3, tzinfo=UTC),
+        )
+
+    def decision(self, *, approval: bool = True) -> PolicyDecision:
+        return PolicyDecision(
+            allowed=True,
+            risk=RiskLevel.HIGH,
+            requires_approval=approval,
+            effective_limits=limits(),
+            requirements=CapabilityRequirements(),
+            reasons=(
+                PolicyReason(
+                    code="shell-script",
+                    message="Shell syntax requires confirmation.",
+                    rule_id="policy.shell",
+                ),
+            ),
+        )
+
+    async def test_builds_one_exact_approve_once_request(self):
+        handler = RecordingHandler(ApprovalResponse.approve())
+        gate = ExecutionApprovalGate(
+            ApprovalService(handler),
+            policy_version="policy-v7",
+        )
+        prepared = self.prepared()
+        decision = self.decision()
+
+        approved = await gate(prepared, decision, self.context())
+
+        self.assertTrue(approved)
+        self.assertEqual(len(handler.requests), 1)
+        item = handler.requests[0]
+        self.assertEqual(item.call_id, "call_gate")
+        self.assertEqual(item.tool_name, "shell")
+        self.assertEqual(item.allowed_scopes, (ApprovalScope.ONCE,))
+        assert item.execution is not None
+        self.assertIs(item.execution.request, prepared.request)
+        self.assertEqual(item.execution.backend, "container")
+        self.assertEqual(item.execution.risk, RiskLevel.HIGH)
+        self.assertEqual(item.execution.policy_version, "policy-v7")
+        self.assertEqual(
+            item.execution.reasons,
+            ("Shell syntax requires confirmation.",),
+        )
+
+    async def test_rejection_blocks_and_no_approval_decision_skips_handler(self):
+        handler = RecordingHandler(ApprovalResponse.reject())
+        gate = ExecutionApprovalGate(
+            ApprovalService(handler),
+            policy_version="policy-v7",
+        )
+        prepared = self.prepared()
+
+        rejected = await gate(prepared, self.decision(), self.context())
+        automatic = await gate(
+            prepared,
+            self.decision(approval=False),
+            self.context(),
+        )
+
+        self.assertFalse(rejected)
+        self.assertTrue(automatic)
+        self.assertEqual(len(handler.requests), 1)
 
 
 if __name__ == "__main__":

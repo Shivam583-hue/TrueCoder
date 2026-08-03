@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
+import subprocess
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -13,10 +15,13 @@ from truecoder.execution.models import (
     BACKEND_NAMES,
     BackendCapabilities,
     BackendName,
+    ExecutionContext,
     ExecutionLimits,
     ExecutionRequest,
+    PolicyDecision,
     RiskLevel,
 )
+from truecoder.execution.preparation import PreparedExecution
 
 _FINGERPRINT_VERSION = 1
 
@@ -297,6 +302,59 @@ class ApprovalService:
         return ApprovalResponse.approve(reused_scope, reused=True)
 
 
+class ExecutionApprovalGate:
+    def __init__(
+        self,
+        service: ApprovalService,
+        *,
+        policy_version: str,
+    ) -> None:
+        if not isinstance(service, ApprovalService):
+            raise TypeError("service must be an ApprovalService")
+        _require_identity(policy_version, "policy_version")
+        self._service = service
+        self._policy_version = policy_version
+
+    async def __call__(
+        self,
+        prepared: PreparedExecution,
+        decision: PolicyDecision,
+        context: ExecutionContext,
+    ) -> bool:
+        if not isinstance(prepared, PreparedExecution):
+            raise TypeError("prepared must be a PreparedExecution")
+        if not isinstance(decision, PolicyDecision):
+            raise TypeError("decision must be a PolicyDecision")
+        if not isinstance(context, ExecutionContext):
+            raise TypeError("context must be an ExecutionContext")
+        if not decision.requires_approval:
+            return True
+
+        request = prepared.request
+        details = ExecutionApprovalDetails(
+            execution_id=context.execution_id,
+            command_display=_command_display(request, prepared.backend.name),
+            request=request,
+            backend=prepared.backend.name,
+            capabilities=prepared.backend.capabilities,
+            risk=decision.risk,
+            reasons=tuple(reason.message for reason in decision.reasons),
+            policy_version=self._policy_version,
+        )
+        approval = ApprovalRequest.create(
+            call_id=context.tool_call_id,
+            tool_name="shell",
+            arguments=_execution_arguments(request, context),
+            identity=ApprovalIdentity(
+                session_id=context.session_id,
+                workspace_id=context.workspace_id,
+            ),
+            execution=details,
+        )
+        response = await self._service.authorize(approval)
+        return response.decision is ApprovalDecision.APPROVED
+
+
 def safe_approval_scopes(
     execution: ExecutionApprovalDetails | None,
     *,
@@ -319,6 +377,37 @@ def safe_approval_scopes(
         ApprovalScope.SESSION,
         ApprovalScope.WORKSPACE,
     )
+
+
+def _command_display(request: ExecutionRequest, backend: BackendName) -> str:
+    if request.mode == "shell":
+        return request.script or ""
+    argv = request.argv or ()
+    if backend == "windows":
+        return subprocess.list2cmdline(argv)
+    return shlex.join(argv)
+
+
+def _execution_arguments(
+    request: ExecutionRequest,
+    context: ExecutionContext,
+) -> dict[str, Any]:
+    try:
+        working_directory = str(
+            request.working_directory.relative_to(context.project_root)
+        )
+    except ValueError:
+        working_directory = str(request.working_directory)
+    return {
+        "argv": list(request.argv) if request.argv is not None else None,
+        "backend": request.backend,
+        "filesystem_mode": request.filesystem_mode,
+        "mode": request.mode,
+        "network_access": request.network_access,
+        "script": request.script,
+        "shell_kind": request.shell_kind,
+        "working_directory": working_directory or ".",
+    }
 
 
 def build_approval_fingerprint(

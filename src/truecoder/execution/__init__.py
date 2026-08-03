@@ -7,6 +7,7 @@ from truecoder.execution.approval import (
     ApprovalScope,
     ApprovalService,
     ExecutionApprovalDetails,
+    ExecutionApprovalGate,
     RiskLevel,
 )
 from truecoder.execution.cancellation import (
@@ -36,6 +37,7 @@ __all__ = [
     "CancellationSource",
     "CancellationToken",
     "ExecutionApprovalDetails",
+    "ExecutionApprovalGate",
     "ExecutionContextFactory",
     "ExecutionRegistry",
     "ExecutionService",

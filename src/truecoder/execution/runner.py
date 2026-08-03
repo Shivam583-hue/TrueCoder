@@ -77,7 +77,7 @@ from truecoder.execution.results import (
 )
 
 ApprovalGate: TypeAlias = Callable[
-    [PreparedExecution, ExecutionContext],
+    [PreparedExecution, PolicyDecision, ExecutionContext],
     Awaitable[bool],
 ]
 
@@ -311,6 +311,7 @@ class ExecutionRunner:
             handle,
             state,
             prepared,
+            decision,
             context,
             publisher,
         )
@@ -407,11 +408,14 @@ class ExecutionRunner:
         handle: AuditRunHandle,
         state: LifecycleState,
         prepared: PreparedExecution,
+        decision: PolicyDecision,
         context: ExecutionContext,
         publisher: LifecyclePublisher,
     ) -> bool:
-        if self._approval_gate is None:
+        if not decision.requires_approval:
             return True
+        if self._approval_gate is None:
+            return False
 
         state.transition(RunState.AWAITING_APPROVAL)
         await publisher.publish("approval_required")
@@ -422,7 +426,7 @@ class ExecutionRunner:
             AuditEventType.APPROVAL_REQUESTED,
             publisher,
         )
-        approved = bool(await self._approval_gate(prepared, context))
+        approved = bool(await self._approval_gate(prepared, decision, context))
         await self._write_pre_start_event(
             handle,
             state,

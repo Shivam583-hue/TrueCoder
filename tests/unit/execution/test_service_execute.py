@@ -34,6 +34,10 @@ from truecoder.execution.service import ExecutionService
 HOST_ENVIRONMENT = {"PATH": "/usr/bin", "LANG": "C.UTF-8"}
 
 
+async def approve_execution(_prepared, _decision, _context) -> bool:
+    return True
+
+
 def unavailable(name) -> BackendDescriptor:
     return BackendDescriptor(
         name=name,
@@ -107,7 +111,7 @@ class ExecuteLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.audit,
             BackendRegistry((self.backend,)),
             registry=self.registry,
-            approval_gate=overrides.pop("approval_gate", None),
+            approval_gate=overrides.pop("approval_gate", approve_execution),
             safety_deadline_seconds=0.5,
         )
         return ExecutionService(
