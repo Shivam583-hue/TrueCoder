@@ -36,7 +36,7 @@ LEGAL_TRANSITIONS = {
     RunState.AWAITING_APPROVAL: frozenset(
         {RunState.REGISTERED, RunState.FINALIZING},
     ),
-    RunState.REGISTERED: frozenset({RunState.STARTING}),
+    RunState.REGISTERED: frozenset({RunState.STARTING, RunState.FINALIZING}),
     RunState.STARTING: frozenset({RunState.RUNNING, RunState.FINALIZING}),
     RunState.RUNNING: frozenset({RunState.TERMINATING, RunState.FINALIZING}),
     RunState.TERMINATING: frozenset({RunState.FINALIZING}),
@@ -439,7 +439,6 @@ class LifecycleStateTests(unittest.TestCase):
             (RunState.PREPARED, RunState.FINALIZING),
             (RunState.AWAITING_APPROVAL, RunState.PREPARED),
             (RunState.REGISTERED, RunState.RUNNING),
-            (RunState.REGISTERED, RunState.FINALIZING),
             (RunState.STARTING, RunState.TERMINATING),
             (RunState.RUNNING, RunState.TERMINAL),
             (RunState.TERMINATING, RunState.RUNNING),
