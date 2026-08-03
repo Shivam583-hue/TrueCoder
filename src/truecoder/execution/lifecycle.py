@@ -40,7 +40,9 @@ _ALLOWED_TRANSITIONS: Final[dict[RunState, frozenset[RunState]]] = {
     RunState.AWAITING_APPROVAL: frozenset(
         {RunState.REGISTERED, RunState.FINALIZING},
     ),
-    RunState.REGISTERED: frozenset({RunState.STARTING}),
+    # REGISTERED reaches FINALIZING when the backend_starting event cannot be
+    # stored: the run is unregistered and the backend is never called.
+    RunState.REGISTERED: frozenset({RunState.STARTING, RunState.FINALIZING}),
     RunState.STARTING: frozenset({RunState.RUNNING, RunState.FINALIZING}),
     RunState.RUNNING: frozenset({RunState.TERMINATING, RunState.FINALIZING}),
     RunState.TERMINATING: frozenset({RunState.FINALIZING}),
