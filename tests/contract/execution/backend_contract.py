@@ -1,19 +1,25 @@
 from __future__ import annotations
 
 import unittest
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 
 from truecoder.execution.audit.models import BackendResourceIdentifier
 from truecoder.execution.backends.base import (
+    BackendResourceRegistrar,
     BackendStartContext,
     ExecutionBackend,
     ExecutionHandle,
 )
-from truecoder.execution.backends.models import BackendExit, BackendOutputChunk
+from truecoder.execution.backends.models import (
+    BackendDescriptor,
+    BackendExit,
+    BackendOutputChunk,
+    CleanupResult,
+)
 from truecoder.execution.cancellation import CancellationRequested, CancellationToken
 from truecoder.execution.errors import ExecutionInfrastructureError
-from truecoder.execution.models import ExecutionRequest
+from truecoder.execution.models import ExecutionRequest, TerminationReason
 from truecoder.execution.preparation import PreparedExecution
 
 
@@ -40,6 +46,91 @@ class BackendContractCase:
     expected_output: tuple[BackendOutputChunk, ...]
     expected_exit: BackendExit
     register_resource: Callable[[BackendResourceIdentifier], Awaitable[None]]
+
+
+class TrackingHandle:
+    def __init__(
+        self,
+        inner: ExecutionHandle,
+        tracker: BackendContractTracker,
+    ) -> None:
+        self._inner = inner
+        self._tracker = tracker
+        self._waited = False
+        self._terminated = False
+        self._cleaned = False
+
+    @property
+    def execution_id(self) -> str:
+        return self._inner.execution_id
+
+    @property
+    def resource(self) -> BackendResourceIdentifier:
+        return self._inner.resource
+
+    def output(self) -> AsyncIterator[BackendOutputChunk]:
+        return self._inner.output()
+
+    async def wait(self) -> BackendExit:
+        if not self._waited:
+            self._tracker.native_waits += 1
+            self._waited = True
+        return await self._inner.wait()
+
+    async def terminate(
+        self,
+        reason: TerminationReason,
+        grace_seconds: float,
+    ) -> None:
+        if not self._terminated:
+            self._tracker.native_terminations += 1
+            self._terminated = True
+        await self._inner.terminate(reason, grace_seconds)
+
+    async def cleanup(self) -> CleanupResult:
+        if not self._cleaned:
+            self._tracker.native_cleanups += 1
+            self._tracker.live_resources -= 1
+            self._cleaned = True
+        return await self._inner.cleanup()
+
+
+class TrackingBackend:
+    def __init__(
+        self,
+        inner: ExecutionBackend,
+        tracker: BackendContractTracker,
+    ) -> None:
+        self._inner = inner
+        self._tracker = tracker
+
+    @property
+    def descriptor(self) -> BackendDescriptor:
+        return self._inner.descriptor
+
+    async def start(
+        self,
+        prepared: PreparedExecution,
+        request: ExecutionRequest,
+        context: BackendStartContext,
+        cancellation: CancellationToken,
+        register_resource: BackendResourceRegistrar,
+    ) -> ExecutionHandle:
+        try:
+            handle = await self._inner.start(
+                prepared,
+                request,
+                context,
+                cancellation,
+                register_resource,
+            )
+        except BaseException:
+            if not cancellation.cancelled:
+                self._tracker.partial_start_cleanups += 1
+            raise
+        self._tracker.live_resources += 1
+        self._tracker.lifecycle_events.append("released")
+        return TrackingHandle(handle, self._tracker)
 
 
 class BackendContractMixin:

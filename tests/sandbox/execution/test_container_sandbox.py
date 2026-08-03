@@ -36,6 +36,7 @@ from truecoder.execution.preparation import PreparedExecution
 
 REPOSITORY = Path(__file__).resolve().parents[3]
 IMAGE_LOCK = REPOSITORY / "container" / "image.lock"
+HELPERS = Path(__file__).resolve().parent / "helpers"
 
 
 def _docker() -> Path | None:
@@ -355,6 +356,19 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(exit_status.native_reason, "memory_limit")
         self.assertIsNone(exit_status.exit_code)
+
+    async def test_process_count_limit_blocks_fork_growth(self):
+        shutil.copy(HELPERS / "exhaust_pids.py", self.workspace)
+
+        stdout, _stderr, exit_status, _resource = await self.run_script(
+            "python3 /workspace/exhaust_pids.py",
+            label="pids",
+            max_processes=16,
+        )
+
+        self.assertEqual(exit_status.exit_code, 0)
+        self.assertIn("PID-LIMIT-ENFORCED", stdout)
+        self.assertNotIn("PID-LIMIT-MISSED", stdout)
 
     async def test_a_nonzero_exit_is_ordinary_backend_data(self):
         _stdout, _stderr, exit_status, _resource = await self.run_script(
