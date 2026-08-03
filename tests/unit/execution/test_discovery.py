@@ -384,7 +384,12 @@ class BackendDescriptorDerivationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(snapshot.backend("windows").available)
         self.assertFalse(snapshot.backend("posix").available)
-        self.assertTrue(snapshot.backend("container").available)
+        container = snapshot.backend("container")
+        self.assertFalse(container.available)
+        self.assertIn(
+            "container-platform-unsupported",
+            tuple(reason.code for reason in container.unavailable_reasons),
+        )
         self.assertEqual(
             snapshot.backend("container").capabilities.network_isolation,
             "enforced",

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal, Protocol, TypeAlias
 
+from .backends.container_models import ContainerBackendFacts, ContainerImage
 from .backends.models import (
     MAX_DISCOVERY_DIAGNOSTIC_BYTES,
     BackendDescriptor,
@@ -401,9 +402,50 @@ async def discover_container_runtimes(
     return tuple(runtimes)
 
 
+def container_facts(
+    host: HostPlatformInfo,
+    runtimes: tuple[ContainerRuntimeInfo, ...],
+    *,
+    image: ContainerImage | None = None,
+) -> ContainerBackendFacts:
+    usable = next(
+        (
+            runtime
+            for runtime in runtimes
+            if runtime.name == "docker"
+            and runtime.daemon_reachable
+            and runtime.diagnostic is None
+        ),
+        None,
+    )
+    verified = usable is not None and host.system == "linux"
+    return ContainerBackendFacts(
+        runtime="docker",
+        runtime_version=(
+            (usable.server_version or usable.client_version or "unknown")
+            if usable is not None
+            else "unknown"
+        ),
+        image=image if verified else None,
+        supports_read_only_root=verified,
+        supports_bind_mounts=verified,
+        supports_tmpfs=verified,
+        supports_capability_drop=verified,
+        supports_no_new_privileges=verified,
+        supports_none_network=verified,
+        supports_memory_limit=verified,
+        supports_pids_limit=verified,
+        cpu_enforcement="best_effort" if verified else "unsupported",
+        dialect_implemented=usable is not None,
+        daemon_reachable=usable is not None,
+        platform_supported=host.system == "linux",
+    )
+
+
 def derive_backend_descriptors(
     *,
     host: HostPlatformInfo,
+    container_image: ContainerImage | None = None,
     shells: tuple[DiscoveredProgram, ...],
     cgroup_v2: CgroupV2Info | None,
     runtimes: tuple[ContainerRuntimeInfo, ...],
@@ -461,25 +503,29 @@ def derive_backend_descriptors(
         (
             runtime
             for runtime in runtimes
-            if runtime.daemon_reachable and runtime.diagnostic is None
+            if runtime.name == "docker"
+            and runtime.daemon_reachable
+            and runtime.diagnostic is None
         ),
         None,
     )
+    facts = container_facts(host, runtimes, image=container_image)
+    reasons = (
+        facts.unavailable_reasons()
+        if usable_runtime is not None
+        else _container_unavailable_reasons(runtimes)
+    )
     container = BackendDescriptor(
         name="container",
-        available=usable_runtime is not None,
-        capabilities=_container_capabilities(),
+        available=not reasons,
+        capabilities=facts.capabilities(),
         version=(
             usable_runtime.server_version or usable_runtime.client_version
             if usable_runtime is not None
             else None
         ),
-        runtime=usable_runtime,
-        unavailable_reasons=(
-            ()
-            if usable_runtime is not None
-            else _container_unavailable_reasons(runtimes)
-        ),
+        runtime=usable_runtime if not reasons else None,
+        unavailable_reasons=reasons,
     )
     return posix, windows, container
 

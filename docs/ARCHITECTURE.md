@@ -619,6 +619,59 @@ Repeat requests report `ALREADY_REQUESTED`, unknown IDs report `NOT_FOUND`, and
 a cancellation arriving after a natural exit has already won stays a harmless
 request outcome.
 
+## Container sandbox
+
+The container backend is an adapter behind the same `ExecutionBackend`
+contract, not a second execution service.
+It performs no policy, approval, or service registration of its own.
+
+Phase 8 certifies exactly one profile: Linux, the Docker dialect, and one
+pinned execution image.
+Podman and nerdctl are refused by the plan and by capability derivation until
+their dialects pass the same tests, and non-Linux hosts report
+`container-platform-unsupported`.
+
+`BackendStartContext` carries the durable audit run ID into a backend without
+giving backends access to the audit service, so container labels can record the
+exact run they belong to.
+
+Launch planning is pure.
+`build_container_plan` converts the prepared execution into typed mounts,
+labels, limits, and argv; the Docker dialect renders that plan into exact
+argv, and unit tests assert both the required flags and the absence of every
+forbidden one.
+The plan refuses the host filesystem mode, refuses network access without a
+configured isolated network, clamps requested limits to the configured
+ceiling, and rejects a workspace the non-root sandbox user cannot read.
+Because the image runs as a fixed non-root UID, `workspace-write` is refused
+up front when the host workspace does not grant that user write access, rather
+than producing a container that silently cannot write.
+
+The image is pinned by content digest in `container/image.lock` and launch uses
+`--pull never`, so a reachable daemon without the exact local image leaves the
+sandbox unavailable.
+Capability derivation comes from verified `ContainerBackendFacts` rather than
+optimistic constants, and total CPU seconds are advertised as best-effort:
+the trusted entrypoint monitors aggregate cgroup CPU accounting, but that
+enforcement is not yet adversarially proven.
+
+Start uses create, register, then start.
+The container is created stopped, inspected for exact state, labels, and image
+digest, and only then offered to the durable registrar; project code cannot run
+until attachment commits.
+A registrar failure force-removes the stopped container, and every partial path
+removes the private environment file and scratch directory.
+The handle owns one exact container: a single output owner, cached
+wait/terminate/cleanup, stop-then-kill escalation by full immutable ID, explicit
+removal, and absence verification.
+
+Proven adversarially against real Docker: a host secret outside the workspace
+is unreadable, `workspace-read` cannot mutate the host tree, the root filesystem
+is read-only with only approved tmpfs writable, network denial blocks a real
+external canary, no runtime socket is visible, every capability is dropped with
+no-new-privileges active, exceeding memory normalizes to `memory_limit`, streams
+stay separate and raw, and no container, client, or temporary file leaks.
+
 ## Design rules
 
 Keep these invariants stable as the codebase grows:
@@ -658,6 +711,10 @@ Keep these invariants stable as the codebase grows:
 * an execution is cancellable by ID from admission, not only once it starts
 * pre-start cancellation returns cancelled and records that nothing started
 * lifecycle events are bounded and never block or fail an execution
+* only implemented and tested container dialects ever become available
+* the sandbox image is digest-pinned and launch never pulls
+* project code stays stopped until its container identity is durable
+* container recovery acts only on a full immutable ID plus an exact label match
 * startup recovery acts only on exact persisted backend resource identities
 * session saves happen only at completed-turn boundaries
 * restoring a session cannot partially replace agent state
