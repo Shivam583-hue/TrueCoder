@@ -99,9 +99,8 @@ def _cpu_seconds() -> float:
 
 
 def _mark_cpu_exceeded() -> None:
-    with _suppressed():
-        with open(CPU_MARKER_PATH, "w", encoding="utf-8") as handle:
-            handle.write(ENTRYPOINT_VERSION)
+    with _suppressed(), open(CPU_MARKER_PATH, "w", encoding="utf-8") as handle:
+        handle.write(ENTRYPOINT_VERSION)
 
 
 def _terminate_group() -> None:
