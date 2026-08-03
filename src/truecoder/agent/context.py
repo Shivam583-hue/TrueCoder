@@ -10,7 +10,7 @@ from truecoder.agent.messages import (
     copy_messages,
     create_system_message,
 )
-from truecoder.agent.prompts import build_system_prompt
+from truecoder.agent.prompts import add_shell_tool_guidance, build_system_prompt
 
 if TYPE_CHECKING:
     from truecoder.agent.state import AgentState
@@ -196,3 +196,6 @@ class ContextBuilder:
                 *pending_messages,
             ]
         )
+
+    def enable_shell_tool(self) -> None:
+        self.system_prompt = add_shell_tool_guidance(self.system_prompt)

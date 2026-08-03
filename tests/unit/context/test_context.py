@@ -5,7 +5,12 @@ from typing import Any
 from unittest.mock import Mock, patch
 
 from truecoder.agent import AgentState, ContextBuilder, TiktokenTokenCounter
-from truecoder.agent.prompts import DEFAULT_SYSTEM_PROMPT, build_system_prompt
+from truecoder.agent.prompts import (
+    DEFAULT_SYSTEM_PROMPT,
+    SHELL_TOOL_GUIDANCE,
+    add_shell_tool_guidance,
+    build_system_prompt,
+)
 from truecoder.tools import ToolCall
 
 
@@ -235,6 +240,34 @@ class ContextBuilderTests(unittest.TestCase):
     def test_system_prompt_rejects_non_string_project_instructions(self):
         with self.assertRaises(TypeError):
             build_system_prompt(None)  # type: ignore[arg-type]
+
+    def test_shell_guidance_is_added_only_when_enabled(self):
+        builder = self.make_builder()
+
+        self.assertNotIn(SHELL_TOOL_GUIDANCE.strip(), builder.system_prompt)
+
+        builder.enable_shell_tool()
+        builder.enable_shell_tool()
+
+        self.assertEqual(
+            builder.system_prompt.count(SHELL_TOOL_GUIDANCE.strip()),
+            1,
+        )
+
+    def test_shell_guidance_preserves_project_instructions(self):
+        prompt = build_system_prompt("Repository guidance")
+
+        result = add_shell_tool_guidance(prompt)
+
+        self.assertIn("<project_instructions>", result)
+        self.assertIn("Repository guidance", result)
+        self.assertTrue(result.endswith(SHELL_TOOL_GUIDANCE.strip()))
+
+    def test_shell_guidance_rejects_invalid_prompts(self):
+        with self.assertRaises(TypeError):
+            add_shell_tool_guidance(None)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            add_shell_tool_guidance(" ")
 
     def test_project_instructions_participate_in_context_budgeting(self):
         state = state_with_turns([("old", "answer")], "current")

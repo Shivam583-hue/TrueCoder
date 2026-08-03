@@ -11,6 +11,15 @@ Repository instructions follow. They are ordered from broadest to most specific.
 When instructions conflict, later instructions take precedence.
 """
 
+SHELL_TOOL_GUIDANCE = """\
+The shell tool executes commands through TrueCoder's bounded execution service.
+Prefer mode="exec" with an argv list for ordinary commands. Use mode="shell" only
+when pipes, redirects, chaining, expansion, or other shell syntax is necessary.
+Use workspace-relative working directories. Request only the capabilities and
+limits the command needs. Treat a nonzero exit status as command output to inspect,
+not as proof that the shell tool itself failed.
+"""
+
 
 def build_system_prompt(project_instructions: str = "") -> str:
     """Combine the base prompt with project instructions loaded at startup."""
@@ -28,3 +37,15 @@ def build_system_prompt(project_instructions: str = "") -> str:
         f"{_PROJECT_INSTRUCTIONS_PREAMBLE.strip()}\n\n"
         f"<project_instructions>\n{instructions}\n</project_instructions>"
     )
+
+
+def add_shell_tool_guidance(system_prompt: str) -> str:
+    if not isinstance(system_prompt, str):
+        raise TypeError("system_prompt must be a string")
+    prompt = system_prompt.strip()
+    if not prompt:
+        raise ValueError("system_prompt cannot be empty")
+    guidance = SHELL_TOOL_GUIDANCE.strip()
+    if guidance in prompt:
+        return prompt
+    return f"{prompt}\n\n{guidance}"
