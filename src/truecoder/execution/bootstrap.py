@@ -29,6 +29,7 @@ from truecoder.execution.backends.posix import PosixBackend
 from truecoder.execution.backends.posix_identity import current_host_id
 from truecoder.execution.backends.posix_recovery import PosixRecoveryHandler
 from truecoder.execution.backends.registry import BackendRegistry
+from truecoder.execution.defaults import DEFAULT_EXECUTION_LIMITS
 from truecoder.execution.discovery import (
     DEFAULT_IMAGE_LOCK,
     DiscoveryIO,
@@ -41,13 +42,12 @@ from truecoder.execution.policy import PolicyConfig
 from truecoder.execution.registry import ExecutionRegistry
 from truecoder.execution.runner import ExecutionRunner
 from truecoder.execution.service import ExecutionService
-from truecoder.tools.builtin.shell import DEFAULT_SHELL_LIMITS
 
 
 def default_policy_config() -> PolicyConfig:
     return PolicyConfig(
         version="truecoder-execution-v1",
-        limit_ceiling=DEFAULT_SHELL_LIMITS,
+        limit_ceiling=DEFAULT_EXECUTION_LIMITS,
         minimum_isolation="enforced",
         limit_enforcement="enforced",
         unknown_risk=RiskLevel.MEDIUM,

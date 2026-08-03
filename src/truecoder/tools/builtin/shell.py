@@ -7,6 +7,7 @@ from typing import Literal, Protocol, TypedDict
 from pydantic import Field, model_validator
 
 from truecoder.execution.cancellation import CancellationSource
+from truecoder.execution.defaults import DEFAULT_EXECUTION_LIMITS
 from truecoder.execution.errors import ExecutionInfrastructureError
 from truecoder.execution.models import (
     ExecutionContext,
@@ -22,15 +23,7 @@ from truecoder.tools.base import (
 )
 from truecoder.tools.context import ToolInvocationContext
 
-DEFAULT_SHELL_LIMITS = ExecutionLimits(
-    timeout_seconds=120,
-    max_output_bytes=1024 * 1024,
-    max_return_bytes=64 * 1024,
-    memory_bytes=None,
-    cpu_seconds=None,
-    max_processes=None,
-    termination_grace_seconds=2,
-)
+DEFAULT_SHELL_LIMITS = DEFAULT_EXECUTION_LIMITS
 
 
 @dataclass(frozen=True, slots=True)

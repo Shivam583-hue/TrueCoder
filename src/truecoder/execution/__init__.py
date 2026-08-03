@@ -24,6 +24,7 @@ from truecoder.execution.cancellation import (
     CancellationToken,
 )
 from truecoder.execution.context import ExecutionContextFactory, workspace_id_for
+from truecoder.execution.defaults import DEFAULT_EXECUTION_LIMITS
 from truecoder.execution.registry import (
     ActiveExecution,
     CancellationOutcome,
@@ -32,6 +33,7 @@ from truecoder.execution.registry import (
 from truecoder.execution.service import ExecutionService
 
 __all__ = [
+    "DEFAULT_EXECUTION_LIMITS",
     "ActiveExecution",
     "ApprovalDecision",
     "ApprovalGrantStore",
