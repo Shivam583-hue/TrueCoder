@@ -36,6 +36,7 @@ from truecoder.tools.builtin.shell import (
     ShellArguments,
     ShellDefaults,
     ShellOutput,
+    ShellTool,
     build_shell_request,
     format_shell_result,
 )
@@ -75,6 +76,7 @@ __all__ = [
     "ShellArguments",
     "ShellDefaults",
     "ShellOutput",
+    "ShellTool",
     "WriteFileArguments",
     "WriteFileOutput",
     "WriteFileTool",

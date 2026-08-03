@@ -2,18 +2,82 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import ValidationError
 
+from truecoder.execution.cancellation import CancellationSource
+from truecoder.execution.context import ExecutionContextFactory
+from truecoder.execution.errors import AuditUnavailableError
 from truecoder.execution.models import ExecutionLimits, ExecutionResult
-from truecoder.tools.base import ToolExecutionError
+from truecoder.tools import (
+    ToolCall,
+    ToolExecutor,
+    ToolInvocationContext,
+    ToolRegistry,
+    ToolResultStatus,
+)
+from truecoder.tools.base import ToolApproval, ToolExecutionError
 from truecoder.tools.builtin.shell import (
     ShellArguments,
     ShellDefaults,
+    ShellTool,
     build_shell_request,
     format_shell_result,
 )
+
+
+class RecordingService:
+    def __init__(
+        self,
+        result: ExecutionResult | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.result = result
+        self.error = error
+        self.calls = []
+
+    async def execute(
+        self,
+        request,
+        context,
+        *,
+        cancellation_source,
+    ):
+        self.calls.append((request, context, cancellation_source))
+        if self.error is not None:
+            raise self.error
+        assert self.result is not None
+        return self.result
+
+
+def execution_result(status: str = "completed") -> ExecutionResult:
+    backend = None if status == "denied" else "posix"
+    exit_code = 7 if status == "failed" else 0 if status == "completed" else None
+    reason = (
+        "timeout"
+        if status == "timed_out"
+        else "cancellation"
+        if status == "cancelled"
+        else "memory_limit"
+        if status == "limit_exceeded"
+        else None
+    )
+    return ExecutionResult(
+        status=status,  # type: ignore[arg-type]
+        exit_code=exit_code,
+        stdout="out",
+        stderr="err",
+        duration_seconds=1.23456,
+        stdout_bytes=10,
+        stderr_bytes=5,
+        stdout_truncated=True,
+        stderr_truncated=False,
+        termination_reason=reason,  # type: ignore[arg-type]
+        backend=backend,
+        audit_id=f"run-{status}",
+    )
 
 
 class ShellArgumentsTests(unittest.TestCase):
@@ -146,33 +210,6 @@ class ShellRequestTests(unittest.TestCase):
 
 
 class ShellResultTests(unittest.TestCase):
-    def result(self, status: str) -> ExecutionResult:
-        backend = None if status == "denied" else "posix"
-        exit_code = 7 if status == "failed" else 0 if status == "completed" else None
-        reason = (
-            "timeout"
-            if status == "timed_out"
-            else "cancellation"
-            if status == "cancelled"
-            else "memory_limit"
-            if status == "limit_exceeded"
-            else None
-        )
-        return ExecutionResult(
-            status=status,  # type: ignore[arg-type]
-            exit_code=exit_code,
-            stdout="out",
-            stderr="err",
-            duration_seconds=1.23456,
-            stdout_bytes=10,
-            stderr_bytes=5,
-            stdout_truncated=True,
-            stderr_truncated=False,
-            termination_reason=reason,  # type: ignore[arg-type]
-            backend=backend,
-            audit_id=f"run-{status}",
-        )
-
     def test_formats_every_terminal_status_without_losing_fields(self):
         for status in (
             "completed",
@@ -184,7 +221,7 @@ class ShellResultTests(unittest.TestCase):
             "failed_to_start",
         ):
             with self.subTest(status=status):
-                output = format_shell_result(self.result(status))
+                output = format_shell_result(execution_result(status))
                 self.assertEqual(output["status"], status)
                 self.assertEqual(output["duration_seconds"], 1.235)
                 self.assertEqual(output["stdout"], "out")
@@ -192,6 +229,89 @@ class ShellResultTests(unittest.TestCase):
                 self.assertEqual(output["stdout_bytes"], 10)
                 self.assertTrue(output["stdout_truncated"])
                 self.assertEqual(output["audit_id"], f"run-{status}")
+
+
+class ShellToolTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.invocation = ToolInvocationContext(
+            execution=ExecutionContextFactory(
+                execution_id_factory=lambda: "exec-shell",
+                clock=lambda: datetime(2026, 8, 3, tzinfo=UTC),
+            ).create(
+                tool_call_id="call-shell",
+                session_id="session-shell",
+                turn_id="turn-shell",
+                project_root=self.root,
+            ),
+            cancellation_source=CancellationSource(),
+        )
+
+    async def test_calls_the_service_once_with_the_exact_invocation(self):
+        service = RecordingService(execution_result())
+        tool = ShellTool(self.root, service)
+
+        output = await tool.run(
+            ShellArguments(argv=("python", "-V")),
+            self.invocation,
+        )
+
+        self.assertEqual(output["status"], "completed")
+        self.assertEqual(len(service.calls), 1)
+        request, context, source = service.calls[0]
+        self.assertEqual(request.argv, ("python", "-V"))
+        self.assertIs(context, self.invocation.execution)
+        self.assertIs(source, self.invocation.cancellation_source)
+        self.assertIs(tool.approval, ToolApproval.NOT_REQUIRED)
+
+    async def test_nonzero_exit_is_successful_tool_data(self):
+        service = RecordingService(execution_result("failed"))
+        registry = ToolRegistry()
+        registry.register(ShellTool(self.root, service))
+
+        result = await ToolExecutor(registry).execute(
+            ToolCall(
+                "call-shell",
+                "shell",
+                '{"argv":["python","-c","raise SystemExit(7)"]}',
+            ),
+            invocation=self.invocation,
+        )
+
+        self.assertEqual(result.status, ToolResultStatus.SUCCESS)
+        self.assertEqual(result.output["status"], "failed")
+        self.assertEqual(result.output["exit_code"], 7)
+
+    async def test_infrastructure_failure_is_sanitized(self):
+        service = RecordingService(
+            error=AuditUnavailableError(
+                "private audit database path and native error",
+                execution_id="exec-shell",
+                operation="admit",
+            )
+        )
+        tool = ShellTool(self.root, service)
+
+        with self.assertRaises(ToolExecutionError) as caught:
+            await tool.run(
+                ShellArguments(argv=("python", "-V")),
+                self.invocation,
+            )
+
+        self.assertEqual(caught.exception.code, "shell_infrastructure_error")
+        self.assertNotIn("private", caught.exception.message)
+
+    async def test_missing_invocation_never_calls_the_service(self):
+        service = RecordingService(execution_result())
+        tool = ShellTool(self.root, service)
+
+        with self.assertRaises(ToolExecutionError) as caught:
+            await tool.run(ShellArguments(argv=("python", "-V")))
+
+        self.assertEqual(caught.exception.code, "missing_invocation_context")
+        self.assertEqual(service.calls, [])
 
 
 if __name__ == "__main__":

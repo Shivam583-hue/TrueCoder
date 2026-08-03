@@ -2,16 +2,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal, Protocol, TypedDict
 
 from pydantic import Field, model_validator
 
+from truecoder.execution.cancellation import CancellationSource
+from truecoder.execution.errors import ExecutionInfrastructureError
 from truecoder.execution.models import (
+    ExecutionContext,
     ExecutionLimits,
     ExecutionRequest,
     ExecutionResult,
 )
-from truecoder.tools.base import ToolArguments, ToolExecutionError
+from truecoder.tools.base import (
+    BaseTool,
+    ToolApproval,
+    ToolArguments,
+    ToolExecutionError,
+)
+from truecoder.tools.context import ToolInvocationContext
 
 DEFAULT_SHELL_LIMITS = ExecutionLimits(
     timeout_seconds=120,
@@ -106,6 +115,77 @@ class ShellOutput(TypedDict):
     termination_reason: str | None
     backend: str | None
     audit_id: str
+
+
+class ShellExecutionService(Protocol):
+    async def execute(
+        self,
+        request: ExecutionRequest,
+        context: ExecutionContext,
+        *,
+        cancellation_source: CancellationSource,
+    ) -> ExecutionResult: ...
+
+
+class ShellTool(BaseTool[ShellArguments]):
+    name = "shell"
+    description = (
+        "Run a bounded command through TrueCoder's execution service. Prefer "
+        "mode='exec' with argv for ordinary commands; use mode='shell' only "
+        "when shell syntax is required."
+    )
+    arguments_type = ShellArguments
+    approval = ToolApproval.NOT_REQUIRED
+
+    def __init__(
+        self,
+        project_root: Path,
+        service: ShellExecutionService,
+        defaults: ShellDefaults | None = None,
+    ) -> None:
+        if not isinstance(project_root, Path):
+            raise TypeError("project_root must be a pathlib.Path")
+        try:
+            resolved_root = project_root.resolve(strict=True)
+        except OSError as error:
+            raise ValueError("project_root must exist and be accessible") from error
+        if not resolved_root.is_dir():
+            raise ValueError("project_root must be a directory")
+        if not callable(getattr(service, "execute", None)):
+            raise TypeError("service must provide an async execute method")
+        if defaults is not None and not isinstance(defaults, ShellDefaults):
+            raise TypeError("defaults must be ShellDefaults")
+        self._project_root = resolved_root
+        self._service = service
+        self._defaults = defaults or ShellDefaults()
+
+    async def run(
+        self,
+        arguments: ShellArguments,
+        invocation: ToolInvocationContext | None = None,
+    ) -> ShellOutput:
+        if invocation is None:
+            raise ToolExecutionError(
+                "Shell execution requires an invocation context.",
+                code="missing_invocation_context",
+            )
+        request = build_shell_request(
+            arguments,
+            project_root=self._project_root,
+            defaults=self._defaults,
+        )
+        try:
+            result = await self._service.execute(
+                request,
+                invocation.execution,
+                cancellation_source=invocation.cancellation_source,
+            )
+        except ExecutionInfrastructureError as error:
+            raise ToolExecutionError(
+                "Shell execution infrastructure could not complete safely.",
+                code="shell_infrastructure_error",
+            ) from error
+        return format_shell_result(result)
 
 
 def build_shell_request(
