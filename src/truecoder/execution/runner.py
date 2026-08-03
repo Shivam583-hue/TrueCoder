@@ -13,7 +13,10 @@ from truecoder.execution.audit.models import (
     TerminalOutcome,
 )
 from truecoder.execution.audit.service import AuditService
-from truecoder.execution.backends.base import ExecutionHandle
+from truecoder.execution.backends.base import (
+    BackendStartContext,
+    ExecutionHandle,
+)
 from truecoder.execution.backends.models import BackendExit, CleanupResult
 from truecoder.execution.backends.registry import BackendRegistry
 from truecoder.execution.cancellation import (
@@ -507,7 +510,10 @@ class ExecutionRunner:
             execution = await backend.start(
                 prepared,
                 prepared.request,
-                context,
+                BackendStartContext(
+                    execution=context,
+                    audit_run_id=handle.run_id,
+                ),
                 cancellation,
                 attach,
             )

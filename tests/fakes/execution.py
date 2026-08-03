@@ -18,6 +18,7 @@ from truecoder.execution.audit.models import (
     AuditRunStart,
     BackendResourceIdentifier,
 )
+from truecoder.execution.backends.base import BackendStartContext
 from truecoder.execution.backends.models import (
     BackendDescriptor,
     BackendExit,
@@ -25,7 +26,6 @@ from truecoder.execution.backends.models import (
     CleanupResult,
 )
 from truecoder.execution.models import (
-    ExecutionContext,
     ExecutionLifecycleEvent,
     NativeDiagnostic,
 )
@@ -100,7 +100,7 @@ class FakeClock:
 class ScriptedHandle:
     def __init__(
         self,
-        context: ExecutionContext,
+        context: BackendStartContext,
         *,
         chunks: tuple[BackendOutputChunk, ...] = (),
         exit_code: int | None = 0,

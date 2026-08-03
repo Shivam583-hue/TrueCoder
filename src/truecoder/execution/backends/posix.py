@@ -26,7 +26,7 @@ from ..models import (
     TerminationReason,
 )
 from ..preparation import PreparedExecution
-from .base import BackendResourceRegistrar
+from .base import BackendResourceRegistrar, BackendStartContext
 from .models import (
     MAX_BACKEND_OUTPUT_CHUNK_BYTES,
     BackendDescriptor,
@@ -416,7 +416,7 @@ class PosixBackend:
         self,
         prepared: PreparedExecution,
         request: ExecutionRequest,
-        context: ExecutionContext,
+        context: BackendStartContext,
         cancellation: CancellationToken,
         register_resource: BackendResourceRegistrar,
     ) -> PosixExecutionHandle:
@@ -427,8 +427,9 @@ class PosixBackend:
             cancellation,
             register_resource,
         )
+        execution = context.execution
         cancellation.raise_if_cancelled()
-        self._validate_host_and_cwd(request, context)
+        self._validate_host_and_cwd(request, execution)
         environment = prepared.environment
         if not environment.valid:
             names = ", ".join(
@@ -436,7 +437,7 @@ class PosixBackend:
             )
             raise EnvironmentConstructionError(
                 f"child environment was rejected: {names}",
-                execution_id=context.execution_id,
+                execution_id=execution.execution_id,
                 backend="posix",
                 operation="construct_environment",
             )
@@ -444,7 +445,7 @@ class PosixBackend:
         ownership_token = secrets.token_hex(32)
         cgroup = create_execution_cgroup(
             self._cgroup_v2,
-            execution_id=context.execution_id,
+            execution_id=execution.execution_id,
             ownership_token=ownership_token,
             limits=request.limits,
         )
@@ -453,7 +454,7 @@ class PosixBackend:
             selected,
             environment,
             self._shells,
-            execution_id=context.execution_id,
+            execution_id=execution.execution_id,
             cgroup_path=cgroup.path if cgroup is not None else None,
             cgroup_controllers=(
                 cgroup.controllers if cgroup is not None else ()
@@ -472,12 +473,12 @@ class PosixBackend:
             if resources.process is None or supervisor_pid != resources.process.pid:
                 raise BackendStartError(
                     "POSIX supervisor reported the wrong process identity",
-                    execution_id=context.execution_id,
+                    execution_id=execution.execution_id,
                     backend="posix",
                     operation="start",
                 )
             resource = create_posix_resource(
-                context,
+                execution,
                 supervisor_pid=supervisor_pid,
                 project_pgid=project_pgid,
                 ownership_token=ownership_token,
@@ -502,12 +503,12 @@ class PosixBackend:
             if int(started.payload["project_pid"]) != project_pgid:
                 raise BackendStartError(
                     "POSIX supervisor started the wrong project leader",
-                    execution_id=context.execution_id,
+                    execution_id=execution.execution_id,
                     backend="posix",
                     operation="start",
                 )
             return resources.transfer(
-                context=context,
+                context=execution,
                 resource=resource,
                 project_pgid=project_pgid,
             )
@@ -521,7 +522,7 @@ class PosixBackend:
             await resources.abort()
             raise BackendStartError(
                 "failed to start the POSIX execution backend",
-                execution_id=context.execution_id,
+                execution_id=execution.execution_id,
                 backend="posix",
                 operation="start",
             ) from exc
@@ -783,8 +784,8 @@ def _validate_start_inputs(
         raise TypeError("prepared must be PreparedExecution")
     if not isinstance(request, ExecutionRequest):
         raise TypeError("request must be ExecutionRequest")
-    if not isinstance(context, ExecutionContext):
-        raise TypeError("context must be ExecutionContext")
+    if not isinstance(context, BackendStartContext):
+        raise TypeError("context must be BackendStartContext")
     if not isinstance(cancellation, CancellationToken):
         raise TypeError("cancellation must be CancellationToken")
     if not callable(register_resource):

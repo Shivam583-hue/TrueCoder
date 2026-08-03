@@ -22,6 +22,7 @@ from tests.integration.execution.backends.test_posix_backend import (
 from truecoder.execution.audit.models import BackendResourceIdentifier
 from truecoder.execution.backends.base import (
     BackendResourceRegistrar,
+    BackendStartContext,
     ExecutionBackend,
     ExecutionHandle,
 )
@@ -36,7 +37,6 @@ from truecoder.execution.cancellation import (
     CancellationToken,
 )
 from truecoder.execution.models import (
-    ExecutionContext,
     ExecutionRequest,
     TerminationReason,
 )
@@ -107,7 +107,7 @@ class TrackingBackend:
         self,
         prepared: PreparedExecution,
         request: ExecutionRequest,
-        context: ExecutionContext,
+        context: BackendStartContext,
         cancellation: CancellationToken,
         register_resource: BackendResourceRegistrar,
     ) -> ExecutionHandle:

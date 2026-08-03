@@ -5,11 +5,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from truecoder.execution.audit.models import BackendResourceIdentifier
-from truecoder.execution.backends.base import ExecutionBackend, ExecutionHandle
+from truecoder.execution.backends.base import (
+    BackendStartContext,
+    ExecutionBackend,
+    ExecutionHandle,
+)
 from truecoder.execution.backends.models import BackendExit, BackendOutputChunk
 from truecoder.execution.cancellation import CancellationRequested, CancellationToken
 from truecoder.execution.errors import ExecutionInfrastructureError
-from truecoder.execution.models import ExecutionContext, ExecutionRequest
+from truecoder.execution.models import ExecutionRequest
 from truecoder.execution.preparation import PreparedExecution
 
 
@@ -30,7 +34,7 @@ class BackendContractCase:
     backend: ExecutionBackend
     prepared: PreparedExecution
     request: ExecutionRequest
-    context: ExecutionContext
+    context: BackendStartContext
     cancellation: CancellationToken
     tracker: BackendContractTracker
     expected_output: tuple[BackendOutputChunk, ...]

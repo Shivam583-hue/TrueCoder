@@ -11,7 +11,10 @@ from tests.contract.execution.backend_contract import (
     BackendContractTracker,
 )
 from truecoder.execution.audit.models import BackendResourceIdentifier
-from truecoder.execution.backends.base import ExecutionHandle
+from truecoder.execution.backends.base import (
+    BackendStartContext,
+    ExecutionHandle,
+)
 from truecoder.execution.backends.models import (
     BackendDescriptor,
     BackendExit,
@@ -42,7 +45,7 @@ class FakeExecutionHandle:
     def __init__(
         self,
         *,
-        context: ExecutionContext,
+        context: BackendStartContext,
         tracker: BackendContractTracker,
         output: tuple[BackendOutputChunk, ...],
         exit_code: int,
@@ -157,7 +160,7 @@ class FakeBackend:
         self,
         prepared: PreparedExecution,
         request: ExecutionRequest,
-        context: ExecutionContext,
+        context: BackendStartContext,
         cancellation: CancellationToken,
         register_resource: Callable[
             [BackendResourceIdentifier],
@@ -316,7 +319,14 @@ def _prepared(
     )
 
 
-def _context() -> ExecutionContext:
+def _context() -> BackendStartContext:
+    return BackendStartContext(
+        execution=_execution(),
+        audit_run_id="run_contract",
+    )
+
+
+def _execution() -> ExecutionContext:
     return ExecutionContext(
         execution_id="exec_contract",
         tool_call_id="call_contract",

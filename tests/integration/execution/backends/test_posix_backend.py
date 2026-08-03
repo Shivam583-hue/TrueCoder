@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from truecoder.execution.audit.models import BackendResourceIdentifier
+from truecoder.execution.backends.base import BackendStartContext
 from truecoder.execution.backends.models import (
     BackendDescriptor,
     DiscoveredProgram,
@@ -113,7 +114,14 @@ def _prepared(request: ExecutionRequest) -> PreparedExecution:
     )
 
 
-def _context(execution_id: str) -> ExecutionContext:
+def _context(execution_id: str) -> BackendStartContext:
+    return BackendStartContext(
+        execution=_execution(execution_id),
+        audit_run_id=f"run_{execution_id}",
+    )
+
+
+def _execution(execution_id: str) -> ExecutionContext:
     return ExecutionContext(
         execution_id=execution_id,
         tool_call_id=f"call_{execution_id}",
