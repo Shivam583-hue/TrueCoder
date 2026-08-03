@@ -10,6 +10,7 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 
+from truecoder.execution.audit.recovery import RecoveryDisposition
 from truecoder.execution.backends.base import BackendStartContext
 from truecoder.execution.backends.container import ContainerBackend
 from truecoder.execution.backends.container_models import (
@@ -20,6 +21,7 @@ from truecoder.execution.backends.container_plan import (
     ContainerLaunchConfig,
     load_image_lock,
 )
+from truecoder.execution.backends.container_recovery import ContainerRecoveryHandler
 from truecoder.execution.backends.container_runtime import DockerRuntime
 from truecoder.execution.backends.models import BackendDescriptor, ContainerRuntimeInfo
 from truecoder.execution.cancellation import CancellationSource
@@ -525,6 +527,57 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
             await handle.cleanup()
 
         self.assertEqual(states, ["created"])
+
+    async def test_recovery_removes_only_the_exact_labeled_container(self):
+        execution_request = self.request(
+            "trap '' TERM; while true; do sleep 0.2; done",
+        )
+        prepared = PreparedExecution(
+            request=execution_request,
+            backend=self.descriptor,
+            environment=construct_environment(
+                platform="posix",
+                inherited={},
+                requested=(),
+            ),
+            resolved_shell="posix",
+        )
+        context = BackendStartContext(
+            execution=ExecutionContext(
+                execution_id="exec-recovery",
+                tool_call_id="call-recovery",
+                session_id="session-sandbox",
+                turn_id="turn-sandbox",
+                workspace_id="workspace-sandbox",
+                project_root=self.workspace,
+                launched_at_utc=datetime.now(UTC),
+            ),
+            audit_run_id="run_recovery",
+        )
+
+        async def register(resource) -> None:
+            del resource
+
+        handle = await self.backend.start(
+            prepared,
+            execution_request,
+            context,
+            CancellationSource().token,
+            register,
+        )
+        container_id = handle.container_id
+        drain = asyncio.create_task(_drain(handle))
+
+        disposition = await ContainerRecoveryHandler(
+            self.runtime,
+            host_id="sandbox-host",
+        ).recover(handle.resource)
+
+        self.assertIs(disposition, RecoveryDisposition.TERMINATED)
+        await handle.wait()
+        await drain
+        self.assertTrue((await handle.cleanup()).complete)
+        self.assertFalse(_container_exists(self.executable, container_id))
 
 
 async def _drain(handle) -> None:

@@ -1,4 +1,5 @@
 from .base import BackendResourceRegistrar, ExecutionBackend, ExecutionHandle
+from .container_recovery import ContainerRecoveryHandler
 from .models import (
     BackendCompatibility,
     BackendDescriptor,
@@ -24,6 +25,7 @@ __all__ = [
     "BackendResourceRegistrar",
     "CgroupV2Info",
     "CleanupResult",
+    "ContainerRecoveryHandler",
     "ContainerRuntimeInfo",
     "DiscoveredProgram",
     "DiscoverySnapshot",
