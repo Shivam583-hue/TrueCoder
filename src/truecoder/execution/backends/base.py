@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Protocol, TypeAlias, runtime_checkable
 
+from truecoder.execution.preparation import PreparedExecution
+
 from ..audit.models import BackendResourceIdentifier
 from ..cancellation import CancellationToken
 from ..models import (
@@ -51,6 +53,7 @@ class ExecutionBackend(Protocol):
 
     async def start(
         self,
+        prepared: PreparedExecution,
         request: ExecutionRequest,
         context: ExecutionContext,
         cancellation: CancellationToken,
