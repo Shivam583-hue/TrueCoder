@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from enum import Enum
 
+from truecoder.execution.audit.models import AuditRunHandle
 from truecoder.execution.cancellation import CancellationSource
 from truecoder.execution.errors import InvalidExecutionStateError
 from truecoder.execution.models import ExecutionContext
@@ -20,11 +21,18 @@ class ActiveExecution:
     context: ExecutionContext
     cancellation_source: CancellationSource
 
+    audit_handle: AuditRunHandle | None = None
+
     def __post_init__(self) -> None:
         if not isinstance(self.context, ExecutionContext):
             raise TypeError("context must be an ExecutionContext")
         if not isinstance(self.cancellation_source, CancellationSource):
             raise TypeError("cancellation_source must be a CancellationSource")
+        if self.audit_handle is not None and not isinstance(
+            self.audit_handle,
+            AuditRunHandle,
+        ):
+            raise TypeError("audit_handle must be an AuditRunHandle or None")
 
 
 class ExecutionRegistry:

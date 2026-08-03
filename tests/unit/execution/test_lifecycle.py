@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
-from itertools import combinations, permutations
+from itertools import combinations, pairwise, permutations
 
 from truecoder.execution.errors import InvalidExecutionStateError
 from truecoder.execution.lifecycle import (
@@ -238,7 +238,7 @@ class TerminalPriorityTests(unittest.TestCase):
         self.assertEqual(sorted(TERMINAL_PRIORITY), sorted(STATUS_BY_SOURCE))
 
     def test_each_adjacent_priority_pair_resolves_in_order(self):
-        for higher, lower in zip(TERMINAL_PRIORITY, TERMINAL_PRIORITY[1:]):
+        for higher, lower in pairwise(TERMINAL_PRIORITY):
             with self.subTest(higher=higher, lower=lower):
                 # The loser is observed first, so only priority can decide.
                 winner = claim(higher, observed_at=9.0)

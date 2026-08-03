@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from datetime import datetime
+from contextlib import suppress
 from typing import Final, TypeAlias
 
 from truecoder.execution.audit.models import (
     AuditEventType,
-    AuditFinalization,
     AuditRunHandle,
     AuditRunRecord,
     BackendResourceIdentifier,
-    OutputEvidence,
     TerminalOutcome,
 )
 from truecoder.execution.audit.service import AuditService
@@ -25,11 +21,20 @@ from truecoder.execution.cancellation import (
     CancellationSource,
     CancellationToken,
 )
+from truecoder.execution.clock import Clock, SystemClock, validate_clock
 from truecoder.execution.errors import (
     AuditPersistenceError,
     AuditUnavailableError,
+    BackendCleanupError,
+    BackendOperationError,
     BackendStartError,
     InvalidExecutionStateError,
+)
+from truecoder.execution.events import (
+    DEFAULT_EVENT_CAPACITY,
+    ExecutionEventSink,
+    LifecyclePublisher,
+    NullEventSink,
 )
 from truecoder.execution.lifecycle import (
     LifecycleState,
@@ -44,62 +49,45 @@ from truecoder.execution.models import (
     ExecutionRequest,
     ExecutionResult,
     ExecutionStatus,
+    NativeDiagnostic,
     PolicyDecision,
     TerminationReason,
 )
-from truecoder.execution.output import CollectedOutput, OutputCollector, StreamOutput
+from truecoder.execution.output import CollectedOutput, OutputCollector
 from truecoder.execution.preparation import PreparedExecution
 from truecoder.execution.registry import ActiveExecution, ExecutionRegistry
+from truecoder.execution.results import (
+    TERMINAL_STAGE_BY_STATUS,
+    TerminalMaterial,
+    build_execution_result,
+    build_finalization,
+    build_output_evidence,
+    claim_for_cancellation,
+    claim_for_exit,
+    claim_for_output_limit,
+    claim_for_timeout,
+    empty_output,
+    public_status,
+)
 
 ApprovalGate: TypeAlias = Callable[
     [PreparedExecution, ExecutionContext],
     Awaitable[bool],
 ]
-Monotonic: TypeAlias = Callable[[], float]
 
-MAX_AUDIT_PREVIEW_BYTES: Final = 128 * 1024
+DEFAULT_SAFETY_DEADLINE_SECONDS: Final = 2.0
 
-_STATUS_BY_OUTCOME: Final[dict[TerminalOutcome, ExecutionStatus]] = {
-    TerminalOutcome.COMPLETED: "completed",
-    TerminalOutcome.FAILED: "failed",
-    TerminalOutcome.TIMED_OUT: "timed_out",
-    TerminalOutcome.CANCELLED: "cancelled",
-    TerminalOutcome.LIMIT_EXCEEDED: "limit_exceeded",
-    TerminalOutcome.POLICY_DENIED: "denied",
-    TerminalOutcome.APPROVAL_REJECTED: "denied",
-    TerminalOutcome.FAILED_TO_START: "failed_to_start",
+_EVENT_BY_SOURCE: Final[dict[str, AuditEventType]] = {
+    "output_limit": AuditEventType.LIMIT_REACHED,
+    "resource_limit": AuditEventType.LIMIT_REACHED,
+    "cancellation": AuditEventType.CANCELLATION_REQUESTED,
+    "timeout": AuditEventType.TIMEOUT_REACHED,
 }
 
-_OUTCOME_BY_STATUS: Final[dict[ExecutionStatus, TerminalOutcome]] = {
-    "completed": TerminalOutcome.COMPLETED,
-    "failed": TerminalOutcome.FAILED,
-    "timed_out": TerminalOutcome.TIMED_OUT,
-    "cancelled": TerminalOutcome.CANCELLED,
-    "limit_exceeded": TerminalOutcome.LIMIT_EXCEEDED,
-    "denied": TerminalOutcome.POLICY_DENIED,
-    "failed_to_start": TerminalOutcome.FAILED_TO_START,
-}
 
-# Outcomes whose audit rows forbid an exit code even though the backend
-# eventually reports one.
-_TERMINATED_OUTCOMES: Final = frozenset(
-    {
-        TerminalOutcome.TIMED_OUT,
-        TerminalOutcome.CANCELLED,
-        TerminalOutcome.LIMIT_EXCEEDED,
-    }
-)
-
-_REASON_BEARING_STATUSES: Final = frozenset(
-    {"timed_out", "cancelled", "limit_exceeded"}
-)
-
-_LIMIT_REASONS: Final[dict[str, TerminationReason]] = {
-    "output_limit": "output_limit",
-    "memory_limit": "memory_limit",
-    "cpu_limit": "cpu_limit",
-    "process_limit": "process_limit",
-}
+class PreviewSink:
+    async def publish_bounded(self, text: str) -> None:
+        del text
 
 
 class _EvidenceLost(Exception):
@@ -109,176 +97,8 @@ class _EvidenceLost(Exception):
         super().__init__(boundary)
 
 
-@dataclass(frozen=True, slots=True)
-class TerminalMaterial:
-    claim: TerminalClaim
-    backend_exit: BackendExit | None
-    output: CollectedOutput
-    audit_output: OutputEvidence
-    cleanup: CleanupResult | None
-    started_at_monotonic: float | None
-    finished_at_monotonic: float
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.claim, TerminalClaim):
-            raise TypeError("claim must be a TerminalClaim")
-        if self.backend_exit is not None and not isinstance(
-            self.backend_exit,
-            BackendExit,
-        ):
-            raise TypeError("backend_exit must be a BackendExit or None")
-        if not isinstance(self.output, CollectedOutput):
-            raise TypeError("output must be a CollectedOutput")
-        if not isinstance(self.audit_output, OutputEvidence):
-            raise TypeError("audit_output must be an OutputEvidence")
-        if self.cleanup is not None and not isinstance(self.cleanup, CleanupResult):
-            raise TypeError("cleanup must be a CleanupResult or None")
-
-        for name, value in (
-            ("started_at_monotonic", self.started_at_monotonic),
-            ("finished_at_monotonic", self.finished_at_monotonic),
-        ):
-            if value is None:
-                continue
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise TypeError(f"{name} must be a number")
-
-        if self.finished_at_monotonic is None:
-            raise TypeError("finished_at_monotonic is required")
-
-        if (
-            self.started_at_monotonic is not None
-            and self.finished_at_monotonic < self.started_at_monotonic
-        ):
-            raise ValueError("finished_at_monotonic must not precede the start")
-
-        if self.started_at_monotonic is None and self.backend_exit is not None:
-            raise ValueError("a run that never started cannot have a backend exit")
-
-    @property
-    def command_started(self) -> bool:
-        return self.started_at_monotonic is not None
-
-    @property
-    def duration_seconds(self) -> float:
-        if self.started_at_monotonic is None:
-            return 0.0
-        return max(0.0, self.finished_at_monotonic - self.started_at_monotonic)
-
-
-def empty_output() -> CollectedOutput:
-    empty = StreamOutput(text="", byte_count=0, sha256=None, truncated=False)
-    return CollectedOutput(
-        stdout=empty,
-        stderr=empty,
-        complete=True,
-        output_limit_exceeded=False,
-        retained_bytes=0,
-    )
-
-
-def build_output_evidence(
-    output: CollectedOutput,
-    *,
-    preview_budget: int = MAX_AUDIT_PREVIEW_BYTES,
-) -> OutputEvidence:
-    if not isinstance(output, CollectedOutput):
-        raise TypeError("output must be a CollectedOutput")
-    if isinstance(preview_budget, bool) or not isinstance(preview_budget, int):
-        raise TypeError("preview_budget must be an integer")
-    if preview_budget < 0:
-        raise ValueError("preview_budget must not be negative")
-
-    stdout_preview, stdout_clipped = _bounded_preview(
-        output.stdout.text,
-        preview_budget,
-    )
-    stderr_preview, stderr_clipped = _bounded_preview(
-        output.stderr.text,
-        preview_budget,
-    )
-    return OutputEvidence(
-        stdout_sha256=output.stdout.sha256,
-        stderr_sha256=output.stderr.sha256,
-        stdout_bytes=output.stdout.byte_count,
-        stderr_bytes=output.stderr.byte_count,
-        stdout_preview=stdout_preview,
-        stderr_preview=stderr_preview,
-        stdout_truncated=output.stdout.truncated or stdout_clipped,
-        stderr_truncated=output.stderr.truncated or stderr_clipped,
-        complete=output.complete,
-    )
-
-
-def build_finalization(
-    run_id: str,
-    material: TerminalMaterial,
-    *,
-    finalized_at: datetime,
-    resource: BackendResourceIdentifier | None = None,
-    detail: str | None = None,
-) -> AuditFinalization:
-    if not isinstance(material, TerminalMaterial):
-        raise TypeError("material must be a TerminalMaterial")
-
-    outcome = _OUTCOME_BY_STATUS[material.claim.status]
-    underlying: TerminalOutcome | None = None
-    if material.cleanup is not None and not material.cleanup.complete:
-        underlying = outcome
-        outcome = TerminalOutcome.CLEANUP_FAILED
-
-    exit_code = _finalization_exit_code(material, underlying or outcome)
-    return AuditFinalization(
-        run_id=run_id,
-        finalized_at=finalized_at,
-        outcome=outcome,
-        command_started=material.command_started,
-        exit_code=exit_code,
-        output=material.audit_output if material.command_started else None,
-        resource=resource,
-        underlying_outcome=underlying,
-        detail=detail,
-    )
-
-
-def build_execution_result(
-    record: AuditRunRecord,
-    material: TerminalMaterial,
-    *,
-    backend: BackendName | None,
-) -> ExecutionResult:
-    if not isinstance(record, AuditRunRecord):
-        raise TypeError("record must be an AuditRunRecord")
-    if not isinstance(material, TerminalMaterial):
-        raise TypeError("material must be a TerminalMaterial")
-    if record.finalization is None:
-        raise ValueError("a terminal audit record requires a finalization")
-
-    finalization = record.finalization
-    outcome = finalization.outcome
-    if outcome is TerminalOutcome.CLEANUP_FAILED:
-        assert finalization.underlying_outcome is not None
-        outcome = finalization.underlying_outcome
-
-    status = _STATUS_BY_OUTCOME.get(outcome)
-    if status is None:
-        raise ValueError(f"{outcome.value} cannot become a public execution result")
-
-    reason = material.claim.reason if status in _REASON_BEARING_STATUSES else None
-    return ExecutionResult(
-        status=status,
-        exit_code=_result_exit_code(status, material),
-        stdout=material.output.stdout.text,
-        stderr=material.output.stderr.text,
-        duration_seconds=material.duration_seconds,
-        stdout_bytes=material.output.stdout.byte_count,
-        stderr_bytes=material.output.stderr.byte_count,
-        stdout_truncated=material.output.stdout.truncated,
-        stderr_truncated=material.output.stderr.truncated,
-        termination_reason=reason,
-        backend=backend if status != "denied" else None,
-        audit_id=record.run_id,
-    )
+class _OutputPumpFailed(Exception):
+    pass
 
 
 class ExecutionRunner:
@@ -289,7 +109,11 @@ class ExecutionRunner:
         *,
         registry: ExecutionRegistry | None = None,
         approval_gate: ApprovalGate | None = None,
-        monotonic: Monotonic = time.monotonic,
+        clock: Clock | None = None,
+        event_sink: ExecutionEventSink | None = None,
+        preview_sink: PreviewSink | None = None,
+        event_capacity: int = DEFAULT_EVENT_CAPACITY,
+        safety_deadline_seconds: float = DEFAULT_SAFETY_DEADLINE_SECONDS,
     ) -> None:
         if not isinstance(audit, AuditService):
             raise TypeError("audit must be an AuditService")
@@ -297,14 +121,23 @@ class ExecutionRunner:
             raise TypeError("backends must be a BackendRegistry")
         if approval_gate is not None and not callable(approval_gate):
             raise TypeError("approval_gate must be callable")
-        if not callable(monotonic):
-            raise TypeError("monotonic must be callable")
+        if isinstance(safety_deadline_seconds, bool) or not isinstance(
+            safety_deadline_seconds,
+            (int, float),
+        ):
+            raise TypeError("safety_deadline_seconds must be a number")
+        if safety_deadline_seconds <= 0:
+            raise ValueError("safety_deadline_seconds must be greater than zero")
 
         self._audit = audit
         self._backends = backends
         self._registry = registry or ExecutionRegistry()
         self._approval_gate = approval_gate
-        self._monotonic = monotonic
+        self._clock = validate_clock(clock or SystemClock())
+        self._event_sink = event_sink or NullEventSink()
+        self._preview_sink = preview_sink
+        self._event_capacity = event_capacity
+        self._safety_deadline = float(safety_deadline_seconds)
 
     async def run(
         self,
@@ -319,25 +152,58 @@ class ExecutionRunner:
         if not isinstance(context, ExecutionContext):
             raise TypeError("context must be an ExecutionContext")
 
+        publisher = LifecyclePublisher(
+            context.execution_id,
+            self._event_sink,
+            self._clock,
+            capacity=self._event_capacity,
+        )
         state = LifecycleState(context.execution_id)
+        try:
+            await publisher.publish("requested")
+            return await self._run(prepared, decision, context, state, publisher)
+        finally:
+            await publisher.aclose()
+
+    async def _run(
+        self,
+        prepared: PreparedExecution,
+        decision: PolicyDecision,
+        context: ExecutionContext,
+        state: LifecycleState,
+        publisher: LifecyclePublisher,
+    ) -> ExecutionResult:
         handle = await self._admit(prepared.request, context)
 
         state.transition(RunState.POLICY_EVALUATED)
+        await publisher.publish("policy_evaluated")
         if not decision.allowed:
-            return await self._deny(handle, state, context, decision)
+            return await self._deny(handle, state, context, decision, publisher)
 
         await self._write_pre_start_event(
             handle,
             state,
             context,
             AuditEventType.POLICY_ALLOWED,
+            publisher,
         )
 
         state.transition(RunState.PREPARED)
-        if not await self._approve(handle, state, prepared, context):
-            return await self._reject(handle, state, context)
+        await publisher.publish(
+            "backend_selected",
+            details=(("backend", prepared.backend.name),),
+        )
 
-        return await self._start_and_supervise(handle, state, prepared, context)
+        if not await self._approve(handle, state, prepared, context, publisher):
+            return await self._reject(handle, state, context, publisher)
+
+        return await self._start_and_supervise(
+            handle,
+            state,
+            prepared,
+            context,
+            publisher,
+        )
 
     async def _admit(
         self,
@@ -359,19 +225,21 @@ class ExecutionRunner:
         state: LifecycleState,
         context: ExecutionContext,
         decision: PolicyDecision,
+        publisher: LifecyclePublisher,
     ) -> ExecutionResult:
         await self._write_pre_start_event(
             handle,
             state,
             context,
             AuditEventType.POLICY_DENIED,
+            publisher,
             message=_first_reason(decision),
         )
         state.transition(RunState.FINALIZING)
         material = self._pre_start_material("denied", "policy_denied")
         record = await self._settle(handle, material, context)
         state.transition(RunState.TERMINAL)
-        return build_execution_result(record, material, backend=None)
+        return await self._publish_result(record, material, None, publisher)
 
     async def _approve(
         self,
@@ -379,16 +247,19 @@ class ExecutionRunner:
         state: LifecycleState,
         prepared: PreparedExecution,
         context: ExecutionContext,
+        publisher: LifecyclePublisher,
     ) -> bool:
         if self._approval_gate is None:
             return True
 
         state.transition(RunState.AWAITING_APPROVAL)
+        await publisher.publish("approval_required")
         await self._write_pre_start_event(
             handle,
             state,
             context,
             AuditEventType.APPROVAL_REQUESTED,
+            publisher,
         )
         approved = bool(await self._approval_gate(prepared, context))
         await self._write_pre_start_event(
@@ -398,7 +269,10 @@ class ExecutionRunner:
             AuditEventType.APPROVAL_GRANTED
             if approved
             else AuditEventType.APPROVAL_REJECTED,
+            publisher,
         )
+        if approved:
+            await publisher.publish("approved")
         return approved
 
     async def _reject(
@@ -406,6 +280,7 @@ class ExecutionRunner:
         handle: AuditRunHandle,
         state: LifecycleState,
         context: ExecutionContext,
+        publisher: LifecyclePublisher,
     ) -> ExecutionResult:
         state.transition(RunState.FINALIZING)
         material = self._pre_start_material("denied", "approval_rejected")
@@ -416,7 +291,7 @@ class ExecutionRunner:
             outcome_override=TerminalOutcome.APPROVAL_REJECTED,
         )
         state.transition(RunState.TERMINAL)
-        return build_execution_result(record, material, backend=None)
+        return await self._publish_result(record, material, None, publisher)
 
     async def _start_and_supervise(
         self,
@@ -424,10 +299,14 @@ class ExecutionRunner:
         state: LifecycleState,
         prepared: PreparedExecution,
         context: ExecutionContext,
+        publisher: LifecyclePublisher,
     ) -> ExecutionResult:
-        backend_name = prepared.backend.name
         source = CancellationSource()
-        entry = ActiveExecution(context=context, cancellation_source=source)
+        entry = ActiveExecution(
+            context=context,
+            cancellation_source=source,
+            audit_handle=handle,
+        )
         await self._registry.register(entry)
         state.transition(RunState.REGISTERED)
 
@@ -437,23 +316,26 @@ class ExecutionRunner:
                     handle,
                     AuditEventType.BACKEND_STARTING,
                 )
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 return await self._fail_to_start(
                     handle,
                     state,
                     context,
-                    backend_name,
+                    prepared.backend.name,
+                    publisher,
                     detail="starting_event_unavailable",
                     error=error,
                 )
 
             state.transition(RunState.STARTING)
+            await publisher.publish("starting")
             return await self._supervise(
                 handle,
                 state,
                 prepared,
                 context,
                 source.token,
+                publisher,
             )
         finally:
             await self._registry.unregister(
@@ -468,6 +350,7 @@ class ExecutionRunner:
         prepared: PreparedExecution,
         context: ExecutionContext,
         cancellation: CancellationToken,
+        publisher: LifecyclePublisher,
     ) -> ExecutionResult:
         backend = self._backends.get_exact(
             prepared.backend,
@@ -476,8 +359,6 @@ class ExecutionRunner:
         attached: list[BackendResourceIdentifier] = []
 
         async def attach(resource: BackendResourceIdentifier) -> None:
-            # A failure here keeps the backend's project gate closed, so the
-            # backend aborts its own launch and no unrecorded process runs.
             await self._audit.attach_resource(handle, resource)
             attached.append(resource)
 
@@ -490,38 +371,36 @@ class ExecutionRunner:
                 attach,
             )
         except CancellationRequested as error:
-            # The command never ran, so the durable row is failed_to_start,
-            # but the caller still learns that this was a cancellation.
             return await self._fail_to_start(
                 handle,
                 state,
                 context,
                 prepared.backend.name,
+                publisher,
                 detail="cancelled_before_start",
                 error=error,
                 resource=attached[0] if attached else None,
                 raise_original=True,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             return await self._fail_to_start(
                 handle,
                 state,
                 context,
                 prepared.backend.name,
+                publisher,
                 detail="backend_start_failed",
                 error=error,
                 resource=attached[0] if attached else None,
                 reraise=not isinstance(error, BackendStartError),
             )
 
-        started_at = self._monotonic()
+        started_at = self._clock.monotonic()
         resource = execution.resource
 
         try:
             await self._audit.mark_running(handle, resource)
         except Exception as error:
-            # The exact resource is already attached, so startup recovery can
-            # find it even if this local cleanup is incomplete.
             await _terminate_quietly(execution, "shutdown")
             await _cleanup_quietly(execution)
             raise AuditPersistenceError(
@@ -532,6 +411,7 @@ class ExecutionRunner:
             ) from error
 
         state.transition(RunState.RUNNING)
+        await publisher.publish("started")
         return await self._await_terminal(
             handle,
             state,
@@ -541,6 +421,7 @@ class ExecutionRunner:
             cancellation,
             resource,
             started_at,
+            publisher,
         )
 
     async def _await_terminal(
@@ -553,47 +434,67 @@ class ExecutionRunner:
         cancellation: CancellationToken,
         resource: BackendResourceIdentifier,
         started_at: float,
+        publisher: LifecyclePublisher,
     ) -> ExecutionResult:
         limits = prepared.request.limits
         collector = OutputCollector(
             limits,
             redaction_values=prepared.environment.redaction_values,
         )
-        limit_reached = asyncio.Event()
-        drain = asyncio.create_task(
-            _drain_output(execution, collector, limit_reached),
+        limit_event = asyncio.Event()
+        pump_failed = asyncio.Event()
+        arbiter = TerminalArbiter()
+
+        output_task = asyncio.create_task(
+            self._pump(execution, collector, limit_event, pump_failed),
         )
-        exit_task = asyncio.create_task(execution.wait())
+        wait_task = asyncio.create_task(execution.wait())
         cancel_task = asyncio.create_task(cancellation.wait())
         timeout_task = asyncio.create_task(
-            asyncio.sleep(limits.timeout_seconds),
+            self._clock.sleep(limits.timeout_seconds),
         )
-        limit_task = asyncio.create_task(limit_reached.wait())
-        watched = {exit_task, cancel_task, timeout_task, limit_task}
-        arbiter = TerminalArbiter()
+        output_limit_task = asyncio.create_task(limit_event.wait())
+        pump_failed_task = asyncio.create_task(pump_failed.wait())
+        watchers = {
+            wait_task,
+            cancel_task,
+            timeout_task,
+            output_limit_task,
+            pump_failed_task,
+        }
+        created = watchers | {output_task}
 
         try:
             done, _pending = await asyncio.wait(
-                watched,
+                watchers,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            observed_at = self._monotonic()
-            claim = resolve_terminal_claim(
-                self._candidates(
-                    done,
-                    exit_task,
-                    cancel_task,
-                    timeout_task,
-                    limit_task,
-                    observed_at,
-                ),
+            observed_at = self._clock.monotonic()
+            backend_exit_signal = (
+                _task_result(wait_task) if wait_task in done else None
             )
+            wait_failed = wait_task in done and backend_exit_signal is None
+            candidate = choose_terminal_candidate(
+                done=done,
+                backend_exit=backend_exit_signal,
+                cancellation=cancellation.reason if cancel_task in done else None,
+                output_limit=output_limit_task in done,
+                timeout=timeout_task in done,
+                pump_failed=pump_failed_task in done or wait_failed,
+                observed_at=observed_at,
+            )
+            claim = (await arbiter.claim(candidate)).claim
 
-            outcome = await arbiter.claim(claim)
-            claim = outcome.claim
+            for task in (cancel_task, timeout_task, output_limit_task):
+                if task is not wait_task:
+                    task.cancel()
 
             if claim.source != "backend_exit":
                 _enter_terminating(state)
+                await publisher.publish(
+                    "terminating",
+                    details=(("reason", claim.reason or "cancellation"),),
+                )
                 await self._runtime_event(
                     handle,
                     _EVENT_BY_SOURCE[claim.source],
@@ -610,22 +511,29 @@ class ExecutionRunner:
                     limits.termination_grace_seconds,
                 )
 
-            backend_exit = await _settled_exit(exit_task)
-            await _drain_quietly(drain)
-            cleanup = await execution.cleanup()
+            reap_error: BackendOperationError | None = None
+            try:
+                backend_exit = await self._reap(wait_task, context, prepared)
+            except BackendOperationError as error:
+                backend_exit = None
+                reap_error = error
+
+            output_complete = await self._await_output_eof(output_task)
+            cleanup = await _finish_cleanup(execution)
             material = self._material(
                 claim,
                 backend_exit,
                 collector.snapshot(),
                 cleanup,
                 started_at,
+                output_complete=output_complete,
             )
         except _EvidenceLost as loss:
             material = await self._salvage(
                 arbiter,
                 execution,
                 collector,
-                drain,
+                output_task,
                 started_at,
             )
             _enter_terminating(state)
@@ -643,9 +551,9 @@ class ExecutionRunner:
                 operation=loss.boundary,
             ) from loss.cause
         finally:
-            for task in (*watched, drain):
+            for task in created:
                 task.cancel()
-            await asyncio.gather(*watched, drain, return_exceptions=True)
+            await asyncio.gather(*created, return_exceptions=True)
 
         state.transition(RunState.FINALIZING)
         record = await self._settle(
@@ -655,99 +563,153 @@ class ExecutionRunner:
             resource=resource,
         )
         state.transition(RunState.TERMINAL)
-        return build_execution_result(
+
+        if reap_error is not None:
+            await publisher.publish(
+                TERMINAL_STAGE_BY_STATUS[public_status(_finalization(record))],
+                message="the backend could not be reaped",
+            )
+            raise reap_error
+
+        if material.cleanup_incomplete:
+            await publisher.publish(
+                TERMINAL_STAGE_BY_STATUS[public_status(_finalization(record))],
+                message="cleanup did not complete",
+            )
+            raise BackendCleanupError(
+                "the backend could not release execution resources",
+                execution_id=context.execution_id,
+                backend=prepared.backend.name,
+                operation="cleanup",
+                diagnostic=material.cleanup.diagnostic if material.cleanup else None,
+            )
+
+        return await self._publish_result(
             record,
             material,
-            backend=prepared.backend.name,
+            prepared.backend.name,
+            publisher,
         )
 
-    def _candidates(
+    async def _pump(
         self,
-        done: set[asyncio.Task],
-        exit_task: asyncio.Task,
-        cancel_task: asyncio.Task,
-        timeout_task: asyncio.Task,
-        limit_task: asyncio.Task,
-        observed_at: float,
-    ) -> tuple[TerminalClaim, ...]:
-        candidates: list[TerminalClaim] = []
+        execution: ExecutionHandle,
+        collector: OutputCollector,
+        limit_event: asyncio.Event,
+        pump_failed: asyncio.Event,
+    ) -> None:
+        closed = False
+        try:
+            async for chunk in execution.output():
+                if chunk.stream == "stdout":
+                    update = collector.feed_stdout(chunk.data)
+                else:
+                    update = collector.feed_stderr(chunk.data)
 
-        if exit_task in done and not exit_task.cancelled():
-            error = exit_task.exception()
-            if error is None:
-                candidates.append(
-                    _exit_claim(exit_task.result(), observed_at),
-                )
+                if update.newly_exceeded:
+                    limit_event.set()
 
-        if limit_task in done:
-            candidates.append(
-                TerminalClaim(
-                    status="limit_exceeded",
-                    reason="output_limit",
-                    observed_at_monotonic=observed_at,
-                    source="output_limit",
-                )
-            )
+                if self._preview_sink is not None and update.text:
+                    await self._preview_sink.publish_bounded(update.text)
 
-        if cancel_task in done and not cancel_task.cancelled():
-            reason: TerminationReason = (
-                "shutdown"
-                if cancel_task.exception() is None
-                and str(cancel_task.result()).strip().lower() == "shutdown"
-                else "cancellation"
-            )
-            candidates.append(
-                TerminalClaim(
-                    status="cancelled",
-                    reason=reason,
-                    observed_at_monotonic=observed_at,
-                    source="cancellation",
-                )
-            )
+            closed = True
+            self._close_streams(collector)
+        except asyncio.CancelledError:
+            if not closed:
+                self._close_streams(collector)
+            raise
+        except Exception as error:
+            if not closed:
+                self._close_streams(collector)
+            pump_failed.set()
+            raise _OutputPumpFailed(str(error)) from error
 
-        if timeout_task in done:
-            candidates.append(
-                TerminalClaim(
-                    status="timed_out",
-                    reason="timeout",
-                    observed_at_monotonic=observed_at,
-                    source="timeout",
-                )
-            )
+    @staticmethod
+    def _close_streams(collector: OutputCollector) -> None:
+        for close in (collector.close_stdout, collector.close_stderr):
+            try:
+                close()
+            except RuntimeError:
+                pass
 
-        if not candidates:
-            raise InvalidExecutionStateError(
-                "the terminal wait returned no rankable signal",
-                operation="await_terminal",
+    async def _await_output_eof(self, output_task: asyncio.Task) -> bool:
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(output_task),
+                timeout=self._safety_deadline,
             )
-        return tuple(candidates)
+            return True
+        except TimeoutError:
+            return False
+        except _OutputPumpFailed:
+            return False
+        except Exception:  # noqa: BLE001
+            return False
+
+    async def _reap(
+        self,
+        wait_task: asyncio.Task,
+        context: ExecutionContext,
+        prepared: PreparedExecution,
+    ) -> BackendExit | None:
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(wait_task),
+                timeout=self._safety_deadline,
+            )
+        except TimeoutError as error:
+            raise BackendOperationError(
+                "the backend did not finish terminating within the safety deadline",
+                execution_id=context.execution_id,
+                backend=prepared.backend.name,
+                operation="reap",
+            ) from error
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _candidate_material(
+        self,
+        claim: TerminalClaim,
+        collector: OutputCollector,
+        started_at: float,
+        *,
+        output_complete: bool,
+    ) -> TerminalMaterial:
+        return self._material(
+            claim,
+            None,
+            collector.snapshot(),
+            None,
+            started_at,
+            output_complete=output_complete,
+        )
 
     async def _salvage(
         self,
         arbiter: TerminalArbiter,
         execution: ExecutionHandle,
         collector: OutputCollector,
-        drain: asyncio.Task,
+        output_task: asyncio.Task,
         started_at: float,
     ) -> TerminalMaterial:
         outcome = await arbiter.claim(
             TerminalClaim(
                 status="cancelled",
                 reason="shutdown",
-                observed_at_monotonic=self._monotonic(),
+                observed_at_monotonic=self._clock.monotonic(),
                 source="cancellation",
             )
         )
-        claim = outcome.claim
         await _terminate_quietly(execution, "shutdown")
-        await _drain_quietly(drain)
+        output_complete = await self._await_output_eof(output_task)
         cleanup = await _cleanup_quietly(execution)
         return self._material(
-            claim,
+            outcome.claim,
             None,
             collector.snapshot(),
             cleanup,
             started_at,
+            output_complete=output_complete,
         )
 
     async def _fail_to_start(
@@ -756,6 +718,7 @@ class ExecutionRunner:
         state: LifecycleState,
         context: ExecutionContext,
         backend: BackendName,
+        publisher: LifecyclePublisher,
         *,
         detail: str,
         error: BaseException,
@@ -773,6 +736,7 @@ class ExecutionRunner:
             detail=detail,
         )
         state.transition(RunState.TERMINAL)
+        await publisher.publish("failed_to_start", message=detail)
 
         if raise_original:
             raise error
@@ -787,12 +751,24 @@ class ExecutionRunner:
 
         return build_execution_result(record, material, backend=backend)
 
+    async def _publish_result(
+        self,
+        record: AuditRunRecord,
+        material: TerminalMaterial,
+        backend: BackendName | None,
+        publisher: LifecyclePublisher,
+    ) -> ExecutionResult:
+        result = build_execution_result(record, material, backend=backend)
+        await publisher.publish(TERMINAL_STAGE_BY_STATUS[result.status])
+        return result
+
     async def _write_pre_start_event(
         self,
         handle: AuditRunHandle,
         state: LifecycleState,
         context: ExecutionContext,
         event_type: AuditEventType,
+        publisher: LifecyclePublisher,
         *,
         message: str | None = None,
     ) -> None:
@@ -811,6 +787,7 @@ class ExecutionRunner:
                 context,
                 detail="pre_start_event_unavailable",
             )
+            await publisher.publish("failed_to_start")
             raise AuditPersistenceError(
                 "execution was refused because pending evidence could not be stored",
                 execution_id=context.execution_id,
@@ -834,7 +811,7 @@ class ExecutionRunner:
         source: str,
     ) -> TerminalMaterial:
         output = empty_output()
-        observed_at = self._monotonic()
+        observed_at = self._clock.monotonic()
         return TerminalMaterial(
             claim=TerminalClaim(
                 status=status,
@@ -857,15 +834,18 @@ class ExecutionRunner:
         output: CollectedOutput,
         cleanup: CleanupResult | None,
         started_at: float,
+        *,
+        output_complete: bool = True,
     ) -> TerminalMaterial:
+        complete = output.complete and output_complete
         return TerminalMaterial(
             claim=claim,
             backend_exit=backend_exit,
             output=output,
-            audit_output=build_output_evidence(output),
+            audit_output=build_output_evidence(output, complete=complete),
             cleanup=cleanup,
             started_at_monotonic=started_at,
-            finished_at_monotonic=self._monotonic(),
+            finished_at_monotonic=self._clock.monotonic(),
         )
 
     async def _try_settle(
@@ -886,8 +866,6 @@ class ExecutionRunner:
                 detail=detail,
             )
         except AuditPersistenceError:
-            # The pending row survives for startup recovery; never fabricate a
-            # terminal row in memory.
             return None
 
     async def _settle(
@@ -906,10 +884,8 @@ class ExecutionRunner:
             finalized_at=self._audit.now(),
             resource=resource,
             detail=detail,
+            outcome_override=outcome_override,
         )
-        if outcome_override is not None:
-            finalization = _with_outcome(finalization, outcome_override)
-
         try:
             return await self._audit.finalize(handle, finalization)
         except Exception as error:
@@ -921,95 +897,51 @@ class ExecutionRunner:
             ) from error
 
 
+def choose_terminal_candidate(
+    *,
+    done: set[asyncio.Task],
+    backend_exit: BackendExit | None,
+    cancellation: str | None,
+    output_limit: bool,
+    timeout: bool,
+    observed_at: float,
+    pump_failed: bool = False,
+) -> TerminalClaim:
+    candidates: list[TerminalClaim] = []
+
+    if backend_exit is not None:
+        candidates.append(claim_for_exit(backend_exit, observed_at))
+    if output_limit:
+        candidates.append(claim_for_output_limit(observed_at))
+    if cancellation is not None:
+        candidates.append(claim_for_cancellation(cancellation, observed_at))
+    if pump_failed:
+        candidates.append(claim_for_cancellation("shutdown", observed_at))
+    if timeout:
+        candidates.append(claim_for_timeout(observed_at))
+
+    if not candidates:
+        raise InvalidExecutionStateError(
+            f"the terminal wait returned no rankable signal from {len(done)} tasks",
+            operation="await_terminal",
+        )
+    return resolve_terminal_claim(tuple(candidates))
+
+
 def _enter_terminating(state: LifecycleState) -> None:
     if state.current is RunState.RUNNING:
         state.transition(RunState.TERMINATING)
 
 
-_EVENT_BY_SOURCE: Final[dict[str, AuditEventType]] = {
-    "output_limit": AuditEventType.LIMIT_REACHED,
-    "resource_limit": AuditEventType.LIMIT_REACHED,
-    "cancellation": AuditEventType.CANCELLATION_REQUESTED,
-    "timeout": AuditEventType.TIMEOUT_REACHED,
-}
+def _finalization(record: AuditRunRecord):
+    assert record.finalization is not None
+    return record.finalization
 
 
-def _with_outcome(
-    finalization: AuditFinalization,
-    outcome: TerminalOutcome,
-) -> AuditFinalization:
-    return AuditFinalization(
-        run_id=finalization.run_id,
-        finalized_at=finalization.finalized_at,
-        outcome=outcome,
-        command_started=finalization.command_started,
-        exit_code=finalization.exit_code,
-        output=finalization.output,
-        resource=finalization.resource,
-        underlying_outcome=finalization.underlying_outcome,
-        detail=finalization.detail,
-    )
-
-
-def _exit_claim(exit_status: BackendExit, observed_at: float) -> TerminalClaim:
-    reason = exit_status.native_reason
-    limit = _LIMIT_REASONS.get(reason) if reason is not None else None
-    if limit is not None:
-        return TerminalClaim(
-            status="limit_exceeded",
-            reason=limit,
-            observed_at_monotonic=observed_at,
-            source="resource_limit",
-        )
-    if exit_status.exit_code is None:
-        return TerminalClaim(
-            status="cancelled",
-            reason="shutdown" if reason == "shutdown" else "cancellation",
-            observed_at_monotonic=observed_at,
-            source="backend_exit",
-        )
-    return TerminalClaim(
-        status="completed" if exit_status.exit_code == 0 else "failed",
-        reason=None,
-        observed_at_monotonic=observed_at,
-        source="backend_exit",
-    )
-
-
-def _finalization_exit_code(
-    material: TerminalMaterial,
-    outcome: TerminalOutcome,
-) -> int | None:
-    if not material.command_started or outcome in _TERMINATED_OUTCOMES:
+def _task_result(task: asyncio.Task) -> BackendExit | None:
+    if task.cancelled() or task.exception() is not None:
         return None
-    if material.backend_exit is None:
-        return None
-    return material.backend_exit.exit_code
-
-
-def _result_exit_code(
-    status: ExecutionStatus,
-    material: TerminalMaterial,
-) -> int | None:
-    if status in {"denied", "failed_to_start"} or status in _REASON_BEARING_STATUSES:
-        return None
-    return material.backend_exit.exit_code if material.backend_exit else None
-
-
-def _bounded_preview(text: str, budget: int) -> tuple[str, bool]:
-    encoded = text.encode("utf-8")
-    if len(encoded) <= budget:
-        return text, False
-
-    kept: list[str] = []
-    used = 0
-    for character in text:
-        size = len(character.encode("utf-8"))
-        if used + size > budget:
-            break
-        kept.append(character)
-        used += size
-    return "".join(kept), True
+    return task.result()
 
 
 def _first_reason(decision: PolicyDecision) -> str | None:
@@ -1018,52 +950,31 @@ def _first_reason(decision: PolicyDecision) -> str | None:
     return None
 
 
-async def _drain_output(
-    execution: ExecutionHandle,
-    collector: OutputCollector,
-    limit_reached: asyncio.Event,
-) -> None:
-    async for chunk in execution.output():
-        update = (
-            collector.feed_stdout(chunk.data)
-            if chunk.stream == "stdout"
-            else collector.feed_stderr(chunk.data)
-        )
-        if update.newly_exceeded:
-            limit_reached.set()
-    collector.close_stdout()
-    collector.close_stderr()
-
-
-async def _drain_quietly(drain: asyncio.Task) -> None:
-    try:
-        await drain
-    except (asyncio.CancelledError, Exception):
-        pass
-
-
-async def _settled_exit(exit_task: asyncio.Task) -> BackendExit | None:
-    try:
-        return await exit_task
-    except (asyncio.CancelledError, Exception):
-        return None
-
-
 async def _terminate_quietly(
     execution: ExecutionHandle,
     reason: TerminationReason,
     grace_seconds: float = 0.0,
 ) -> None:
-    try:
+    with suppress(Exception):
         await execution.terminate(reason, grace_seconds)
-    except Exception:
-        pass
 
 
 async def _cleanup_quietly(execution: ExecutionHandle) -> CleanupResult | None:
     try:
         return await execution.cleanup()
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
+async def _finish_cleanup(execution: ExecutionHandle) -> CleanupResult:
+    try:
+        return await execution.cleanup()
+    except Exception as error:  # noqa: BLE001
+        return CleanupResult(
+            complete=False,
+            diagnostic=NativeDiagnostic(
+                code="cleanup-raised",
+                message=str(error)[:4096] or "cleanup raised",
+                platform="posix",
+            ),
+        )

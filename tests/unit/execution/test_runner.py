@@ -24,12 +24,13 @@ from truecoder.execution.backends.models import (
 from truecoder.execution.backends.registry import BackendRegistry
 from truecoder.execution.cancellation import CancellationRequested
 from truecoder.execution.environment import construct_environment
-from truecoder.execution.lifecycle import TerminalClaim
 from truecoder.execution.errors import (
     AuditPersistenceError,
     AuditUnavailableError,
+    BackendCleanupError,
     BackendStartError,
 )
+from truecoder.execution.lifecycle import TerminalClaim
 from truecoder.execution.models import (
     BackendCapabilities,
     CapabilityRequirements,
@@ -43,14 +44,14 @@ from truecoder.execution.models import (
 )
 from truecoder.execution.preparation import PreparedExecution
 from truecoder.execution.registry import ExecutionRegistry
-from truecoder.execution.runner import (
-    ExecutionRunner,
+from truecoder.execution.results import (
     TerminalMaterial,
     build_execution_result,
     build_finalization,
     build_output_evidence,
     empty_output,
 )
+from truecoder.execution.runner import ExecutionRunner
 
 NOW = datetime(2026, 8, 3, 9, 0, tzinfo=UTC)
 ROOT = Path.cwd().resolve()
@@ -225,7 +226,6 @@ class FakeBackend:
             try:
                 await register_resource(handle.resource)
             except BaseException:
-                # The project gate stays closed and the backend owns cleanup.
                 self.aborted = True
                 await handle.cleanup()
                 raise
@@ -545,9 +545,6 @@ class RuntimeEvidenceTests(RunnerTestCase):
         self.assertEqual(backend.handle.cleanups, 1)
         snapshot = await self.newest_run()
         assert snapshot.record.finalization is not None
-        # The arbiter already held the timeout claim, so the salvage shutdown
-        # claim loses and the row keeps the true terminal cause. Evidence loss
-        # is recorded as the finalization detail instead.
         self.assertIs(snapshot.record.finalization.outcome, TerminalOutcome.TIMED_OUT)
         self.assertEqual(
             snapshot.record.finalization.detail,
@@ -643,16 +640,16 @@ class FinalizationBoundaryTests(RunnerTestCase):
         self.assertIs(snapshot.record.finalization.outcome, TerminalOutcome.TIMED_OUT)
         self.assertIsNone(snapshot.record.finalization.exit_code)
 
-    async def test_incomplete_cleanup_is_recorded_as_cleanup_failed(self):
+    async def test_incomplete_cleanup_raises_after_recording_the_outcome(self):
         backend = FakeBackend(
             descriptor(),
             handle_options={"cleanup_complete": False},
         )
         runner, backend = self.build_runner(backend)
 
-        result = await self.start_run(runner)
+        with self.assertRaises(BackendCleanupError):
+            await self.start_run(runner)
 
-        self.assertEqual(result.status, "completed")
         snapshot = await self.newest_run()
         assert snapshot.record.finalization is not None
         self.assertIs(snapshot.record.finalization.outcome, TerminalOutcome.CLEANUP_FAILED)
