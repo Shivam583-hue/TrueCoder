@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Final, Literal, Protocol, TypeAlias
 
 from .backends.container_models import ContainerBackendFacts, ContainerImage
+from .backends.container_plan import parse_image_lock
 from .backends.models import (
     MAX_DISCOVERY_DIAGNOSTIC_BYTES,
     BackendDescriptor,
@@ -48,6 +49,12 @@ PROBE_STATUSES: Final = frozenset(
 PROBE_TIMEOUT_SECONDS: Final = 3.0
 PROBE_OUTPUT_LIMIT_BYTES: Final = 32 * 1024
 CGROUP_READ_LIMIT_BYTES: Final = 16 * 1024
+IMAGE_LOCK_READ_LIMIT_BYTES: Final = 16 * 1024
+DEFAULT_IMAGE_LOCK: Final = (
+    Path(__file__).resolve().parents[3] / "container" / "image.lock"
+)
+_IMAGE_ENTRYPOINT_LABEL: Final = "ai.truecoder.entrypoint-version"
+_IMAGE_USER_LABEL: Final = "ai.truecoder.user"
 
 _CGROUP_ROOT: Final = Path("/sys/fs/cgroup")
 _CGROUP_CONTROLLERS: Final = _CGROUP_ROOT / "cgroup.controllers"
@@ -252,12 +259,20 @@ class SystemDiscoveryIO:
 
 async def discover_execution_environment(
     io: DiscoveryIO | None = None,
+    *,
+    image_lock_path: Path | None = None,
 ) -> DiscoverySnapshot:
     discovery_io = io or SystemDiscoveryIO()
     host = discover_host(discovery_io)
     shells = await discover_shells(host, discovery_io)
     cgroup_v2 = discover_cgroup_v2(host, discovery_io)
     runtimes = await discover_container_runtimes(discovery_io)
+    container_image = await discover_container_image(
+        host,
+        runtimes,
+        discovery_io,
+        lock_path=image_lock_path or DEFAULT_IMAGE_LOCK,
+    )
     return DiscoverySnapshot(
         host=host,
         shells=shells,
@@ -268,6 +283,7 @@ async def discover_execution_environment(
             shells=shells,
             cgroup_v2=cgroup_v2,
             runtimes=runtimes,
+            container_image=container_image,
         ),
     )
 
@@ -400,6 +416,70 @@ async def discover_container_runtimes(
             )
         )
     return tuple(runtimes)
+
+
+async def discover_container_image(
+    host: HostPlatformInfo,
+    runtimes: tuple[ContainerRuntimeInfo, ...],
+    io: DiscoveryIO,
+    *,
+    lock_path: Path,
+) -> ContainerImage | None:
+    if host.system != "linux" or not io.path_exists(lock_path):
+        return None
+    runtime = next(
+        (
+            item
+            for item in runtimes
+            if item.name == "docker"
+            and item.daemon_reachable
+            and item.diagnostic is None
+        ),
+        None,
+    )
+    if runtime is None:
+        return None
+    try:
+        image = parse_image_lock(
+            io.read_text(lock_path, IMAGE_LOCK_READ_LIMIT_BYTES)
+        )
+    except (OSError, TypeError, ValueError):
+        return None
+
+    result = await io.run_probe(
+        (
+            str(runtime.executable),
+            "image",
+            "inspect",
+            "--format",
+            "{{json .}}",
+            image.digest,
+        ),
+        timeout_seconds=PROBE_TIMEOUT_SECONDS,
+        max_output_bytes=PROBE_OUTPUT_LIMIT_BYTES,
+    )
+    if result.status != "completed":
+        return None
+    metadata = _load_json_object(result.output)
+    if metadata is None or metadata.get("Id") != image.digest:
+        return None
+    platform_name = f"{metadata.get('Os', '')}/{metadata.get('Architecture', '')}"
+    if platform_name != image.platform:
+        return None
+    config = metadata.get("Config")
+    if not isinstance(config, dict) or config.get("User") != image.user:
+        return None
+    labels = config.get("Labels")
+    if not isinstance(labels, dict):
+        return None
+    if labels.get(_IMAGE_USER_LABEL) != image.user:
+        return None
+    if (
+        image.entrypoint_version is not None
+        and labels.get(_IMAGE_ENTRYPOINT_LABEL) != image.entrypoint_version
+    ):
+        return None
+    return image
 
 
 def container_facts(

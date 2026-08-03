@@ -135,7 +135,13 @@ def build_env_file_content(
 def load_image_lock(path: Path) -> ContainerImage:
     if not isinstance(path, Path):
         raise TypeError("path must be a pathlib.Path")
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    return parse_image_lock(path.read_text(encoding="utf-8"))
+
+
+def parse_image_lock(text: str) -> ContainerImage:
+    if not isinstance(text, str):
+        raise TypeError("image lock text must be a string")
+    payload = json.loads(text)
     if not isinstance(payload, dict):
         raise TypeError("the image lock must contain a JSON object")
 

@@ -5,6 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 
+from truecoder.execution.backends.models import ContainerRuntimeInfo
 from truecoder.execution.discovery import (
     PROBE_OUTPUT_LIMIT_BYTES,
     PROBE_TIMEOUT_SECONDS,
@@ -13,6 +14,7 @@ from truecoder.execution.discovery import (
     SystemDiscoveryIO,
     derive_backend_descriptors,
     discover_cgroup_v2,
+    discover_container_image,
     discover_container_runtimes,
     discover_execution_environment,
     discover_host,
@@ -22,6 +24,8 @@ from truecoder.execution.discovery import (
 ROOT = Path.cwd().resolve()
 CGROUP_CONTROLLERS = Path("/sys/fs/cgroup/cgroup.controllers")
 PROC_SELF_CGROUP = Path("/proc/self/cgroup")
+IMAGE_LOCK = ROOT / "container" / "image.lock"
+DIGEST = "sha256:" + "a" * 64
 
 
 class FakeDiscoveryIO:
@@ -316,6 +320,132 @@ class RuntimeDiscoveryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(runtime.daemon_reachable)
         self.assertEqual(runtime.rootless, "no")
+
+
+class ContainerImageDiscoveryTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.io = FakeDiscoveryIO()
+        self.docker = ROOT / "docker"
+        self.io.executables["docker"] = self.docker
+        self.runtime = ContainerRuntimeInfo(
+            name="docker",
+            executable=self.docker,
+            client_version="28.1.1",
+            server_version="28.1.0",
+            daemon_reachable=True,
+            rootless="no",
+        )
+        self.io.files[IMAGE_LOCK] = json.dumps(
+            {
+                "reference": DIGEST,
+                "digest": DIGEST,
+                "platform": "linux/amd64",
+                "user": "65532:65532",
+                "entrypoint_version": "1",
+            }
+        )
+        self.inspect_argv = (
+            str(self.docker),
+            "image",
+            "inspect",
+            "--format",
+            "{{json .}}",
+            DIGEST,
+        )
+        self.io.probes[self.inspect_argv] = ProbeResult(
+            status="completed",
+            exit_code=0,
+            output=json.dumps(
+                {
+                    "Id": DIGEST,
+                    "Os": "linux",
+                    "Architecture": "amd64",
+                    "Config": {
+                        "User": "65532:65532",
+                        "Labels": {
+                            "ai.truecoder.entrypoint-version": "1",
+                            "ai.truecoder.user": "65532:65532",
+                        },
+                    },
+                }
+            ),
+        )
+
+    async def test_accepts_only_the_exact_locked_image(self):
+        image = await discover_container_image(
+            discover_host(self.io),
+            (self.runtime,),
+            self.io,
+            lock_path=IMAGE_LOCK,
+        )
+
+        self.assertIsNotNone(image)
+        self.assertEqual(image.digest, DIGEST)  # type: ignore[union-attr]
+
+    async def test_rejects_mismatched_image_identity_and_contract(self):
+        valid = json.loads(self.io.probes[self.inspect_argv].output)
+        mutations = (
+            ("digest", {"Id": "sha256:" + "b" * 64}),
+            ("platform", {"Architecture": "arm64"}),
+            ("user", {"Config": {**valid["Config"], "User": "0:0"}}),
+            (
+                "entrypoint",
+                {
+                    "Config": {
+                        **valid["Config"],
+                        "Labels": {
+                            **valid["Config"]["Labels"],
+                            "ai.truecoder.entrypoint-version": "2",
+                        },
+                    }
+                },
+            ),
+        )
+        for name, mutation in mutations:
+            with self.subTest(name=name):
+                metadata = {**valid, **mutation}
+                self.io.probes[self.inspect_argv] = ProbeResult(
+                    status="completed",
+                    exit_code=0,
+                    output=json.dumps(metadata),
+                )
+                image = await discover_container_image(
+                    discover_host(self.io),
+                    (self.runtime,),
+                    self.io,
+                    lock_path=IMAGE_LOCK,
+                )
+                self.assertIsNone(image)
+
+    async def test_missing_invalid_or_uninspectable_lock_is_unavailable(self):
+        cases = (
+            ("missing", None, None),
+            ("invalid", "{", None),
+            (
+                "uninspectable",
+                self.io.files[IMAGE_LOCK],
+                ProbeResult(
+                    status="failed",
+                    exit_code=1,
+                    diagnostic="image missing",
+                ),
+            ),
+        )
+        for name, lock_text, probe in cases:
+            with self.subTest(name=name):
+                if lock_text is None:
+                    self.io.files.pop(IMAGE_LOCK, None)
+                else:
+                    self.io.files[IMAGE_LOCK] = lock_text
+                if probe is not None:
+                    self.io.probes[self.inspect_argv] = probe
+                image = await discover_container_image(
+                    discover_host(self.io),
+                    (self.runtime,),
+                    self.io,
+                    lock_path=IMAGE_LOCK,
+                )
+                self.assertIsNone(image)
 
 
 class BackendDescriptorDerivationTests(unittest.IsolatedAsyncioTestCase):
