@@ -31,6 +31,14 @@ from truecoder.tools.builtin.read_file import (
     ReadFileOutput,
     ReadFileTool,
 )
+from truecoder.tools.builtin.shell import (
+    DEFAULT_SHELL_LIMITS,
+    ShellArguments,
+    ShellDefaults,
+    ShellOutput,
+    build_shell_request,
+    format_shell_result,
+)
 from truecoder.tools.builtin.write_file import (
     MAX_WRITE_BYTES,
     WriteFileArguments,
@@ -39,6 +47,7 @@ from truecoder.tools.builtin.write_file import (
 )
 
 __all__ = [
+    "DEFAULT_SHELL_LIMITS",
     "MAX_DIRECTORY_ENTRIES",
     "MAX_EDIT_FILE_BYTES",
     "MAX_EDIT_TEXT_BYTES",
@@ -63,7 +72,12 @@ __all__ = [
     "ReadFileArguments",
     "ReadFileOutput",
     "ReadFileTool",
+    "ShellArguments",
+    "ShellDefaults",
+    "ShellOutput",
     "WriteFileArguments",
     "WriteFileOutput",
     "WriteFileTool",
+    "build_shell_request",
+    "format_shell_result",
 ]
