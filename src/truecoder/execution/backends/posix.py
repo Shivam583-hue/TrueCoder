@@ -11,10 +11,7 @@ from dataclasses import dataclass
 
 from ..audit.models import BackendResourceIdentifier
 from ..cancellation import CancellationRequested, CancellationToken
-from ..environment import (
-    EnvironmentPolicy,
-    construct_environment,
-)
+from ..environment import EnvironmentPolicy
 from ..errors import (
     BackendOperationError,
     BackendStartError,
@@ -26,9 +23,9 @@ from ..models import (
     ExecutionContext,
     ExecutionRequest,
     NativeDiagnostic,
-    ResolvedShellKind,
     TerminationReason,
 )
+from ..preparation import PreparedExecution
 from .base import BackendResourceRegistrar
 from .models import (
     MAX_BACKEND_OUTPUT_CHUNK_BYTES,
@@ -417,24 +414,22 @@ class PosixBackend:
 
     async def start(
         self,
+        prepared: PreparedExecution,
         request: ExecutionRequest,
         context: ExecutionContext,
         cancellation: CancellationToken,
         register_resource: BackendResourceRegistrar,
     ) -> PosixExecutionHandle:
-        _validate_start_inputs(request, context, cancellation, register_resource)
+        _validate_start_inputs(
+            prepared,
+            request,
+            context,
+            cancellation,
+            register_resource,
+        )
         cancellation.raise_if_cancelled()
         self._validate_host_and_cwd(request, context)
-        environment = construct_environment(
-            platform="posix",
-            inherited=(
-                self._inherited_environment
-                if self._inherited_environment is not None
-                else os.environ
-            ),
-            requested=request.environment,
-            policy=self._environment_policy,
-        )
+        environment = prepared.environment
         if not environment.valid:
             names = ", ".join(
                 sorted(violation.name for violation in environment.violations)
@@ -445,7 +440,7 @@ class PosixBackend:
                 backend="posix",
                 operation="construct_environment",
             )
-        selected = self._selected_for(request)
+        selected = self._selected_for(prepared)
         ownership_token = secrets.token_hex(32)
         cgroup = create_execution_cgroup(
             self._cgroup_v2,
@@ -560,23 +555,10 @@ class PosixBackend:
                 operation="validate_cwd",
             )
 
-    def _selected_for(self, request: ExecutionRequest) -> SelectedBackend:
-        resolved: ResolvedShellKind | None = None
-        if request.mode == "shell":
-            if request.shell_kind == "auto":
-                supported = self._descriptor.capabilities.supported_shells
-                resolved = (
-                    "posix"
-                    if "posix" in supported
-                    else "powershell"
-                    if "powershell" in supported
-                    else None
-                )
-            else:
-                resolved = request.shell_kind
+    def _selected_for(self, prepared: PreparedExecution) -> SelectedBackend:
         return SelectedBackend(
             descriptor=self._descriptor,
-            resolved_shell=resolved,
+            resolved_shell=prepared.resolved_shell,
             selection_reason="POSIX backend instance selected by the execution service.",
         )
 
@@ -791,11 +773,14 @@ def _supervisor_environment() -> dict[str, str]:
 
 
 def _validate_start_inputs(
+    prepared: object,
     request: object,
     context: object,
     cancellation: object,
     register_resource: object,
 ) -> None:
+    if not isinstance(prepared, PreparedExecution):
+        raise TypeError("prepared must be PreparedExecution")
     if not isinstance(request, ExecutionRequest):
         raise TypeError("request must be ExecutionRequest")
     if not isinstance(context, ExecutionContext):
