@@ -108,7 +108,7 @@ def descriptor() -> BackendDescriptor:
 
 
 def workspace() -> Path:
-    directory = Path(tempfile.mkdtemp(prefix="tc-plan-"))
+    directory = Path(tempfile.mkdtemp(prefix="tc-plan-")).resolve()
     os.chmod(directory, 0o755)
     return directory
 

@@ -1,3 +1,4 @@
+
 import os
 import stat
 import tempfile
@@ -5,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.helpers.platforms import requires_symlinks
 from truecoder.tools import (
     ToolApproval,
     ToolArgumentError,
@@ -45,6 +47,7 @@ class WriteFileConstructionTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             WriteFileTool("/workspace")  # type: ignore[arg-type]
 
+    @requires_symlinks
     def test_resolves_and_preserves_the_injected_workspace_root(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory).resolve()
@@ -240,6 +243,7 @@ class WriteFileToolTests(unittest.IsolatedAsyncioTestCase):
             self._arguments("parent.txt/file.txt"),
         )
 
+    @requires_symlinks
     async def test_rejects_symlink_targets_and_parent_directories(self):
         real_directory = self.workspace / "real"
         real_directory.mkdir()

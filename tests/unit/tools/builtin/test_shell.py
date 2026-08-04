@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from tests.helpers.platforms import requires_symlinks
 from truecoder.execution.cancellation import CancellationSource
 from truecoder.execution.context import ExecutionContextFactory
 from truecoder.execution.errors import AuditUnavailableError
@@ -189,6 +190,7 @@ class ShellRequestTests(unittest.TestCase):
 
         self.assertEqual(request.working_directory, self.root)
 
+    @requires_symlinks
     def test_rejects_absolute_missing_file_and_escape_paths(self):
         outside = Path(tempfile.mkdtemp())
         self.addCleanup(outside.rmdir)

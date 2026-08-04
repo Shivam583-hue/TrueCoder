@@ -1,8 +1,10 @@
+
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.helpers.platforms import requires_symlinks
 from truecoder.tools import ToolApproval, ToolArgumentError, ToolExecutionError
 from truecoder.tools.builtin import (
     GrepArguments,
@@ -88,6 +90,7 @@ class GrepToolTests(unittest.IsolatedAsyncioTestCase):
             [1, 3],
         )
 
+    @requires_symlinks
     async def test_skips_sensitive_linked_binary_and_oversized_files(self):
         (self.workspace / ".env").write_text("target", encoding="utf-8")
         (self.workspace / "binary.bin").write_bytes(b"target\x00")

@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.helpers.platforms import requires_symlinks
 from truecoder.execution.audit.permissions import AuditPermissions
 from truecoder.execution.errors import AuditUnavailableError
 
@@ -21,6 +22,7 @@ class AuditPermissionsTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
+    @requires_symlinks
     def test_rejects_database_symlinks(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

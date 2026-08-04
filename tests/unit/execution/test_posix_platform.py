@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from tests.helpers.platforms import skip_module_on_windows
+
+skip_module_on_windows('POSIX resource limits')
+
 import unittest
 
 from truecoder.execution.backends.posix_limits import build_rlimit_settings

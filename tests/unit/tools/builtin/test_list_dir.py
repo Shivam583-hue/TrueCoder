@@ -1,8 +1,10 @@
+
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.helpers.platforms import requires_symlinks
 from truecoder.tools import (
     ToolApproval,
     ToolArgumentError,
@@ -36,6 +38,7 @@ class ListDirConstructionTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             ListDirTool("/workspace")  # type: ignore[arg-type]
 
+    @requires_symlinks
     def test_resolves_the_injected_workspace_root(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory).resolve()
@@ -131,6 +134,7 @@ class ListDirToolTests(unittest.IsolatedAsyncioTestCase):
             {".env.example", "visible.txt"},
         )
 
+    @requires_symlinks
     async def test_reports_symlinks_without_following_them(self):
         directory = self.workspace / "directory"
         directory.mkdir()

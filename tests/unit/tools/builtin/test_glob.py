@@ -1,8 +1,10 @@
+
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.helpers.platforms import requires_symlinks
 from truecoder.tools import ToolApproval, ToolArgumentError, ToolExecutionError
 from truecoder.tools.builtin import GlobArguments, GlobOutput, GlobTool
 
@@ -78,6 +80,7 @@ class GlobToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["matches"], ["project/src/app.py"])
 
+    @requires_symlinks
     async def test_skips_sensitive_paths_and_symbolic_links(self):
         (self.workspace / ".git").mkdir()
         (self.workspace / ".git" / "config.py").write_text("", encoding="utf-8")

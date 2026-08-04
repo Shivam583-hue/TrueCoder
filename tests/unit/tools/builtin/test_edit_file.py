@@ -1,9 +1,11 @@
+
 import stat
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.helpers.platforms import requires_symlinks
 from truecoder.tools import (
     ToolApproval,
     ToolArgumentError,
@@ -170,6 +172,7 @@ class EditFileToolTests(unittest.IsolatedAsyncioTestCase):
                 self._arguments(new_text="long"),
             )
 
+    @requires_symlinks
     async def test_rejects_unsafe_sensitive_missing_and_symlink_paths(self):
         target = self.workspace / "target.txt"
         target.write_text("old", encoding="utf-8")
