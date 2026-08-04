@@ -213,9 +213,13 @@ class BoundedPreview:
         lines = list(self._lines)
         if self._partial:
             lines.append(self._clamp(self._partial))
+        trimmed = self.trimmed
+        if len(lines) > self._max_lines:
+            lines = lines[-self._max_lines :]
+            trimmed = True
         if not lines:
             return ""
-        if self.trimmed:
+        if trimmed:
             return "\n".join([TRUNCATION_NOTE, *lines])
         return "\n".join(lines)
 
