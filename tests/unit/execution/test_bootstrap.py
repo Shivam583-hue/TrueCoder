@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.fakes.execution import CollectingEventSink, PreviewCollector
 from truecoder.execution.approval import ApprovalResponse, ApprovalService
@@ -164,11 +165,12 @@ class ExecutionBootstrapTests(BootstrapFixture):
             version="test",
         )
 
-        runtime = await bootstrap_execution(
-            self.approvals,
-            config=self.config(),
-            discovery_snapshot=snapshot(windows=windows),
-        )
+        with patch("truecoder.execution.bootstrap.WINDOWS", False):
+            runtime = await bootstrap_execution(
+                self.approvals,
+                config=self.config(),
+                discovery_snapshot=snapshot(windows=windows),
+            )
 
         self.assertFalse(runtime.shell_available)
         windows_health = next(

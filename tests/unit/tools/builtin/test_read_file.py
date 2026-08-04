@@ -173,10 +173,7 @@ class ReadFileToolTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reads_the_requested_range_and_reports_more_content(self):
         source = self.workspace / "source.py"
-        source.write_text(
-            "line 1\nline 2\nline 3\nline 4\n",
-            encoding="utf-8",
-        )
+        source.write_bytes(b"line 1\nline 2\nline 3\nline 4\n")
 
         result = await self.tool.run(
             self._arguments("source.py", start_line=2, line_count=2)

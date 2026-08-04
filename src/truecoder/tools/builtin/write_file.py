@@ -158,10 +158,9 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
 
                 destination_mode = stat.S_IMODE(destination_stat.st_mode)
 
-            os.chmod(temporary_path, destination_mode)
-
-            sync_fd = os.open(temporary_path, os.O_RDONLY)
+            sync_fd = os.open(temporary_path, os.O_RDWR)
             try:
+                os.chmod(temporary_path, destination_mode)
                 os.fsync(sync_fd)
             finally:
                 os.close(sync_fd)
