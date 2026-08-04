@@ -6,6 +6,7 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 
+from tests.fakes.execution import CollectingEventSink, PreviewCollector
 from truecoder.execution.approval import ApprovalResponse, ApprovalService
 from truecoder.execution.audit import (
     AuditService,
@@ -26,6 +27,7 @@ from truecoder.execution.bootstrap import (
     ExecutionBootstrapConfig,
     bootstrap_execution,
 )
+from truecoder.execution.events import NullEventSink
 from truecoder.execution.models import (
     BackendCapabilities,
     ExecutionContext,
@@ -108,7 +110,9 @@ def snapshot(
     )
 
 
-class ExecutionBootstrapTests(unittest.IsolatedAsyncioTestCase):
+class BootstrapFixture(unittest.IsolatedAsyncioTestCase):
+    """Shared temporary audit storage and approval service."""
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -125,6 +129,8 @@ class ExecutionBootstrapTests(unittest.IsolatedAsyncioTestCase):
         }
         return ExecutionBootstrapConfig(**values)
 
+
+class ExecutionBootstrapTests(BootstrapFixture):
     async def test_healthy_posix_backend_enables_the_service(self):
         runtime = await bootstrap_execution(
             self.approvals,
@@ -300,6 +306,45 @@ class ExecutionBootstrapTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(runtime.shell_available)
         self.assertEqual(runtime.backends[0].descriptor.name, "container")
+
+
+class BootstrapSinkTests(BootstrapFixture):
+    """Presentation sinks must reach the runner without gating a run."""
+
+    async def test_configured_sinks_reach_the_constructed_runner(self):
+        events = CollectingEventSink()
+        preview = PreviewCollector()
+
+        runtime = await bootstrap_execution(
+            self.approvals,
+            config=self.config(event_sink=events, preview_sink=preview),
+            discovery_snapshot=snapshot(posix=posix_descriptor()),
+        )
+
+        assert runtime.service is not None
+        runner = runtime.service._runner
+        assert runner is not None
+        self.assertIs(runner._event_sink, events)
+        self.assertIs(runner._preview_sink, preview)
+
+    async def test_omitted_sinks_leave_a_null_event_sink(self):
+        runtime = await bootstrap_execution(
+            self.approvals,
+            config=self.config(),
+            discovery_snapshot=snapshot(posix=posix_descriptor()),
+        )
+
+        assert runtime.service is not None
+        runner = runtime.service._runner
+        assert runner is not None
+        self.assertIsInstance(runner._event_sink, NullEventSink)
+        self.assertIsNone(runner._preview_sink)
+
+    def test_configuration_rejects_objects_that_are_not_sinks(self):
+        with self.assertRaises(TypeError):
+            self.config(event_sink=object())
+        with self.assertRaises(TypeError):
+            self.config(preview_sink=object())
 
 
 if __name__ == "__main__":

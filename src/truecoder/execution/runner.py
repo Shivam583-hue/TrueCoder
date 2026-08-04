@@ -92,8 +92,20 @@ _EVENT_BY_SOURCE: Final[dict[str, AuditEventType]] = {
 
 
 class PreviewSink:
-    async def publish_bounded(self, text: str) -> None:
-        del text
+    """Receives bounded sanitized output text for a named execution.
+
+    One sink instance serves every execution, so each update carries the
+    execution identity and stream it belongs to. Sinks must never block or
+    fail a run; the runner treats a preview as presentation, not evidence.
+    """
+
+    async def publish_bounded(
+        self,
+        execution_id: str,
+        stream: str,
+        text: str,
+    ) -> None:
+        del execution_id, stream, text
 
 
 class _EvidenceLost(Exception):
@@ -774,7 +786,11 @@ class ExecutionRunner:
                     limit_event.set()
 
                 if self._preview_sink is not None and update.text:
-                    await self._preview_sink.publish_bounded(update.text)
+                    await self._preview_sink.publish_bounded(
+                        execution.execution_id,
+                        chunk.stream,
+                        update.text,
+                    )
 
             closed = True
             self._close_streams(collector)

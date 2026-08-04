@@ -37,10 +37,11 @@ from truecoder.execution.discovery import (
 )
 from truecoder.execution.environment import EnvironmentPolicy
 from truecoder.execution.errors import ExecutionInfrastructureError
+from truecoder.execution.events import ExecutionEventSink
 from truecoder.execution.models import BackendName, RiskLevel
 from truecoder.execution.policy import PolicyConfig
 from truecoder.execution.registry import ExecutionRegistry
-from truecoder.execution.runner import ExecutionRunner
+from truecoder.execution.runner import ExecutionRunner, PreviewSink
 from truecoder.execution.service import ExecutionService
 
 
@@ -65,6 +66,8 @@ class ExecutionBootstrapConfig:
     environment_policy: EnvironmentPolicy = field(
         default_factory=EnvironmentPolicy
     )
+    event_sink: ExecutionEventSink | None = None
+    preview_sink: PreviewSink | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.enabled, bool):
@@ -77,6 +80,16 @@ class ExecutionBootstrapConfig:
             raise TypeError("policy_config must be a PolicyConfig")
         if not isinstance(self.environment_policy, EnvironmentPolicy):
             raise TypeError("environment_policy must be an EnvironmentPolicy")
+        if self.event_sink is not None and not isinstance(
+            self.event_sink,
+            ExecutionEventSink,
+        ):
+            raise TypeError("event_sink must implement ExecutionEventSink")
+        if self.preview_sink is not None and not hasattr(
+            self.preview_sink,
+            "publish_bounded",
+        ):
+            raise TypeError("preview_sink must provide publish_bounded")
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +220,8 @@ async def bootstrap_execution(
             approval_service,
             policy_version=settings.policy_config.version,
         ),
+        event_sink=settings.event_sink,
+        preview_sink=settings.preview_sink,
     )
     service = ExecutionService(
         registry,
