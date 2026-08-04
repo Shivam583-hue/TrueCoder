@@ -650,3 +650,162 @@ Screen.-narrow.empty-chat #launcher-tip {
     height: auto;
     margin-top: 2;
 }
+
+/* Shell execution card */
+ExecutionCard {
+    width: 100%;
+    min-height: 3;
+    margin-bottom: 1;
+    padding: 1 3;
+    background: transparent;
+    border: none;
+}
+
+.execution-heading {
+    width: 100%;
+    height: 1;
+}
+
+.execution-glyph {
+    width: 2;
+    min-width: 2;
+    color: $tc-text-muted;
+}
+
+ExecutionCard.state-running .execution-glyph,
+ExecutionCard.state-starting .execution-glyph {
+    color: $tc-blue;
+}
+
+ExecutionCard.state-completed .execution-glyph {
+    color: $tc-green;
+}
+
+ExecutionCard.state-failed .execution-glyph,
+ExecutionCard.state-cancelled .execution-glyph,
+ExecutionCard.state-rejected .execution-glyph {
+    color: $tc-red;
+}
+
+ExecutionCard.state-awaiting-approval .execution-glyph,
+ExecutionCard.state-cancelling .execution-glyph,
+ExecutionCard.state-terminating .execution-glyph {
+    color: $tc-orange;
+}
+
+.execution-title {
+    width: auto;
+    max-width: 60%;
+    color: $tc-text;
+    text-style: bold;
+}
+
+.execution-state-label {
+    width: auto;
+    color: $tc-text-muted;
+}
+
+.execution-cancel {
+    display: none;
+    width: 6;
+    min-width: 6;
+    height: 1;
+    margin-left: 2;
+    padding: 0 1;
+    background: transparent;
+    color: $tc-red;
+    border: none;
+}
+
+ExecutionCard.state-running .execution-cancel,
+ExecutionCard.state-starting .execution-cancel,
+ExecutionCard.state-terminating .execution-cancel {
+    display: block;
+}
+
+.execution-cancel:focus {
+    background: $tc-surface-hover;
+    text-style: bold;
+}
+
+.execution-cancel:disabled {
+    display: none;
+}
+
+.execution-details-toggle {
+    width: 9;
+    min-width: 9;
+    height: 1;
+    margin-left: 2;
+    padding: 0 1;
+    background: transparent;
+    color: $tc-text-muted;
+    border: none;
+}
+
+.execution-details-toggle:focus {
+    background: $tc-surface-hover;
+    color: $tc-orange;
+    text-style: bold;
+}
+
+.execution-summary {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+    padding-left: 2;
+    color: $tc-text-secondary;
+}
+
+.execution-output {
+    display: none;
+    width: 100%;
+    height: auto;
+    max-height: 14;
+    margin-top: 1;
+    padding: 1 2;
+    background: #080808;
+    border-left: solid $tc-border;
+    scrollbar-size: 1 1;
+    scrollbar-color: $tc-border-strong;
+    scrollbar-background: #080808;
+}
+
+ExecutionCard.state-running .execution-output,
+ExecutionCard.state-terminating .execution-output,
+ExecutionCard.state-cancelling .execution-output,
+ExecutionCard.state-completed .execution-output,
+ExecutionCard.state-failed .execution-output,
+ExecutionCard.state-cancelled .execution-output {
+    display: block;
+}
+
+.execution-output-content {
+    width: 100%;
+    height: auto;
+    color: $tc-text-secondary;
+}
+
+.execution-details {
+    display: none;
+    width: 100%;
+    height: auto;
+    max-height: 16;
+    margin-top: 1;
+    padding: 1 2;
+    background: #080808;
+    border-top: solid $tc-border;
+    scrollbar-size: 1 1;
+    scrollbar-color: $tc-border-strong;
+    scrollbar-background: #080808;
+}
+
+ExecutionCard.expanded .execution-details {
+    display: block;
+}
+
+.execution-details-content {
+    width: 100%;
+    height: auto;
+    color: $tc-text-secondary;
+}
