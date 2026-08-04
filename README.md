@@ -2,10 +2,11 @@
 
 > A terminal coding agent with an auditable execution plane: every command it runs is policy-checked, approved, bounded, sandboxable, and durably recorded before a single byte of project code executes.
 
-[![Tests](https://img.shields.io/badge/tests-785%2F785%20passing-2ea44f?style=flat-square&logo=pytest&logoColor=white)](#testing)
+[![Tests](https://img.shields.io/badge/tests-958%2F958%20passing-2ea44f?style=flat-square&logo=pytest&logoColor=white)](#testing)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)](#prerequisites)
 [![Ruff](https://img.shields.io/badge/ruff-check%20passing-2ea44f?style=flat-square&logo=ruff&logoColor=white)](#available-commands-and-scripts)
 [![Sandbox](https://img.shields.io/badge/sandbox-Linux%20%C2%B7%20Docker%20certified-2496ed?style=flat-square&logo=docker&logoColor=white)](#container-sandbox-image)
+[![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](#testing)
 
 TrueCoder is a Python agent runtime that reads, searches, edits, and runs code inside one project.
 It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, seven approval-gated tools, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
@@ -54,6 +55,12 @@ The certified sandbox profile runs commands in a digest-pinned, non-root, read-o
 - **Crash recovery** - startup leases every nonterminal audit row and acts only on exact persisted identities, never on a guessed or reused PID.
 - **Bounded everything** - output, previews, environment allowlists, scan limits, match counts, and lifecycle event buffers all stay bounded as the underlying quantity grows.
 - **Secret hygiene** - child environments are built from an allowlist rather than copied, credential-shaped names are removed, and values are never copied into audit metadata or tool results.
+- **Live execution cards** - one evolving card per command, driven entirely by typed lifecycle stages, with bounded streaming output, responsive cancel by execution id, and the audit id on completion.
+- **Compact approvals** - seven decision facts by default (command, directory, backend, access, limits, risk, scope), with the full capability contract behind the expander.
+- **Safe shutdown** - closing the interface resolves any awaited approval, cancels active executions by id, and waits a bounded window for cleanup and audit finalization.
+- **Honest platform reporting** - macOS reports `process_limits` as unsupported rather than applying a per-user rlimit as if it bounded a process tree.
+- **Trusted-command rules** - versioned, user-editable rules that can only tighten policy, stored privately and parsed strictly.
+- **Audit viewer** - filter runs by outcome, backend, recency, and text, with redacted secret-shaped details and cleanup status surfaced ahead of the exit code.
 - **Project instructions** - `AGENTS.md` and `AGENTS.override.md` are discovered from the Git project root down to the launch directory and injected into the system prompt.
 
 ## Repository structure
@@ -129,6 +136,7 @@ TrueCoder/
 │   │   ├── events.py                  # Bounded transient lifecycle publishing
 │   │   ├── bootstrap.py               # Composition root and health report
 │   │   ├── defaults.py                # Default limits: 120 s, 1 MiB output, 64 KiB return
+│   │   ├── trusted_rules.py           # Versioned trusted-command rules that only tighten
 │   │   │
 │   │   ├── audit/                     # Durable evidence boundary
 │   │   │   ├── schema.py              # Versioned SQLite schema and immutability triggers
@@ -137,6 +145,7 @@ TrueCoder/
 │   │   │   ├── permissions.py         # 0700 directories and 0600 files, or unavailable
 │   │   │   ├── output.py              # Hashed full streams with bounded previews
 │   │   │   ├── recovery.py            # Leasing and terminal closure of nonterminal rows
+│   │   │   ├── retention.py           # Bounded deletion that keeps nonterminal evidence
 │   │   │   ├── models.py
 │   │   │   └── codec.py
 │   │   │
@@ -158,7 +167,9 @@ TrueCoder/
 │   │       ├── container_runtime.py   # Runtime invocation boundary
 │   │       ├── container_identity.py  # Label and ownership verification
 │   │       ├── container_recovery.py  # Full immutable ID plus exact label match
-│   │       └── windows.py             # Placeholder, never registered
+│   │       ├── windows.py             # Job Object backend, handle, and recovery
+│   │       ├── windows_native.py      # ctypes Win32 boundary, suspended launch gate
+│   │       └── windows_plan.py        # Pure argv, quoting, and error normalization
 │   │
 │   ├── session/
 │   │   ├── manager.py                 # Create, switch, rename, delete, and append turns
@@ -168,12 +179,14 @@ TrueCoder/
 │   │
 │   └── tui/
 │       ├── app.py                     # Textual application, mount-time execution bootstrap
+│       ├── execution_view.py          # Pure stage mapping, approval rows, bounded preview
+│       ├── audit_view.py              # Audit filtering, sanitization, and summaries
 │       ├── widgets.py                 # Transcript, tool cards, and approval widgets
 │       ├── sessions.py                # Session browser
 │       └── styles.tcss                # Terminal stylesheet
 │
 └── tests/
-    ├── unit/                          # 668 scenarios: pure logic, no host dependency
+    ├── unit/                          # 824 scenarios: pure logic, no host dependency
     │   ├── agent/                     # Loop, state, messages, composition, instructions
     │   ├── client/                    # Streaming, retries, and error translation
     │   ├── context/                   # Turn selection and token budgeting
@@ -182,7 +195,7 @@ TrueCoder/
     │   └── execution/                 # Policy, environment, output, discovery, selection
     │       └── audit/                 # Runner, lifecycle, results, recovery, and evidence
     ├── contract/                      # 31 scenarios: one backend contract, three adapters
-    ├── integration/                   # 65 scenarios: real processes, SQLite, and the TUI
+    ├── integration/                   # 82 scenarios: real processes, SQLite, and the TUI
     ├── sandbox/                       # 21 scenarios: adversarial checks against real Docker
     ├── fakes/                         # Deterministic backend and service doubles
     └── helpers/                       # Small real child programs used by process tests
@@ -211,20 +224,23 @@ Tools never depend on the agent, client, or UI, and the UI never contains agent 
 ## Engineering scorecard
 
 Every figure below was measured on 4 August 2026 from the current working tree, on Linux with Python 3.14.3 and Docker 29.3.0.
+Windows figures are not listed because that backend has not yet run on a Windows host; see [Known limitations](#known-limitations).
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                       **23,833** across 89 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **16,986 lines**, 71% of src | The execution control plane, audit store, and platform backends. Tools are 2,731, the TUI is 1,644, the agent is 1,518, sessions are 510, and the client is 440. |
-| Test lines                 |                       **21,170** across 68 files | A test-to-source ratio of roughly 0.89 to 1.                                                                                                                  |
-| Automated scenarios        |                        **785**, all passing      | 668 unit, 65 integration, 31 contract, and 21 sandbox scenarios. Full suite wall time was 54.7 seconds.                                                       |
-| Unit suite                 |                    **668 passing in 4.8 seconds** | Pure logic with injected boundaries, so no scenario depends on the host's shell, cgroups, or container runtime.                                               |
+| Physical source lines      |                       **26,008** across 96 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **18,421 lines**, 71% of src | The execution control plane, audit store, and platform backends. Tools are 2,731, the TUI is 2,352, the agent is 1,550, sessions are 510, and the client is 440. |
+| Test lines                 |                       **23,159** across 77 files | A test-to-source ratio of roughly 0.89 to 1.                                                                                                                  |
+| Automated scenarios        |                        **958**, all passing      | 824 unit, 82 integration, 31 contract, and 21 sandbox scenarios. Full suite wall time was 58.0 seconds.                                                       |
+| Unit suite                 |                    **824 passing in 4.1 seconds** | Pure logic with injected boundaries, so no scenario depends on the host's shell, cgroups, or container runtime.                                               |
 | Backend contract suite     |                      **31 passing**, 3 adapters | One reusable contract applied to the fake, POSIX, and container backends, covering ownership transfer, idempotent terminate, wait, and cleanup.               |
 | Adversarial sandbox suite  |                                 **21 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory and PID limits, and no container or file leaks. |
 | Lint                       |                          **ruff check clean** | ruff 0.16.0 over `src`, `tests`, and `container`.                                                                                                            |
 | Certified sandbox profile  |         **Linux + Docker + one pinned image** | Podman and nerdctl are refused until their dialects pass the same tests. Non-Linux hosts report `container-platform-unsupported`.                             |
 | Default execution ceiling  | **120 s, 1 MiB produced, 64 KiB returned** | Requests may tighten these values and can never widen them.                                                                                                  |
-| Windows support            |                       **Not implemented** | The Windows descriptor exists but the backend is a placeholder and is never registered, so `shell` is absent on Windows.                                       |
+| Windows support            |                    **Written, never executed** | The Job Object backend and its recovery handler are implemented and registered on Windows hosts. No line of its native code has run: the pure planning, quoting, and error-normalization layers are tested, the ctypes boundary is not. |
+| Fuzz scenarios             |               **10, deterministic seed** | Noisy Unicode and structural input driven through the terminal sanitizer, bounded byte stream, bounded preview, trusted-rules parser, and Windows quoter.     |
+| Continuous integration     |     **Linux, macOS, and Windows jobs** | Committed workflows. They have not yet run, so the macOS and Windows suites are unverified until the first push.                                              |
 | Coverage percentage        |                        **Not measured** | No coverage tool is committed or installed. No coverage number is claimed until one is.                                                                       |
 
 ## Technical highlights
@@ -513,11 +529,11 @@ The suite is written in plain `unittest` with `IsolatedAsyncioTestCase`, so no t
 python -m unittest discover -s tests -t .
 ```
 
-Current result: **785 passing, 0 failing**, in 54.7 seconds.
+Current result: **958 passing, 0 failing**, in 58.0 seconds.
 
 The four suites prove different classes of guarantee, and they are kept separate on purpose.
 
-### Unit, 668 scenarios in 4.8 seconds
+### Unit, 824 scenarios in 4.1 seconds
 
 Pure logic behind injected boundaries.
 `DiscoveryIO` is modeled rather than measured, so these scenarios describe Linux, macOS, Windows, and unknown hosts without depending on the machine running them.
@@ -529,10 +545,11 @@ One reusable backend contract applied to three adapters: the fake backend, POSIX
 It encodes the invariants that make backend ownership safe, including exact resource identity on successful start, cleanup before raising on a failed registration, idempotent terminate and wait, a single output owner reaching end of stream, and nonzero exit treated as ordinary backend data.
 A backend must pass this suite before the execution service can register it.
 
-### Integration, 65 scenarios
+### Integration, 82 scenarios
 
 Real processes, real SQLite, and the real Textual application.
 This suite covers the POSIX supervisor's gate and lifetime pipe, termination escalation and first-reason preservation, environment filtering observed from inside a child, recovery against a live exact resource, audit routes for every terminal outcome, host discovery on the actual machine, the session store and manager, the TUI, and the shell tool driven through the agent boundary including outer cancellation.
+It also asserts the interface lifecycle gate: a card evolves only from typed stages, stop cancels one execution by id rather than the turn, a second stop does not cancel twice, a rapid completion never leaves a card running, and shutdown resolves an awaited approval and cancels every active execution.
 
 ### Sandbox, 21 scenarios
 
@@ -540,6 +557,12 @@ Adversarial checks against real Docker.
 These are the claims the sandbox makes, tested rather than asserted: a host secret outside the workspace is unreadable, `workspace-read` cannot mutate the host tree, `workspace-write` is refused when the host denies it, the root filesystem is read-only, only approved tmpfs locations are writable, network denial blocks a real external canary, no runtime socket is visible, every capability is dropped, no-new-privileges is active, memory exhaustion normalizes to `memory_limit`, the PID limit blocks fork growth, stdout and stderr stay separate and raw, the private environment file never survives the run, a signal-ignoring command is still removed, a registration failure removes the stopped container, the container is created stopped before registration, and recovery removes only the exact labeled container.
 
 This suite requires Docker and the locally built image whose digest matches `container/image.lock`.
+
+### Continuous integration
+
+`.github/workflows/tests.yml` runs lint plus the unit, contract, and integration suites on Linux, builds and locks the sandbox image before running the adversarial suite, and runs the unit and contract suites on `macos-latest` and `windows-latest`.
+These workflows are committed but have not executed yet.
+Until the macOS and Windows jobs are green, treat those platforms as unverified regardless of what the code contains.
 
 ## Runtime data and storage
 
@@ -563,17 +586,20 @@ Empty sessions are temporary placeholders and are removed automatically when you
 
 ## Known limitations
 
-- **Windows execution is not implemented.** The Windows descriptor and Job Object recovery contracts exist, but the backend is a placeholder that is never registered. An available Windows descriptor is deliberately not enough to advertise `shell`.
+- **The Windows backend has never been executed.** The Job Object backend, its ctypes boundary, and its recovery handler are implemented and registered on Windows hosts, but no line of that native code has ever run. Only the pure layers (argv construction, `CommandLineToArgvW`-compatible quoting, Win32 error and NTSTATUS normalization, job limit flags) are covered by tests. Treat it as unproven until the `windows-latest` CI job passes the shared contract suite.
 - **Only the Docker dialect is certified.** Podman and nerdctl are refused by both the plan and capability derivation until their dialects pass the same contract and sandbox suites. Non-Linux hosts report `container-platform-unsupported`.
 - **Container CPU limits are best effort.** The trusted entrypoint monitors aggregate cgroup CPU accounting, but that enforcement has not been adversarially proven, so it is advertised as best effort rather than enforced.
 - **Local POSIX execution is not isolation.** The POSIX backend gives reliable process lifecycle management and, on Linux with a delegated cgroup subtree, hard memory and PID limits. It provides no filesystem or network isolation and its descriptor reports both as unsupported. Use the container backend when isolation matters.
 - **macOS recovery fails closed.** After a restart, a live macOS resource whose exact ownership cannot be proven with the available facts is refused rather than assumed. This is the intended tradeoff, but it means some macOS resources need manual cleanup.
+- **macOS cannot bound a process tree.** `RLIMIT_NPROC` is per-user on macOS, so applying it as a tree limit could exhaust the login session instead of the command. macOS therefore never applies it and reports `process_limits` as `unsupported`. Use the container backend on Linux when process-count enforcement matters.
+- **macOS and Docker Desktop are not certified.** The container backend stays gated to the Linux Docker profile, so macOS reports `container-platform-unsupported`. Extending certification needs the adversarial sandbox suite to pass on a macOS runner, which has not happened.
 - **cgroup limits depend on delegation.** Hard limits use only controllers that discovery found both available and enabled in a writable delegated subtree. Elsewhere they degrade to explicit best-effort rlimits.
 - **Approval grants are in-memory only.** Session and workspace grants live in the running application and do not survive a restart. Rejections are never remembered.
-- **The TUI renders shell through generic widgets.** Typed live execution cards and streaming output are a separate presentation layer that does not exist yet. Its absence does not weaken process cleanup, bounded output, cancellation, or durable audit, but the experience is plainer than it should be.
+- **Trusted-command rules are not yet consulted by the policy evaluator.** The rule format, strict parser, private storage, and tightening-only semantics are implemented and tested, but `evaluate_policy` does not yet call `apply_trusted_rules`. Editing the rules file changes nothing at runtime until that wiring lands.
+- **Audit retention and the audit viewer are not wired to a screen yet.** `audit/retention.py` and `tui/audit_view.py` are implemented and tested as pure logic, but no key binding opens a viewer and no scheduled job prunes the store. The behavior is correct and covered; it is not yet reachable from the interface.
 - **No coverage measurement is committed.** No coverage tool is installed or configured, so this README claims no coverage percentage.
 - **No formatter configuration is committed.** `ruff check` is clean, but the repository pins no `[tool.ruff]` section, so `ruff format` would apply defaults that disagree with the codebase's existing line width. Either commit a configuration matching the current style or accept a one-time reformat, but do not leave it ambiguous.
-- **No automated CI gate.** Tests, lint, and the sandbox suite are currently run by hand rather than enforced on every push.
+- **CI is committed but unproven.** Workflows exist for Linux, macOS, and Windows, but they have not run. The Linux jobs mirror what is verified locally; the macOS and Windows jobs have never produced a result.
 - **The sandbox suite needs a matching local image.** A rebuilt image with an unlocked digest makes the container backend unavailable, which is correct behavior but easy to trip over during development.
 - **Single provider shape.** The client targets OpenAI-compatible chat completions. Other provider protocols would need a new client behind the same internal event types.
 
