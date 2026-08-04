@@ -101,6 +101,7 @@ class AgentEvent:
                         "backend": execution.backend,
                         "capabilities": asdict(execution.capabilities),
                         "command": execution.command_display,
+                        "execution_id": execution.execution_id,
                         "limits": asdict(execution.effective_limits),
                         "risk": execution.risk.value,
                         "working_directory": str(execution.working_directory),

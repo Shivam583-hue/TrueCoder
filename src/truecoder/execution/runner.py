@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from typing import Final, TypeAlias
+from typing import Final, Protocol, TypeAlias, runtime_checkable
 
 from truecoder.execution.audit.models import (
     AuditEventType,
@@ -91,7 +91,8 @@ _EVENT_BY_SOURCE: Final[dict[str, AuditEventType]] = {
 }
 
 
-class PreviewSink:
+@runtime_checkable
+class PreviewSink(Protocol):
     """Receives bounded sanitized output text for a named execution.
 
     One sink instance serves every execution, so each update carries the
@@ -99,6 +100,15 @@ class PreviewSink:
     fail a run; the runner treats a preview as presentation, not evidence.
     """
 
+    async def publish_bounded(
+        self,
+        execution_id: str,
+        stream: str,
+        text: str,
+    ) -> None: ...
+
+
+class NullPreviewSink:
     async def publish_bounded(
         self,
         execution_id: str,
