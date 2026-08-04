@@ -62,16 +62,12 @@ class _PendingApproval:
 
 
 class ExecutionStageMessage(Message):
-    """One typed lifecycle stage forwarded from the execution plane."""
-
     def __init__(self, event: ExecutionLifecycleEvent) -> None:
         self.event = event
         super().__init__()
 
 
 class ExecutionOutputMessage(Message):
-    """Bounded sanitized output text for one execution."""
-
     def __init__(self, execution_id: str, stream: str, text: str) -> None:
         self.execution_id = execution_id
         self.stream = stream
@@ -80,12 +76,6 @@ class ExecutionOutputMessage(Message):
 
 
 class _AppEventSink:
-    """Forwards lifecycle events into the Textual message loop.
-
-    `post_message` never blocks and never raises into the caller, so a slow
-    or unmounted interface cannot delay or fail an execution.
-    """
-
     def __init__(self, app: App[None]) -> None:
         self._app = app
 
@@ -209,13 +199,6 @@ class TrueCoderApp(App[None]):
         self.query_one(PromptInput).focus()
 
     async def on_unmount(self) -> None:
-        """Disappear without leaving a process or a nonterminal audit row.
-
-        An approval that is still awaited would otherwise block its tool task
-        forever, so it is resolved as a rejection first. Active executions are
-        then cancelled by ID and given a bounded window to terminate, clean
-        up, and finalize before the worker itself is torn down.
-        """
         self._reject_pending_approval_for_shutdown()
         await self._cancel_active_executions(reason="application shutting down")
         await self._drain_active_worker()
@@ -226,12 +209,6 @@ class TrueCoderApp(App[None]):
                 self.session_manager.close()
 
     def _reject_pending_approval_for_shutdown(self) -> None:
-        """Unblock an awaited approval without repainting a dying interface.
-
-        Widget children are already being torn down at this point, so the
-        only thing that matters is resolving the future the tool task is
-        waiting on. A rejection is the safe answer: nothing was approved.
-        """
         pending = self._pending_approval
         if pending is None or pending.future.done():
             self._clear_pending_approval()
@@ -240,7 +217,6 @@ class TrueCoderApp(App[None]):
         self._clear_pending_approval()
 
     async def _cancel_active_executions(self, *, reason: str) -> bool:
-        """Request cancellation of every active execution by ID."""
         service = self._execution_service()
         if service is None:
             return False
@@ -320,7 +296,6 @@ class TrueCoderApp(App[None]):
             self.notify(f"Cancellation failed: {error}", severity="warning")
 
     async def _execution_card(self, execution_id: str) -> ExecutionCard | None:
-        """Return the card for an execution, mounting one on first sight."""
         card = self._execution_cards.get(execution_id)
         if card is not None:
             return card
@@ -594,7 +569,6 @@ class TrueCoderApp(App[None]):
     def _approval_detail_rows(
         request: ApprovalRequest,
     ) -> tuple[tuple[str, str], ...]:
-        """The compact decision view: seven facts, not twenty-six fields."""
         execution = request.execution
         if execution is None:
             return ()
@@ -604,7 +578,6 @@ class TrueCoderApp(App[None]):
         )
 
     def _attach_execution_approval(self, request: ApprovalRequest) -> None:
-        """Give the execution card its effective security contract."""
         execution = request.execution
         if execution is None:
             return
@@ -881,12 +854,6 @@ class TrueCoderApp(App[None]):
         self.query_one(PromptInput).focus()
 
     async def action_cancel_response(self) -> None:
-        """Stop the narrowest thing that is currently running.
-
-        A running command is cancelled by ID first, which is responsive and
-        leaves the turn intact. Pressing stop again, once no execution is
-        active, cancels the whole turn.
-        """
         if self._pending_approval is not None:
             self._resolve_pending_approval(None)
             return

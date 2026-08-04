@@ -182,12 +182,6 @@ class Agent:
         event_sink: ExecutionEventSink | None = None,
         preview_sink: PreviewSink | None = None,
     ) -> None:
-        """Attach presentation sinks before execution is initialized.
-
-        Sinks are presentation only. They never gate, delay, or fail a run,
-        so attaching them after initialization would silently observe nothing
-        and is refused instead.
-        """
         if self._execution_initialized:
             raise RuntimeError(
                 "execution sinks must be attached before initialization."

@@ -1,9 +1,3 @@
-"""The interface may disappear at any lifecycle point.
-
-Every scenario here asserts the Phase 10 gate: whatever the user does to the
-interface, no execution is left running and no approval is left awaited.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -39,8 +33,6 @@ class FakeRegistry:
 
 
 class FakeExecutionService:
-    """Records cancellation requests exactly as the real service would."""
-
     def __init__(self, execution_ids: tuple[str, ...] = ()) -> None:
         self.registry = FakeRegistry(execution_ids)
         self.cancellations: list[tuple[str, str]] = []
@@ -92,7 +84,6 @@ def make_agent() -> Agent:
 
 
 def attach_execution(agent: Agent, service: FakeExecutionService) -> None:
-    """Install a runtime without running the real bootstrap."""
     agent._execution_runtime = ExecutionRuntime(
         service=service,  # type: ignore[arg-type]
         audit=None,
@@ -184,7 +175,6 @@ class ExecutionCardLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(app.query(ExecutionCard)), 0)
 
     async def test_a_terminal_stage_arriving_immediately_still_settles(self):
-        """Rapid completion must not leave a card stuck as running."""
         app = TrueCoderApp(make_agent())
 
         with patch.dict(os.environ, {"MODEL": "test-model"}):

@@ -652,17 +652,7 @@ class ToolCallCard(Vertical):
 
 
 class ExecutionCard(Vertical):
-    """One evolving card for a single shell execution.
-
-    Every visible change is driven by a typed lifecycle stage or a bounded
-    preview update. The card never inspects a process, never decides an
-    outcome, and never blocks a run; it renders what the execution plane
-    already decided.
-    """
-
     class CancelRequested(Message):
-        """The user asked to stop this execution."""
-
         def __init__(self, execution_id: str) -> None:
             self.execution_id = execution_id
             super().__init__()
@@ -718,14 +708,12 @@ class ExecutionCard(Vertical):
         compact_rows: tuple[tuple[str, str], ...],
         detail_rows: tuple[tuple[str, str], ...],
     ) -> None:
-        """Attach the effective security contract shown to the user."""
         self.compact_rows = compact_rows
         self.detail_rows = detail_rows
         self._refresh_static(".execution-summary", self._compact_text())
         self._refresh_static(".execution-details-content", self._details_text())
 
     def apply_stage(self, stage: str, message: str | None = None) -> None:
-        """Advance the card to a typed lifecycle stage."""
         presentation = stage_presentation(stage)  # type: ignore[arg-type]
         self.stage = stage
         self._set_state(presentation.state)
@@ -737,7 +725,6 @@ class ExecutionCard(Vertical):
             self._disable_cancel()
 
     def mark_cancelling(self) -> None:
-        """Show that a cancellation request was accepted but is not terminal."""
         if self.cancel_requested:
             return
         self.cancel_requested = True
@@ -746,13 +733,11 @@ class ExecutionCard(Vertical):
         self._disable_cancel()
 
     def append_output(self, stream: str, text: str) -> None:
-        """Add bounded preview text without unbounded widget growth."""
         del stream
         self._preview.append(text)
         self._refresh_static(".execution-output-content", self._preview.text())
 
     def finish(self, summary: str, audit_id: str | None = None) -> None:
-        """Record the public result summary and its audit identity."""
         self.result_summary = summary
         self.audit_id = audit_id
         self._disable_cancel()
@@ -781,12 +766,6 @@ class ExecutionCard(Vertical):
         self.add_class(f"state-{state}")
 
     def _disable_cancel(self) -> None:
-        """Disable the stop control, tolerating a torn-down subtree.
-
-        The card can be updated at any lifecycle point, including while the
-        application is unmounting and its children have already been removed.
-        A missing child is not an error for a renderer.
-        """
         if not self.is_mounted:
             return
         try:

@@ -1,10 +1,3 @@
-"""Pure presentation logic for shell execution.
-
-Nothing here imports Textual. Stage mapping, approval summaries, and output
-bounding are ordinary functions and values so they can be tested without
-starting an application, and so the widget layer stays a thin renderer.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,8 +13,6 @@ TRUNCATION_NOTE: Final = "… earlier output trimmed from this preview"
 
 @dataclass(frozen=True, slots=True)
 class StagePresentation:
-    """How one lifecycle stage appears in the interface."""
-
     state: str
     label: str
     glyph: str
@@ -57,7 +48,6 @@ EXECUTION_CARD_STATES: Final = frozenset(
 
 
 def stage_presentation(stage: ExecutionLifecycleStage) -> StagePresentation:
-    """Return the presentation for one lifecycle stage."""
     try:
         return _STAGES[stage]
     except KeyError:
@@ -77,7 +67,6 @@ def _byte_label(value: int) -> str:
 
 
 def _access_label(details: ExecutionApprovalDetails) -> str:
-    """Summarize what the command may reach, most dangerous part first."""
     request = details.request
     filesystem = {
         "host": "full host filesystem",
@@ -104,7 +93,6 @@ def _limits_label(details: ExecutionApprovalDetails) -> str:
 
 
 def scope_label(allowed_scopes: tuple[str, ...]) -> str:
-    """State plainly which approval scopes policy permits."""
     if not allowed_scopes:
         return "no scope available"
     if tuple(allowed_scopes) == ("once",):
@@ -121,7 +109,6 @@ def compact_approval_rows(
     details: ExecutionApprovalDetails,
     allowed_scopes: tuple[str, ...] = ("once",),
 ) -> tuple[tuple[str, str], ...]:
-    """The seven facts a human needs before approving a command."""
     return (
         ("Command", details.command_display),
         ("Directory", str(details.working_directory)),
@@ -136,7 +123,6 @@ def compact_approval_rows(
 def full_approval_rows(
     details: ExecutionApprovalDetails,
 ) -> tuple[tuple[str, str], ...]:
-    """Every security-relevant field, shown behind the details expander."""
     limits = details.effective_limits
     capabilities = details.capabilities
 
@@ -179,13 +165,6 @@ def full_approval_rows(
 
 
 class BoundedPreview:
-    """A fixed-size tail of streamed output.
-
-    The runner already bounds produced and returned bytes. This bounds what
-    the interface retains, so a long-running command cannot grow the widget
-    tree or the transcript's memory without limit.
-    """
-
     def __init__(
         self,
         *,
@@ -208,7 +187,6 @@ class BoundedPreview:
         self.trimmed = False
 
     def append(self, text: str) -> None:
-        """Add streamed text, keeping only the most recent bounded tail."""
         if not isinstance(text, str):
             raise TypeError("text must be a string")
         if not text:
@@ -232,7 +210,6 @@ class BoundedPreview:
             self.trimmed = True
 
     def text(self) -> str:
-        """Render the retained tail, including any incomplete final line."""
         lines = list(self._lines)
         if self._partial:
             lines.append(self._clamp(self._partial))

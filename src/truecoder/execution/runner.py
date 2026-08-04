@@ -93,13 +93,6 @@ _EVENT_BY_SOURCE: Final[dict[str, AuditEventType]] = {
 
 @runtime_checkable
 class PreviewSink(Protocol):
-    """Receives bounded sanitized output text for a named execution.
-
-    One sink instance serves every execution, so each update carries the
-    execution identity and stream it belongs to. Sinks must never block or
-    fail a run; the runner treats a preview as presentation, not evidence.
-    """
-
     async def publish_bounded(
         self,
         execution_id: str,

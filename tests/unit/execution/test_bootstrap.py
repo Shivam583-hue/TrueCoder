@@ -111,8 +111,6 @@ def snapshot(
 
 
 class BootstrapFixture(unittest.IsolatedAsyncioTestCase):
-    """Shared temporary audit storage and approval service."""
-
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -309,8 +307,6 @@ class ExecutionBootstrapTests(BootstrapFixture):
 
 
 class BootstrapSinkTests(BootstrapFixture):
-    """Presentation sinks must reach the runner without gating a run."""
-
     async def test_configured_sinks_reach_the_constructed_runner(self):
         events = CollectingEventSink()
         preview = PreviewCollector()
