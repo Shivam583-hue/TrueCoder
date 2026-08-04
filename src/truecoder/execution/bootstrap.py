@@ -29,6 +29,11 @@ from truecoder.execution.backends.posix import PosixBackend
 from truecoder.execution.backends.posix_identity import current_host_id
 from truecoder.execution.backends.posix_recovery import PosixRecoveryHandler
 from truecoder.execution.backends.registry import BackendRegistry
+from truecoder.execution.backends.windows import (
+    WindowsBackend,
+    WindowsRecoveryHandler,
+)
+from truecoder.execution.backends.windows_native import WINDOWS
 from truecoder.execution.defaults import DEFAULT_EXECUTION_LIMITS
 from truecoder.execution.discovery import (
     DEFAULT_IMAGE_LOCK,
@@ -272,7 +277,13 @@ def _build_backends(
 
     windows = snapshot.backend("windows")
     if windows.available:
-        failures["windows"] = "backend is not implemented"
+        if not WINDOWS:
+            failures["windows"] = "backend requires a windows host"
+        else:
+            try:
+                built.append(WindowsBackend.from_snapshot(snapshot))
+            except (ExecutionInfrastructureError, OSError, TypeError, ValueError):
+                failures["windows"] = "backend construction failed"
 
     container = snapshot.backend("container")
     if container.available:
@@ -299,6 +310,8 @@ def _recovery_handlers(snapshot: DiscoverySnapshot):
     handlers = {}
     if snapshot.host.family == "posix":
         handlers["posix"] = PosixRecoveryHandler()
+    if snapshot.host.system == "windows" and WINDOWS:
+        handlers["windows"] = WindowsRecoveryHandler()
     docker = next(
         (
             runtime

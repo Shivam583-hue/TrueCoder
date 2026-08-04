@@ -156,7 +156,7 @@ class ExecutionBootstrapTests(BootstrapFixture):
         self.assertIsNone(runtime.service)
         self.assertEqual(runtime.health.failure_code, "no_healthy_backend")
 
-    async def test_available_windows_placeholder_is_never_registered(self):
+    async def test_windows_is_never_registered_on_a_non_windows_host(self):
         windows = BackendDescriptor(
             name="windows",
             available=True,
@@ -176,7 +176,10 @@ class ExecutionBootstrapTests(BootstrapFixture):
         )
         self.assertTrue(windows_health.discovered)
         self.assertFalse(windows_health.registered)
-        self.assertEqual(windows_health.reasons, ("backend is not implemented",))
+        self.assertEqual(
+            windows_health.reasons,
+            ("backend requires a windows host",),
+        )
 
     async def test_audit_unavailability_fails_closed(self):
         blocker = self.root / "not-a-directory"
