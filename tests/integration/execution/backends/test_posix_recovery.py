@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.helpers.platforms import skip_module_on_windows
+from tests.helpers.platforms import requires_linux, skip_module_on_windows
 
 skip_module_on_windows('POSIX process identity')
 
@@ -23,6 +23,7 @@ from truecoder.execution.cancellation import CancellationSource
 
 
 @unittest.skipUnless(os.name == "posix", "requires POSIX process semantics")
+@requires_linux
 class PosixRecoveryIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_recovery_terminates_a_live_exact_resource(self):
         request = _request(

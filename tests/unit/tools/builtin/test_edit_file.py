@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tests.helpers.platforms import requires_symlinks
+from tests.helpers.platforms import requires_posix_permissions, requires_symlinks
 from truecoder.tools import (
     ToolApproval,
     ToolArgumentError,
@@ -80,6 +80,7 @@ class EditFileToolTests(unittest.IsolatedAsyncioTestCase):
             ):
                 self.tool.parse_arguments(arguments)
 
+    @requires_posix_permissions
     async def test_replaces_one_unique_exact_match_and_preserves_permissions(self):
         destination = self.workspace / "script.sh"
         destination.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")

@@ -6,12 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.helpers.platforms import requires_symlinks
+from tests.helpers.platforms import requires_posix_permissions, requires_symlinks
 from truecoder.execution.audit.permissions import AuditPermissions
 from truecoder.execution.errors import AuditUnavailableError
 
 
 class AuditPermissionsTests(unittest.TestCase):
+    @requires_posix_permissions
     def test_posix_storage_is_private(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "private" / "audit.sqlite3"

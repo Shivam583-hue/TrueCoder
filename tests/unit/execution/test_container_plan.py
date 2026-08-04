@@ -7,6 +7,7 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from tests.helpers.platforms import requires_posix_permissions
 from truecoder.execution.backends.base import BackendStartContext
 from truecoder.execution.backends.container_dialects import (
     FORBIDDEN_ARGUMENTS,
@@ -209,6 +210,7 @@ class PlanMappingTests(unittest.TestCase):
 
         self.assertFalse(plan.workspace_mount.read_only)
 
+    @requires_posix_permissions
     def test_workspace_write_is_refused_when_the_sandbox_user_cannot_write(self):
         os.chmod(self.root, 0o755)
 
@@ -311,6 +313,7 @@ class PlanMappingTests(unittest.TestCase):
                 ownership_token=TOKEN,
             )
 
+    @requires_posix_permissions
     def test_a_workspace_the_sandbox_user_cannot_read_is_refused(self):
         private = Path(tempfile.mkdtemp(prefix="tc-private-"))
         os.chmod(private, 0o700)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tempfile
@@ -89,7 +90,7 @@ class WindowsBackendContractTests(
     ) -> BackendContractCase:
         tracker = BackendContractTracker()
         request = self._request(
-            f"[Console]::Out.Write('hello`n'); exit {exit_code}",
+            f'[Console]::Out.Write("hello`n"); exit {exit_code}',
         )
         return BackendContractCase(
             backend=TrackingBackend(self.backend, tracker),
@@ -115,8 +116,19 @@ class WindowsBackendContractTests(
         if cancelled:
             source.cancel("contract cancellation")
         request = self._request("[Console]::Out.Write('unreachable')")
+        missing_shell = DiscoveredProgram(
+            name="missing-powershell.exe",
+            path=self.workspace / "missing-powershell.exe",
+            shell_kind="powershell",
+            version="contract",
+        )
+        failing_backend = WindowsBackend(
+            self.descriptor,
+            shells=(missing_shell,),
+            host_id="contract-host",
+        )
         return BackendContractCase(
-            backend=TrackingBackend(self.backend, tracker),
+            backend=TrackingBackend(failing_backend, tracker),
             prepared=self._prepared(request),
             request=request,
             context=self._context("failure"),
@@ -151,7 +163,7 @@ class WindowsBackendContractTests(
             backend=self.descriptor,
             environment=construct_environment(
                 platform="windows",
-                inherited={},
+                inherited=os.environ,
                 requested=(),
             ),
             resolved_shell="powershell",

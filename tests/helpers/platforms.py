@@ -9,6 +9,7 @@ from pathlib import Path
 
 WINDOWS = sys.platform == "win32"
 MACOS = sys.platform == "darwin"
+LINUX = sys.platform.startswith("linux")
 POSIX = os.name == "posix"
 
 
@@ -45,4 +46,9 @@ requires_posix_permissions = unittest.skipUnless(
 requires_posix = unittest.skipUnless(
     POSIX,
     "this behaviour is specific to POSIX hosts",
+)
+
+requires_linux = unittest.skipUnless(
+    LINUX,
+    "this behaviour requires Linux process identity",
 )

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tests.helpers.platforms import requires_symlinks
+from tests.helpers.platforms import requires_posix_permissions, requires_symlinks
 from truecoder.tools import (
     ToolApproval,
     ToolArgumentError,
@@ -178,6 +178,7 @@ class WriteFileToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["bytes_written"], 0)
         self.assertEqual((self.workspace / "empty.txt").read_bytes(), b"")
 
+    @requires_posix_permissions
     async def test_atomically_replaces_a_file_and_preserves_permissions(self):
         destination = self.workspace / "script.sh"
         destination.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
