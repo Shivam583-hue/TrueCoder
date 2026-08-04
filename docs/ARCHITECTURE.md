@@ -761,10 +761,137 @@ registered. Direct `Agent` users can initialize lazily on the first valid
 turn; the Textual application initializes execution during mount so its first
 model request has the final tool schema and prompt.
 
-The current TUI still renders shell through the existing generic tool-call and
-approval widgets. Typed live execution cards and output streaming are a
-separate presentation layer; their absence does not weaken process cleanup,
-bounded final output, cancellation, or durable audit guarantees.
+## Execution presentation
+
+Lifecycle events and bounded output previews reach the interface through two
+injected sinks. `ExecutionBootstrapConfig` carries them to `ExecutionRunner`,
+and the Textual application forwards each one into its message loop with
+`post_message`, which never blocks and never raises into the caller. A slow or
+unmounted interface therefore cannot delay or fail a run.
+
+`PreviewSink.publish_bounded` receives the execution id and stream name with
+every update. One sink serves every execution, so without that identity the
+interface could not route output to the right card.
+
+`tui/execution_view.py` holds the presentation logic as ordinary functions and
+values, with no Textual import. It maps each of the fifteen lifecycle stages to
+a state, label, and glyph, refusing an unknown stage instead of guessing. A
+timeout is never shown as a plain failure, a policy denial is never shown as a
+crash, and `failed_to_start` reads as never started.
+
+The approval view is compact by default: command, directory, backend, access,
+limits, risk, and the scopes policy actually permits. Access states the
+filesystem mode and network decision in one line. Limits list only the limits
+that were requested. The complete twenty-five field capability contract remains
+available behind the details expander, so the compact view never becomes the
+only record of what was approved.
+
+`BoundedPreview` retains a fixed tail of streamed output. The runner already
+bounds produced and returned bytes; this bounds what the interface keeps, so a
+long-running command cannot grow the widget tree without limit. The rendered
+tail never exceeds its configured line count, including the incomplete final
+line, and a trim marker states that earlier output was dropped.
+
+`ExecutionCard` renders one execution and decides nothing. It applies typed
+stages, appends bounded preview text, and records the audit id on completion.
+Because it can be updated at any lifecycle point, including while the
+application unmounts and its children are already gone, a missing child is not
+an error for it.
+
+Cancellation is addressed by execution id, not by cancelling the turn. Stop
+resolves an open approval as a rejection first, then cancels active executions
+by id, and only cancels the worker when nothing narrower is running. A second
+cancellation request for the same execution is not sent twice.
+
+Shutdown is the strongest guarantee in this layer. An approval that is still
+awaited is resolved as a rejection so its tool task cannot block forever, every
+active execution is cancelled by id, and the worker is given a bounded window to
+terminate, clean up, and finalize. The interface can disappear at any lifecycle
+point without leaving a process or a nonterminal audit row.
+
+## Platform differences
+
+`backends/posix_platform.py` states what each POSIX platform can actually
+enforce, rather than letting a shared code path imply a guarantee it cannot
+deliver.
+
+Linux has cgroup v2, a boot id, and process start ticks, so it can apply hard
+memory and process limits in a delegated subtree and can prove resource
+ownership after a restart.
+
+macOS has none of those. `RLIMIT_NPROC` on macOS is per-user rather than
+per-process-tree, so applying it as a tree limit could exhaust the whole login
+session instead of the command. macOS therefore never applies that rlimit and
+reports `process_limits` as `unsupported` rather than `best_effort`. Its
+unsupported guarantees are enumerated explicitly: cgroup controllers
+unavailable, process limit is per-user, and resource ownership unprovable after
+restart.
+
+Neither platform claims filesystem or network isolation, and both support only
+the host filesystem mode. The container backend remains gated to the certified
+Linux Docker profile, so a non-Linux host reports
+`container-platform-unsupported` before any process starts.
+
+## Windows Job Object backend
+
+The Windows backend owns a process tree through a Job Object rather than a
+process group. `windows_plan.py` is pure: it normalizes Win32 start errors and
+NTSTATUS exit codes into stable reasons, builds `CommandLineToArgvW`-compatible
+command lines, and renders non-interactive PowerShell and command-shell
+argument vectors. Quoting is verified by round-tripping through a reference
+splitter, including embedded quotes, trailing backslashes, and empty arguments.
+
+`windows_native.py` is the ctypes boundary. A process is created suspended, so
+the launch gate is the suspended primary thread: the job is created and
+configured, the process is assigned to it, the exact resource identity is
+offered to the durable registrar, and only a committed attachment releases
+`ResumeThread`. A failed assignment or registration terminates and closes every
+partial handle before raising.
+
+Job limits are derived from the same shared `ExecutionLimits`. Only requested
+limits set their flag. `KILL_ON_JOB_CLOSE` is always requested so closing the
+job handle cannot orphan descendants, and processes never break away from their
+job.
+
+Recovery requires the full persisted identity: backend, resource kind, host,
+protocol version, and a numeric job handle. A job with no active processes is
+finalized as absent; anything else fails closed.
+
+This backend has not yet passed the shared contract suite on a real Windows
+runner. The committed CI workflow runs the unit and contract suites on
+`windows-latest`; until that is green, its runtime behavior is unproven.
+
+## Policy hardening and operations
+
+`trusted_rules.py` holds versioned, user-editable trusted-command rules in the
+operating system's user-config directory, written atomically at mode `0600`.
+Parsing is strict: unknown fields, unknown risk levels, duplicate rule ids,
+duplicate executables, paths in place of bare program names, whitespace or null
+bytes in identifiers, and oversized documents are all refused rather than
+ignored.
+
+A rule can only tighten. It never lowers a risk level it does not cover, and
+approval is retained above low risk even when a rule tries to waive it. A rule
+can never introduce approval where policy did not require it, so the editor
+cannot be used to escalate.
+
+`audit/retention.py` plans deletion from a bounded window. Nonterminal rows are
+retained by default because they are exactly the evidence a stuck or crashed run
+leaves behind, and dropping them would discard the investigation trail.
+
+`tui/audit_view.py` filters audit rows by outcome, backend, recency, and search
+text, orders them newest first, and bounds both the row count and every rendered
+value. Detail names matching credential, token, password, or environment-value
+rules render as `<redacted>`. Incomplete cleanup is surfaced ahead of the exit
+code, because a run that could not clean up is not a successful run.
+
+Parsers and sanitizers are fuzzed deterministically. A fixed seed drives noisy
+Unicode, control-sequence, and structural input through the terminal sanitizer,
+the bounded byte stream, the bounded preview, the trusted-rules parser, and the
+Windows quoter. The invariants are that arbitrary chunking produces identical
+digests and previews, that sanitized text never carries escape or null bytes,
+that the preview stays within its configured bounds, and that quoting always
+round-trips.
 
 ## Design rules
 
@@ -819,3 +946,16 @@ Keep these invariants stable as the codebase grows:
 * shell-specific prompt guidance exists only while the tool is registered
 * session saves happen only at completed-turn boundaries
 * restoring a session cannot partially replace agent state
+* presentation sinks never block, delay, or fail an execution
+* every lifecycle stage has an explicit presentation and unknown stages are refused
+* retained interface output stays bounded as produced output grows
+* the interface can disappear at any lifecycle point without leaking a process
+* an awaited approval is always resolved, including during shutdown
+* cancellation from the interface addresses one execution id, not the turn
+* a platform reports what it cannot enforce instead of implying a weaker version
+* macOS never applies a per-user process rlimit as a process-tree limit
+* project code stays suspended until its Job Object identity is durable
+* a Job Object is always killed on close so descendants cannot be orphaned
+* trusted-command rules can only tighten policy, never widen it
+* audit retention never deletes nonterminal evidence by default
+* audit details matching credential rules render only as redacted

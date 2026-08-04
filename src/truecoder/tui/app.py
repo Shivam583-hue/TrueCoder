@@ -6,12 +6,13 @@ import os
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Final
 
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
+from textual.message import Message
 from textual.widgets import Button
 from textual.worker import Worker, WorkerCancelled
 
@@ -26,8 +27,14 @@ from truecoder.agent.events import AgentEventType
 from truecoder.agent.messages import ModelMessage
 from truecoder.client.response import TokenUsage
 from truecoder.execution.context import workspace_id_for
+from truecoder.execution.models import ExecutionLifecycleEvent
 from truecoder.session import SessionError, SessionManager
 from truecoder.session.models import SessionRecord
+from truecoder.tui.execution_view import (
+    compact_approval_rows,
+    full_approval_rows,
+    is_terminal_stage,
+)
 from truecoder.tui.sessions import (
     DeleteSessionScreen,
     RenameSessionScreen,
@@ -38,10 +45,13 @@ from truecoder.tui.widgets import (
     ChatMessage,
     Composer,
     EmptyState,
+    ExecutionCard,
     PromptInput,
     StatusBar,
     ToolCallCard,
 )
+
+SHUTDOWN_DRAIN_SECONDS: Final = 5.0
 
 
 @dataclass
@@ -49,6 +59,43 @@ class _PendingApproval:
     request: ApprovalRequest
     future: asyncio.Future[ApprovalResponse]
     card: ToolCallCard
+
+
+class ExecutionStageMessage(Message):
+    def __init__(self, event: ExecutionLifecycleEvent) -> None:
+        self.event = event
+        super().__init__()
+
+
+class ExecutionOutputMessage(Message):
+    def __init__(self, execution_id: str, stream: str, text: str) -> None:
+        self.execution_id = execution_id
+        self.stream = stream
+        self.text = text
+        super().__init__()
+
+
+class _AppEventSink:
+    def __init__(self, app: App[None]) -> None:
+        self._app = app
+
+    async def publish(self, event: ExecutionLifecycleEvent) -> None:
+        self._app.post_message(ExecutionStageMessage(event))
+
+
+class _AppPreviewSink:
+    def __init__(self, app: App[None]) -> None:
+        self._app = app
+
+    async def publish_bounded(
+        self,
+        execution_id: str,
+        stream: str,
+        text: str,
+    ) -> None:
+        self._app.post_message(
+            ExecutionOutputMessage(execution_id, stream, text)
+        )
 
 
 def _package_version() -> str:
@@ -117,7 +164,12 @@ class TrueCoderApp(App[None]):
         self._active_assistant: ChatMessage | None = None
         self._pending_approval: _PendingApproval | None = None
         self._tool_cards: dict[str, ToolCallCard] = {}
+        self._execution_cards: dict[str, ExecutionCard] = {}
         self._model_name = "model not configured"
+        self.agent.set_execution_sinks(
+            event_sink=_AppEventSink(self),
+            preview_sink=_AppPreviewSink(self),
+        )
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -147,17 +199,120 @@ class TrueCoderApp(App[None]):
         self.query_one(PromptInput).focus()
 
     async def on_unmount(self) -> None:
-        if self._active_worker is not None and self._active_worker.is_running:
-            self._active_worker.cancel()
+        self._reject_pending_approval_for_shutdown()
+        await self._cancel_active_executions(reason="application shutting down")
+        await self._drain_active_worker()
         try:
             await self.agent.close()
         finally:
             if self.session_manager is not None:
                 self.session_manager.close()
 
+    def _reject_pending_approval_for_shutdown(self) -> None:
+        pending = self._pending_approval
+        if pending is None or pending.future.done():
+            self._clear_pending_approval()
+            return
+        pending.future.set_result(ApprovalResponse.reject())
+        self._clear_pending_approval()
+
+    async def _cancel_active_executions(self, *, reason: str) -> bool:
+        service = self._execution_service()
+        if service is None:
+            return False
+        try:
+            execution_ids = await service.registry.active_execution_ids()
+        except Exception:  # noqa: BLE001 - shutdown must not raise
+            return False
+        if not execution_ids:
+            return False
+        for execution_id in execution_ids:
+            card = self._execution_cards.get(execution_id)
+            if card is not None:
+                card.mark_cancelling()
+            try:
+                await service.cancel(execution_id, reason=reason)
+            except Exception:  # noqa: BLE001, S110 - cancellation is a request
+                pass
+        return True
+
+    async def _drain_active_worker(self) -> None:
+        worker = self._active_worker
+        if worker is None or not worker.is_running:
+            return
+        worker.cancel()
+        try:
+            await asyncio.wait_for(worker.wait(), timeout=SHUTDOWN_DRAIN_SECONDS)
+        except (TimeoutError, WorkerCancelled, asyncio.CancelledError):
+            return
+
+    def _execution_service(self):
+        runtime = self.agent.execution_runtime
+        return runtime.service if runtime is not None else None
+
     @on(PromptInput.Submitted)
     async def submit_from_keyboard(self, event: PromptInput.Submitted) -> None:
         await self._submit_prompt(event.value)
+
+    @on(ExecutionStageMessage)
+    async def advance_execution_card(self, message: ExecutionStageMessage) -> None:
+        event = message.event
+        card = await self._execution_card(event.execution_id)
+        if card is None:
+            return
+        card.apply_stage(event.stage, event.message)
+        if is_terminal_stage(event.stage):
+            self._execution_cards.pop(event.execution_id, None)
+        self._scroll_to_latest()
+
+    @on(ExecutionOutputMessage)
+    def append_execution_output(self, message: ExecutionOutputMessage) -> None:
+        card = self._execution_cards.get(message.execution_id)
+        if card is None:
+            return
+        card.append_output(message.stream, message.text)
+
+    @on(ExecutionCard.CancelRequested)
+    async def cancel_one_execution(
+        self,
+        message: ExecutionCard.CancelRequested,
+    ) -> None:
+        message.stop()
+        await self._cancel_execution(
+            message.execution_id,
+            reason="cancelled from the interface",
+        )
+
+    async def _cancel_execution(self, execution_id: str, *, reason: str) -> None:
+        service = self._execution_service()
+        if service is None:
+            return
+        card = self._execution_cards.get(execution_id)
+        if card is not None:
+            card.mark_cancelling()
+        try:
+            await service.cancel(execution_id, reason=reason)
+        except Exception as error:  # noqa: BLE001 - cancellation is a request
+            self.notify(f"Cancellation failed: {error}", severity="warning")
+
+    async def _execution_card(self, execution_id: str) -> ExecutionCard | None:
+        card = self._execution_cards.get(execution_id)
+        if card is not None:
+            return card
+        if not self.is_mounted:
+            return None
+
+        card = ExecutionCard(execution_id, "shell command")
+        self._execution_cards[execution_id] = card
+        transcript = self.query_one("#transcript", VerticalScroll)
+        before = (
+            self._active_assistant
+            if self._active_assistant is not None
+            and self._active_assistant.is_mounted
+            else None
+        )
+        await transcript.mount(card, before=before)
+        return card
 
     @on(Button.Pressed, ".approval-once")
     def approve_pending_tool_once(self) -> None:
@@ -366,6 +521,7 @@ class TrueCoderApp(App[None]):
                 approval_details=self._approval_detail_rows(request),
             )
 
+        self._attach_execution_approval(request)
         self._pending_approval = _PendingApproval(
             request,
             future,
@@ -416,51 +572,26 @@ class TrueCoderApp(App[None]):
         execution = request.execution
         if execution is None:
             return ()
+        return compact_approval_rows(
+            execution,
+            tuple(scope.value for scope in request.allowed_scopes),
+        )
 
-        limits = execution.effective_limits
-        capabilities = execution.capabilities
-
-        def optional_limit(value: object, suffix: str = "") -> str:
-            return "not requested" if value is None else f"{value}{suffix}"
-
-        return (
-            ("Command", execution.command_display),
-            ("Directory", str(execution.working_directory)),
-            ("Backend", execution.backend),
-            ("Risk", execution.risk.value),
-            ("Mode", execution.request.mode),
-            ("Shell", execution.request.shell_kind),
-            (
-                "Network",
-                "allowed" if execution.request.network_access else "denied",
+    def _attach_execution_approval(self, request: ApprovalRequest) -> None:
+        execution = request.execution
+        if execution is None:
+            return
+        card = self._execution_cards.get(execution.execution_id)
+        if card is None:
+            return
+        card.command = execution.command_display
+        card.call_id = request.call_id
+        card.set_approval(
+            compact_approval_rows(
+                execution,
+                tuple(scope.value for scope in request.allowed_scopes),
             ),
-            ("Filesystem", execution.request.filesystem_mode),
-            ("Timeout", f"{limits.timeout_seconds}s"),
-            ("Termination grace", f"{limits.termination_grace_seconds}s"),
-            ("Output limit", f"{limits.max_output_bytes} bytes"),
-            ("Return limit", f"{limits.max_return_bytes} bytes"),
-            ("Memory limit", optional_limit(limits.memory_bytes, " bytes")),
-            ("CPU limit", optional_limit(limits.cpu_seconds, "s")),
-            ("Process limit", optional_limit(limits.max_processes)),
-            ("Filesystem isolation", capabilities.filesystem_isolation),
-            ("Network isolation", capabilities.network_isolation),
-            ("Memory enforcement", capabilities.memory_limits),
-            ("CPU enforcement", capabilities.cpu_limits),
-            ("Process enforcement", capabilities.process_limits),
-            ("Timeout enforcement", capabilities.timeout_enforcement),
-            ("Cancellation", capabilities.cancellation),
-            (
-                "Supported modes",
-                ", ".join(capabilities.supported_execution_modes),
-            ),
-            (
-                "Supported filesystems",
-                ", ".join(capabilities.supported_filesystem_modes),
-            ),
-            (
-                "Supported shells",
-                ", ".join(capabilities.supported_shells) or "none",
-            ),
+            full_approval_rows(execution),
         )
 
     async def _show_tool_call(
@@ -538,7 +669,9 @@ class TrueCoderApp(App[None]):
         self._clear_pending_approval()
         await self.query(".chat-message").remove()
         await self.query(".tool-call-card").remove()
+        await self.query(".execution-card").remove()
         self._tool_cards.clear()
+        self._execution_cards.clear()
         self._active_assistant = None
         self.query_one("#empty-state", EmptyState).styles.display = "block"
         self._set_busy(False)
@@ -648,7 +781,9 @@ class TrueCoderApp(App[None]):
     async def _render_session(self, record: SessionRecord) -> None:
         await self.query(".chat-message").remove()
         await self.query(".tool-call-card").remove()
+        await self.query(".execution-card").remove()
         self._tool_cards.clear()
+        self._execution_cards.clear()
         self._active_assistant = None
         transcript = self.query_one("#transcript", VerticalScroll)
         cards: dict[str, ToolCallCard] = {}
@@ -718,7 +853,12 @@ class TrueCoderApp(App[None]):
         self._scroll_to_latest()
         self.query_one(PromptInput).focus()
 
-    def action_cancel_response(self) -> None:
+    async def action_cancel_response(self) -> None:
+        if self._pending_approval is not None:
+            self._resolve_pending_approval(None)
+            return
+        if await self._cancel_active_executions(reason="stopped by the user"):
+            return
         if self._active_worker is not None and self._active_worker.is_running:
             self._active_worker.cancel()
         else:

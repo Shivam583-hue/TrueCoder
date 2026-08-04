@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from truecoder.agent.approval import (
@@ -30,6 +31,8 @@ from truecoder.execution.bootstrap import (
 )
 from truecoder.execution.cancellation import CancellationSource
 from truecoder.execution.context import ExecutionContextFactory, workspace_id_for
+from truecoder.execution.events import ExecutionEventSink
+from truecoder.execution.runner import PreviewSink
 from truecoder.session import (
     SessionManager,
     SQLiteSessionStore,
@@ -172,6 +175,34 @@ class Agent:
     @property
     def execution_runtime(self) -> ExecutionRuntime | None:
         return self._execution_runtime
+
+    def set_execution_sinks(
+        self,
+        *,
+        event_sink: ExecutionEventSink | None = None,
+        preview_sink: PreviewSink | None = None,
+    ) -> None:
+        if self._execution_initialized:
+            raise RuntimeError(
+                "execution sinks must be attached before initialization."
+            )
+        if event_sink is not None and not isinstance(
+            event_sink,
+            ExecutionEventSink,
+        ):
+            raise TypeError("event_sink must implement ExecutionEventSink.")
+        if preview_sink is not None and not hasattr(
+            preview_sink,
+            "publish_bounded",
+        ):
+            raise TypeError("preview_sink must provide publish_bounded.")
+        if self._execution_bootstrap_config is None:
+            return
+        self._execution_bootstrap_config = replace(
+            self._execution_bootstrap_config,
+            event_sink=event_sink,
+            preview_sink=preview_sink,
+        )
 
     async def initialize_execution(self) -> ExecutionRuntime | None:
         if self._execution_initialized:

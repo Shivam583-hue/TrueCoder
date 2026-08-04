@@ -469,8 +469,21 @@ class FakeApproval:
 
 
 class PreviewCollector:
-    def __init__(self) -> None:
+    def __init__(self, *, fail: bool = False) -> None:
         self.texts: list[str] = []
+        self.updates: list[tuple[str, str, str]] = []
+        self.fail = fail
 
-    async def publish_bounded(self, text: str) -> None:
+    async def publish_bounded(
+        self,
+        execution_id: str,
+        stream: str,
+        text: str,
+    ) -> None:
+        if self.fail:
+            raise RuntimeError("preview sink failure injected")
         self.texts.append(text)
+        self.updates.append((execution_id, stream, text))
+
+    def streams(self) -> tuple[str, ...]:
+        return tuple(stream for _, stream, _ in self.updates)

@@ -9,10 +9,16 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Markdown, Static, TextArea
 
 from truecoder.client.response import TokenUsage
+from truecoder.tui.execution_view import (
+    EXECUTION_CARD_STATES,
+    BoundedPreview,
+    stage_presentation,
+)
 
 ASCII_LOGO = (
     "╺┳╸┏━┓╻ ╻┏━╸┏━╸┏━┓╺┳┓┏━╸┏━┓",
@@ -436,6 +442,8 @@ class ToolCallCard(Vertical):
         if state == "running" and previous_state != "running":
             self.running_at = monotonic()
         self.add_class(f"state-{state}")
+        if not self.is_mounted:
+            return
         self.query_one(".tool-state-glyph", Static).update(_TOOL_STATE_GLYPHS[state])
         self.query_one(".tool-state-label", Static).update(_TOOL_STATE_LABELS[state])
         self.query_one(".tool-title", Static).update(self._headline())
@@ -641,6 +649,157 @@ class ToolCallCard(Vertical):
         except json.JSONDecodeError:
             return {"arguments": arguments}
         return parsed if isinstance(parsed, dict) else {"arguments": parsed}
+
+
+class ExecutionCard(Vertical):
+    class CancelRequested(Message):
+        def __init__(self, execution_id: str) -> None:
+            self.execution_id = execution_id
+            super().__init__()
+
+    def __init__(
+        self,
+        execution_id: str,
+        command: str,
+        *,
+        call_id: str | None = None,
+    ) -> None:
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("execution_id cannot be empty")
+
+        self.execution_id = execution_id.strip()
+        self.call_id = call_id
+        self.command = command or "(no command)"
+        self.state = "preparing"
+        self.stage: str | None = None
+        self.audit_id: str | None = None
+        self.compact_rows: tuple[tuple[str, str], ...] = ()
+        self.detail_rows: tuple[tuple[str, str], ...] = ()
+        self.result_summary = ""
+        self.cancel_requested = False
+        self.started_at = monotonic()
+        self._preview = BoundedPreview()
+
+        super().__init__(classes="execution-card state-preparing")
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="execution-heading"):
+            yield Static("◇", classes="execution-glyph", markup=False)
+            yield Static(self._headline(), classes="execution-title", markup=False)
+            yield Static("", classes="tool-spacer")
+            yield Static("Preparing", classes="execution-state-label", markup=False)
+            yield Button("Stop", classes="execution-cancel")
+            yield Button("Details", classes="execution-details-toggle")
+
+        yield Static(
+            self._compact_text(),
+            classes="execution-summary",
+            markup=False,
+        )
+
+        with VerticalScroll(classes="execution-output"):
+            yield Static("", classes="execution-output-content", markup=False)
+
+        with VerticalScroll(classes="execution-details"):
+            yield Static("", classes="execution-details-content", markup=False)
+
+    def set_approval(
+        self,
+        compact_rows: tuple[tuple[str, str], ...],
+        detail_rows: tuple[tuple[str, str], ...],
+    ) -> None:
+        self.compact_rows = compact_rows
+        self.detail_rows = detail_rows
+        self._refresh_static(".execution-summary", self._compact_text())
+        self._refresh_static(".execution-details-content", self._details_text())
+
+    def apply_stage(self, stage: str, message: str | None = None) -> None:
+        presentation = stage_presentation(stage)  # type: ignore[arg-type]
+        self.stage = stage
+        self._set_state(presentation.state)
+        self._refresh_static(".execution-glyph", presentation.glyph)
+        label = presentation.label if message is None else f"{presentation.label}"
+        self._refresh_static(".execution-state-label", label)
+        self._refresh_static(".execution-title", self._headline())
+        if presentation.terminal:
+            self._disable_cancel()
+
+    def mark_cancelling(self) -> None:
+        if self.cancel_requested:
+            return
+        self.cancel_requested = True
+        self._set_state("cancelling")
+        self._refresh_static(".execution-state-label", "Stopping")
+        self._disable_cancel()
+
+    def append_output(self, stream: str, text: str) -> None:
+        del stream
+        self._preview.append(text)
+        self._refresh_static(".execution-output-content", self._preview.text())
+
+    def finish(self, summary: str, audit_id: str | None = None) -> None:
+        self.result_summary = summary
+        self.audit_id = audit_id
+        self._disable_cancel()
+        self._refresh_static(".execution-title", self._headline())
+        self._refresh_static(".execution-details-content", self._details_text())
+
+    @on(Button.Pressed, ".execution-cancel")
+    def request_cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self.cancel_requested:
+            return
+        self.post_message(self.CancelRequested(self.execution_id))
+
+    @on(Button.Pressed, ".execution-details-toggle")
+    def toggle_details(self, event: Button.Pressed) -> None:
+        event.stop()
+        expanded = not self.has_class("expanded")
+        self.set_class(expanded, "expanded")
+        event.button.label = "Hide" if expanded else "Details"
+
+    def _set_state(self, state: str) -> None:
+        if state not in EXECUTION_CARD_STATES:
+            raise ValueError(f"Unsupported execution card state: {state}")
+        self.remove_class(f"state-{self.state}")
+        self.state = state
+        self.add_class(f"state-{state}")
+
+    def _disable_cancel(self) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one(".execution-cancel", Button).disabled = True
+        except NoMatches:
+            return
+
+    def _refresh_static(self, selector: str, value: str) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one(selector, Static).update(value)
+        except NoMatches:
+            return
+
+    def _headline(self) -> str:
+        parts = [self.command]
+        if self.result_summary:
+            parts.append(self.result_summary)
+        return "  ·  ".join(parts)
+
+    def _compact_text(self) -> str:
+        if not self.compact_rows:
+            return self.command
+        return "\n".join(f"{name}: {value}" for name, value in self.compact_rows)
+
+    def _details_text(self) -> str:
+        sections: list[str] = []
+        if self.detail_rows:
+            body = "\n".join(f"{name}: {value}" for name, value in self.detail_rows)
+            sections.append(f"Execution contract\n{body}")
+        if self.audit_id:
+            sections.append(f"Audit\naudit id: {self.audit_id}")
+        return "\n\n".join(sections)
 
 
 # Kept as a compatibility alias for integrations importing the original widget.
