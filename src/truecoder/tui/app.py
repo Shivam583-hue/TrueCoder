@@ -226,11 +226,16 @@ class TrueCoderApp(App[None]):
                 self.session_manager.close()
 
     def _reject_pending_approval_for_shutdown(self) -> None:
+        """Unblock an awaited approval without repainting a dying interface.
+
+        Widget children are already being torn down at this point, so the
+        only thing that matters is resolving the future the tool task is
+        waiting on. A rejection is the safe answer: nothing was approved.
+        """
         pending = self._pending_approval
         if pending is None or pending.future.done():
             self._clear_pending_approval()
             return
-        pending.card.set_state("rejected")
         pending.future.set_result(ApprovalResponse.reject())
         self._clear_pending_approval()
 

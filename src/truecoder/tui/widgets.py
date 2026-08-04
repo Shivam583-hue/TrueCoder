@@ -9,6 +9,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Markdown, Static, TextArea
 
@@ -441,6 +442,8 @@ class ToolCallCard(Vertical):
         if state == "running" and previous_state != "running":
             self.running_at = monotonic()
         self.add_class(f"state-{state}")
+        if not self.is_mounted:
+            return
         self.query_one(".tool-state-glyph", Static).update(_TOOL_STATE_GLYPHS[state])
         self.query_one(".tool-state-label", Static).update(_TOOL_STATE_LABELS[state])
         self.query_one(".tool-title", Static).update(self._headline())
@@ -778,14 +781,26 @@ class ExecutionCard(Vertical):
         self.add_class(f"state-{state}")
 
     def _disable_cancel(self) -> None:
+        """Disable the stop control, tolerating a torn-down subtree.
+
+        The card can be updated at any lifecycle point, including while the
+        application is unmounting and its children have already been removed.
+        A missing child is not an error for a renderer.
+        """
         if not self.is_mounted:
             return
-        self.query_one(".execution-cancel", Button).disabled = True
+        try:
+            self.query_one(".execution-cancel", Button).disabled = True
+        except NoMatches:
+            return
 
     def _refresh_static(self, selector: str, value: str) -> None:
         if not self.is_mounted:
             return
-        self.query_one(selector, Static).update(value)
+        try:
+            self.query_one(selector, Static).update(value)
+        except NoMatches:
+            return
 
     def _headline(self) -> str:
         parts = [self.command]
