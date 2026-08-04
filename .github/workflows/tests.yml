@@ -1,0 +1,72 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: pip install ruff==0.16.0
+      - run: ruff check src tests container
+      - run: python -m unittest discover -s tests/unit -t .
+      - run: python -m unittest discover -s tests/contract -t .
+      - run: python -m unittest discover -s tests/integration -t .
+
+  linux-sandbox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Build the pinned execution image
+        run: docker build -t truecoder-exec:1 container/
+      - name: Lock the built digest
+        run: |
+          digest="$(docker images --no-trunc --format '{{.ID}}' truecoder-exec:1)"
+          python - "$digest" <<'PY'
+          import json, sys
+          from pathlib import Path
+          digest = sys.argv[1]
+          path = Path("container/image.lock")
+          lock = json.loads(path.read_text())
+          lock["reference"] = digest
+          lock["digest"] = digest
+          path.write_text(json.dumps(lock, indent=2) + "\n")
+          PY
+      - run: python -m unittest discover -s tests/sandbox -t .
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: python -m unittest discover -s tests/unit -t .
+      - name: Backend contract suite
+        run: python -m unittest discover -s tests/contract -t .
+      - name: Process tree and cleanup suites
+        run: python -m unittest discover -s tests/integration -t .
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: python -m unittest discover -s tests/unit -t .
+      - name: Backend contract suite
+        run: python -m unittest discover -s tests/contract -t .

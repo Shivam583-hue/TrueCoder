@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import math
+import platform
 import resource
 from dataclasses import dataclass
 
 from ..models import ExecutionLimits
+from .posix_platform import PosixPlatformProfile, profile_for
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,11 +37,20 @@ class AppliedRlimit:
     hard: int
 
 
+def current_platform_profile() -> PosixPlatformProfile:
+    system = platform.system().strip().lower()
+    return profile_for("macos" if system == "darwin" else "linux")
+
+
 def build_rlimit_settings(
     limits: ExecutionLimits,
+    profile: PosixPlatformProfile | None = None,
 ) -> tuple[RlimitSetting, ...]:
     if not isinstance(limits, ExecutionLimits):
         raise TypeError("limits must be ExecutionLimits")
+    if profile is not None and not isinstance(profile, PosixPlatformProfile):
+        raise TypeError("profile must be a PosixPlatformProfile or None")
+    resolved = profile if profile is not None else current_platform_profile()
     settings: list[RlimitSetting] = []
     if limits.memory_bytes is not None and hasattr(resource, "RLIMIT_AS"):
         settings.append(
@@ -57,7 +68,11 @@ def build_rlimit_settings(
                 value=max(1, math.ceil(limits.cpu_seconds)),
             )
         )
-    if limits.max_processes is not None and hasattr(resource, "RLIMIT_NPROC"):
+    if (
+        limits.max_processes is not None
+        and resolved.applies_process_rlimit
+        and hasattr(resource, "RLIMIT_NPROC")
+    ):
         settings.append(
             RlimitSetting(
                 name="processes",

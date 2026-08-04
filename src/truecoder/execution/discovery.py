@@ -26,7 +26,8 @@ from .backends.models import (
     HostSystem,
     UnavailableReason,
 )
-from .models import BackendCapabilities, ResolvedShellKind
+from .backends.posix_platform import POSIX_PLATFORMS, profile_for
+from .models import BackendCapabilities, CapabilityLevel, ResolvedShellKind
 from .output import TerminalSanitizer
 
 ProbeStatus: TypeAlias = Literal[
@@ -540,6 +541,7 @@ def derive_backend_descriptors(
     posix_capabilities = _posix_capabilities(
         shell_kinds=posix_shells,
         cgroup_v2=cgroup_v2,
+        system=host.system,
     )
     posix = BackendDescriptor(
         name="posix",
@@ -867,19 +869,27 @@ def _posix_capabilities(
     *,
     shell_kinds: tuple[ResolvedShellKind, ...],
     cgroup_v2: CgroupV2Info | None,
+    system: HostSystem = "linux",
 ) -> BackendCapabilities:
     controllers = (
         frozenset(cgroup_v2.enabled_controllers)
         if cgroup_v2 is not None and cgroup_v2.mounted and cgroup_v2.writable
         else frozenset()
     )
+    profile = profile_for(system) if system in POSIX_PLATFORMS else None
     execution_modes = ("exec", "shell") if shell_kinds else ("exec",)
+    if "pids" in controllers:
+        process_limits: CapabilityLevel = "enforced"
+    elif profile is not None:
+        process_limits = profile.process_limit_level
+    else:
+        process_limits = "best_effort"
     return BackendCapabilities(
         filesystem_isolation="unsupported",
         network_isolation="unsupported",
         memory_limits="enforced" if "memory" in controllers else "best_effort",
         cpu_limits="enforced" if "cpu" in controllers else "best_effort",
-        process_limits="enforced" if "pids" in controllers else "best_effort",
+        process_limits=process_limits,
         timeout_enforcement="enforced",
         cancellation="enforced",
         supported_execution_modes=execution_modes,
