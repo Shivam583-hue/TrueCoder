@@ -607,6 +607,21 @@ class CapabilityTruthTests(unittest.TestCase):
 
 
 class SecurityModelTests(unittest.TestCase):
+    def test_mount_sources_allow_a_windows_drive_delimiter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory).resolve()
+            if os.name != "nt":
+                source = source / "drive:path"
+                source.mkdir()
+
+            mount = ContainerMount(
+                source=source,
+                target=CONTAINER_WORKSPACE,
+                read_only=True,
+            )
+
+        self.assertEqual(mount.source, source)
+
     def test_forbidden_mount_sources_are_rejected(self):
         for source in ("/var/run/docker.sock", "/etc", "/dev", "/root"):
             with self.subTest(source=source), self.assertRaises(ValueError):
