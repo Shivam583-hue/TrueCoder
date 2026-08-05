@@ -71,7 +71,11 @@ Application code lives under `src/truecoder/`, the sandbox image is built from `
 
 ```text
 TrueCoder/
+├── .github/
+│   └── workflows/
+│       └── tests.yml                  # Linux, sandbox, macOS, and Windows CI matrix
 ├── .env.example                       # LLM provider template
+├── .gitignore
 ├── AGENTS.md                          # Project instructions injected into the system prompt
 ├── README.md
 ├── pyproject.toml                     # Package metadata, dependencies, and the console script
@@ -120,8 +124,11 @@ TrueCoder/
 │   │
 │   ├── execution/                     # Execution control plane
 │   │   ├── models.py                  # Requests, limits, capabilities, contexts, results
+│   │   ├── errors.py                  # Typed infrastructure and compatibility failures
+│   │   ├── serialization.py           # Versioned execution-domain JSON envelopes
 │   │   ├── context.py                 # Execution identity and workspace hashing
 │   │   ├── cancellation.py            # Source and read-only token split
+│   │   ├── clock.py                   # Injectable wall and monotonic time boundary
 │   │   ├── registry.py                # Opaque execution ID to active entry
 │   │   ├── policy.py                  # Ordered classification, limits, risk, and reasons
 │   │   ├── environment.py             # Allowlist child environments and secret removal
@@ -160,9 +167,11 @@ TrueCoder/
 │   │       ├── posix_plan.py          # Pure exec and shell launch planning
 │   │       ├── posix_cgroup.py        # Delegated cgroup v2 subtree handling
 │   │       ├── posix_limits.py        # cgroup hard limits and rlimit fallbacks
+│   │       ├── posix_platform.py      # Honest Linux and macOS capability differences
 │   │       ├── posix_identity.py      # Host, boot ID, and start-tick identity
 │   │       ├── posix_recovery.py      # Exact-match-only recovery
 │   │       ├── container.py           # Create, register, then start
+│   │       ├── container_models.py    # Typed mounts, labels, image, and launch plans
 │   │       ├── container_plan.py      # Pure mounts, labels, limits, and argv
 │   │       ├── container_dialects.py  # Docker dialect only, by design
 │   │       ├── container_runtime.py   # Runtime invocation boundary
@@ -193,10 +202,20 @@ TrueCoder/
     │   ├── context/                   # Turn selection and token budgeting
     │   ├── session/                   # Durable turn codec
     │   ├── tools/                     # Base, executor, registry, and every builtin tool
+    │   ├── tui/                       # Presentation mapping, cards, and audit summaries
     │   └── execution/                 # Policy, environment, output, discovery, selection
-    │       └── audit/                 # Runner, lifecycle, results, recovery, and evidence
+    │       └── audit/                 # Store, permissions, recovery, and evidence
     ├── contract/                      # 41 scenarios: one contract, four backend adapters
+    │   └── execution/
+    │       ├── backend_contract.py
+    │       ├── test_fake_backend_contract.py
+    │       ├── test_posix_backend_contract.py
+    │       ├── test_container_backend_contract.py
+    │       └── test_windows_backend_contract.py
     ├── integration/                   # 82 scenarios: real processes, SQLite, and the TUI
+    │   ├── execution/
+    │   ├── session/
+    │   └── tui/
     ├── sandbox/                       # 21 scenarios: adversarial checks against real Docker
     ├── fakes/                         # Deterministic backend and service doubles
     └── helpers/                       # Small real child programs used by process tests
@@ -256,7 +275,7 @@ Cross-platform status comes from the latest successful GitHub Actions matrix on 
 - **Failure withholds results.** A finalization failure returns no result and leaves a nonterminal row for recovery. Incomplete cleanup records `cleanup_failed` over the real command outcome instead of reporting success.
 - **Approval cannot be widened by the UI.** The safe-scope calculation is authoritative, shell requests permit approve-once only, and the approval service rejects a handler response that selects a scope outside the request's allowed set.
 - **No backend re-derives anything.** `PreparedExecution` carries the effective request, selected descriptor, constructed environment, and resolved shell, and `BackendRegistry.get_exact` refuses a backend whose current descriptor has drifted from the prepared one.
-- **Recovery never trusts a PID.** POSIX identity includes supervisor PID, project PGID, host identity, Linux boot ID, process start ticks, protocol version, and ownership token. Container recovery requires the full immutable container ID plus exact management, run, execution, ownership, host, and protocol labels.
+- **Recovery never trusts a PID.** POSIX identity includes supervisor PID, project PGID, host identity, Linux boot ID, process start ticks, protocol version, and ownership token. Container recovery requires the full immutable container ID plus exact management, run, execution, ownership, host, and protocol labels. Windows binds a Job Object handle to the owning TrueCoder process and refuses to reuse that numeric handle after a restart.
 - **Discovery does not guess.** Version probes use fixed argument vectors with no shell, short timeouts, bounded output, and a minimal environment, and a mounted cgroup filesystem is never confused with a writable delegated subtree.
 - **The image is pinned by content digest.** Launch uses `--pull never`, and discovery verifies platform, non-root user, and entrypoint labels against `container/image.lock` before the container backend reports itself available.
 - **Cancellation is addressable from admission.** The active control entry is registered right after durable admission and before approval is awaited, so an execution can be cancelled by ID for its whole life. Pre-start cancellation records `failed_to_start` with a `cancelled_before_start` detail because the command genuinely never ran.
@@ -368,7 +387,7 @@ No route escapes audit.
 | Schemas             | Pydantic 2                                  | Tool arguments, strict validation, and model-facing JSON schemas       |
 | Persistence         | SQLite via the standard library             | Sessions and the separate execution audit store, both WAL-journaled    |
 | Storage locations   | platformdirs 4                              | User data directories outside the repository                           |
-| Local execution     | POSIX process groups and Windows Job Objects | Cross-platform process-tree ownership, cancellation, and cleanup       |
+| Local execution     | POSIX process groups, cgroup v2, and Windows Job Objects | Cross-platform process-tree ownership, cancellation, cleanup, and Linux hard limits |
 | Sandboxed execution | Docker with a digest-pinned image           | Filesystem, network, capability, memory, and PID isolation             |
 | Configuration       | python-dotenv                               | `.env` provider configuration                                          |
 | Lint                | ruff 0.16                                   | Static checks over source, tests, and the image entrypoint             |
@@ -593,6 +612,7 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **Only the Docker dialect is certified.** Podman and nerdctl are refused by both the plan and capability derivation until their dialects pass the same contract and sandbox suites. Non-Linux hosts report `container-platform-unsupported`.
 - **Container CPU limits are best effort.** The trusted entrypoint monitors aggregate cgroup CPU accounting, but that enforcement has not been adversarially proven, so it is advertised as best effort rather than enforced.
 - **Local execution is not isolation.** POSIX process groups and Windows Job Objects provide reliable process lifecycle management, and Linux can add hard memory and PID limits through delegated cgroup v2. Local backends do not provide filesystem or network isolation and report those capabilities as unsupported. Use the container backend when isolation matters.
+- **Windows restart recovery fails closed.** A Win32 Job Object handle is valid only in the TrueCoder process that owns it. `KILL_ON_JOB_CLOSE` terminates descendants when that process disappears, and startup recovery refuses to reuse the persisted numeric handle rather than risking an unrelated resource.
 - **macOS recovery fails closed.** After a restart, a live macOS resource whose exact ownership cannot be proven with the available facts is refused rather than assumed. This is the intended tradeoff, but it means some macOS resources need manual cleanup.
 - **macOS cannot bound a process tree.** `RLIMIT_NPROC` is per-user on macOS, so applying it as a tree limit could exhaust the login session instead of the command. macOS therefore never applies it and reports `process_limits` as `unsupported`. Use the container backend on Linux when process-count enforcement matters.
 - **macOS and Docker Desktop are not certified.** The container backend stays gated to the Linux Docker profile, so macOS reports `container-platform-unsupported`. Extending certification needs the adversarial sandbox suite to pass on a macOS runner, which has not happened.

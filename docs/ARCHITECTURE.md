@@ -28,7 +28,7 @@ Execution service
  └─ Platform backends
      ├─ POSIX local
      ├─ Linux Docker sandbox
-     └─ Windows local (not implemented)
+     └─ Windows local (Job Object)
 
 UI
  ↓
@@ -347,13 +347,13 @@ Termination, waiting, and cleanup are separate operations. Termination asks the
 complete native resource to stop. Waiting observes and reaps its terminal state.
 Cleanup releases pipes, handles, temporary state, and other remaining
 resources. Repeating any of these operations must not target a guessed or reused
-native identifier. A reusable backend contract suite encodes these invariants
-before the POSIX, Windows, or container adapters exist.
+native identifier. One reusable backend contract suite encodes these invariants
+and is applied to the fake, POSIX, Windows, and container adapters.
 
 Discovery happens through an injected `DiscoveryIO` boundary. Unit tests can
 model Linux, macOS, Windows, and unknown hosts without depending on the CI
-runner. `SystemDiscoveryIO` is the only Phase 5 object that inspects the actual
-machine. It detects:
+runner. `SystemDiscoveryIO` is the only discovery component that inspects the
+actual machine. It detects:
 
 * normalized operating-system family, architecture, and release
 * canonical installed POSIX, PowerShell, and Windows command-shell paths
@@ -376,7 +376,7 @@ facts plus conservative backend knowledge; they are not optimistic class
 constants. An unavailable backend contains stable structured reasons. An
 available container descriptor identifies the exact inspected runtime.
 
-Capability matching is pure. It compares every field in Phase 4's
+Capability matching is pure. It compares every field in the shared
 `CapabilityRequirements` independently against a discovered descriptor:
 
 ```text
@@ -467,7 +467,7 @@ cannot be proven with the available facts.
 
 ## Durable execution audit
 
-The audit subsystem is the evidence boundary for future shell execution. An
+The audit subsystem is the evidence boundary for shell execution. An
 execution must first obtain an `AuditRunHandle` from `AuditService.admit()`.
 That handle is returned only after the pending run and its first event have
 committed to SQLite. If permissions, schema verification, database access, or
@@ -514,7 +514,8 @@ searches for a process by a guessed or reused PID. Pending runs with no resource
 close as never started. Exact resources close as absent, terminated, or
 recovery failed. Every recovery path attempts one normal terminal
 finalization. Concrete POSIX, Windows Job Object, and container recovery
-handlers arrive with their respective backend phases.
+handlers are registered during startup only when their host or runtime
+prerequisites are present.
 
 ## Execution orchestration
 
@@ -628,8 +629,8 @@ The container backend is an adapter behind the same `ExecutionBackend`
 contract, not a second execution service.
 It performs no policy, approval, or service registration of its own.
 
-Phase 8 certifies exactly one profile: Linux, the Docker dialect, and one
-pinned execution image.
+The container subsystem certifies exactly one profile: Linux, the Docker
+dialect, and one pinned execution image.
 Podman and nerdctl are refused by the plan and by capability derivation until
 their dialects pass the same tests, and non-Linux hosts report
 `container-platform-unsupported`.
@@ -748,9 +749,9 @@ open and secure audit storage
 ```
 
 Audit failure, discovery failure, recovery failure, disabled execution, or no
-registered backend leaves `shell` absent from the model schema. An available
-Windows descriptor is not enough because the Windows backend is still a
-placeholder. POSIX is registered only on a supported POSIX host, and container
+registered backend leaves `shell` absent from the model schema. POSIX is
+registered only on a supported POSIX host. Windows is registered only on an
+actual Windows host after `WindowsBackend.from_snapshot()` succeeds. Container
 is registered only for the certified Linux Docker profile with the verified
 pinned image.
 
@@ -855,11 +856,19 @@ job.
 
 Recovery requires the full persisted identity: backend, resource kind, host,
 protocol version, and a numeric job handle. A job with no active processes is
-finalized as absent; anything else fails closed.
+finalized as absent; anything else fails closed. The host identity includes the
+owning TrueCoder process, because a Win32 handle value is not a durable
+cross-process identity. After a TrueCoder restart, recovery therefore refuses
+to reuse the old numeric handle. `KILL_ON_JOB_CLOSE` is responsible for
+terminating descendants when the original process disappears, while audit
+recovery records uncertainty instead of guessing.
 
-This backend has not yet passed the shared contract suite on a real Windows
-runner. The committed CI workflow runs the unit and contract suites on
-`windows-latest`; until that is green, its runtime behavior is unproven.
+The shared backend contract runs natively on `windows-latest` in CI. It launches
+real PowerShell processes through the Job Object backend and covers resource
+registration, output ownership, normal and nonzero exits, termination,
+cancellation, stable waiting, cleanup, and failed-start cleanup. The Windows
+support claim is based on that native boundary test, not only on pure quoting
+and planning tests.
 
 ## Policy hardening and operations
 
@@ -875,6 +884,10 @@ approval is retained above low risk even when a rule tries to waive it. A rule
 can never introduce approval where policy did not require it, so the editor
 cannot be used to escalate.
 
+The trusted-rule parser, storage, and tightening operation are implemented and
+tested, but `evaluate_policy` does not yet load or apply them. Rules therefore
+do not currently change a live execution decision.
+
 `audit/retention.py` plans deletion from a bounded window. Nonterminal rows are
 retained by default because they are exactly the evidence a stuck or crashed run
 leaves behind, and dropping them would discard the investigation trail.
@@ -884,6 +897,10 @@ text, orders them newest first, and bounds both the row count and every rendered
 value. Detail names matching credential, token, password, or environment-value
 rules render as `<redacted>`. Incomplete cleanup is surfaced ahead of the exit
 code, because a run that could not clean up is not a successful run.
+
+Retention planning is not yet scheduled, and the audit view is not yet routed
+to a TUI screen or key binding. Both are tested building blocks rather than
+currently reachable user features.
 
 Parsers and sanitizers are fuzzed deterministically. A fixed seed drives noisy
 Unicode, control-sequence, and structural input through the terminal sanitizer,
@@ -914,7 +931,7 @@ Keep these invariants stable as the codebase grows:
 * project-controlled code stays gated until its resource identity is durable
 * POSIX project commands run in a supervisor-owned process group
 * closing the POSIX parent-lifetime pipe terminates and reaps the project tree
-* local POSIX execution never claims filesystem or network isolation
+* local POSIX and Windows execution never claim filesystem or network isolation
 * discovery facts are bounded, explicit, and separated from pure selection
 * backend selection compares every capability requirement independently
 * an explicit backend or shell preference is never silently downgraded
@@ -956,6 +973,8 @@ Keep these invariants stable as the codebase grows:
 * macOS never applies a per-user process rlimit as a process-tree limit
 * project code stays suspended until its Job Object identity is durable
 * a Job Object is always killed on close so descendants cannot be orphaned
+* native Windows support is exercised through the shared contract on Windows
+* persisted Win32 handle values are never trusted across a process restart
 * trusted-command rules can only tighten policy, never widen it
 * audit retention never deletes nonterminal evidence by default
 * audit details matching credential rules render only as redacted
