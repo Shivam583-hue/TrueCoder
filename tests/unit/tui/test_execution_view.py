@@ -50,7 +50,7 @@ def details(
         mode="exec",
         argv=("pytest", "-q"),
         script=None,
-        working_directory=Path("/repo"),
+        working_directory=Path.cwd().resolve(),
         limits=ExecutionLimits(
             timeout_seconds=120,
             max_output_bytes=1024 * 1024,

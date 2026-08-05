@@ -304,9 +304,9 @@ class EditFileTool(BaseTool[EditFileArguments]):
                     code="file_changed",
                 )
 
-            os.chmod(temporary_path, destination_mode)
-            sync_fd = os.open(temporary_path, os.O_RDONLY)
+            sync_fd = os.open(temporary_path, os.O_RDWR)
             try:
+                os.chmod(temporary_path, destination_mode)
                 os.fsync(sync_fd)
             finally:
                 os.close(sync_fd)

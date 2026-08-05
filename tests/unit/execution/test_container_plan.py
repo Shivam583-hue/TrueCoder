@@ -7,6 +7,7 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from tests.helpers.platforms import requires_posix_permissions
 from truecoder.execution.backends.base import BackendStartContext
 from truecoder.execution.backends.container_dialects import (
     FORBIDDEN_ARGUMENTS,
@@ -52,6 +53,7 @@ DIGEST = "sha256:" + "a" * 64
 OTHER_DIGEST = "sha256:" + "b" * 64
 CONTAINER_ID = "c" * 64
 TOKEN = "t" * 64
+ROOT = Path.cwd().resolve()
 
 
 def image(digest: str = DIGEST) -> ContainerImage:
@@ -67,7 +69,7 @@ def image(digest: str = DIGEST) -> ContainerImage:
 def runtime_info() -> ContainerRuntimeInfo:
     return ContainerRuntimeInfo(
         name="docker",
-        executable=Path("/usr/bin/docker"),
+        executable=ROOT / "docker",
         client_version="29.3.0",
         server_version="29.3.0",
         daemon_reachable=True,
@@ -108,7 +110,7 @@ def descriptor() -> BackendDescriptor:
 
 
 def workspace() -> Path:
-    directory = Path(tempfile.mkdtemp(prefix="tc-plan-"))
+    directory = Path(tempfile.mkdtemp(prefix="tc-plan-")).resolve()
     os.chmod(directory, 0o755)
     return directory
 
@@ -209,6 +211,7 @@ class PlanMappingTests(unittest.TestCase):
 
         self.assertFalse(plan.workspace_mount.read_only)
 
+    @requires_posix_permissions
     def test_workspace_write_is_refused_when_the_sandbox_user_cannot_write(self):
         os.chmod(self.root, 0o755)
 
@@ -311,6 +314,7 @@ class PlanMappingTests(unittest.TestCase):
                 ownership_token=TOKEN,
             )
 
+    @requires_posix_permissions
     def test_a_workspace_the_sandbox_user_cannot_read_is_refused(self):
         private = Path(tempfile.mkdtemp(prefix="tc-private-"))
         os.chmod(private, 0o700)
@@ -603,6 +607,21 @@ class CapabilityTruthTests(unittest.TestCase):
 
 
 class SecurityModelTests(unittest.TestCase):
+    def test_mount_sources_allow_a_windows_drive_delimiter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory).resolve()
+            if os.name != "nt":
+                source = source / "drive:path"
+                source.mkdir()
+
+            mount = ContainerMount(
+                source=source,
+                target=CONTAINER_WORKSPACE,
+                read_only=True,
+            )
+
+        self.assertEqual(mount.source, source)
+
     def test_forbidden_mount_sources_are_rejected(self):
         for source in ("/var/run/docker.sock", "/etc", "/dev", "/root"):
             with self.subTest(source=source), self.assertRaises(ValueError):

@@ -1,9 +1,11 @@
+
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.helpers.platforms import requires_symlinks
 from truecoder.tools import (
     ToolApproval,
     ToolArgumentError,
@@ -44,6 +46,7 @@ class ReadFileConstructionTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             ReadFileTool("/workspace")  # type: ignore[arg-type]
 
+    @requires_symlinks
     def test_resolves_and_preserves_the_injected_workspace_root(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory).resolve()
@@ -170,10 +173,7 @@ class ReadFileToolTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reads_the_requested_range_and_reports_more_content(self):
         source = self.workspace / "source.py"
-        source.write_text(
-            "line 1\nline 2\nline 3\nline 4\n",
-            encoding="utf-8",
-        )
+        source.write_bytes(b"line 1\nline 2\nline 3\nline 4\n")
 
         result = await self.tool.run(
             self._arguments("source.py", start_line=2, line_count=2)
@@ -257,6 +257,7 @@ class ReadFileToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["content"], "content")
 
+    @requires_symlinks
     async def test_rejects_absolute_parent_and_symlink_escapes(self):
         with tempfile.TemporaryDirectory() as outside_directory:
             outside = Path(outside_directory).resolve()
@@ -297,6 +298,7 @@ class ReadFileToolTests(unittest.IsolatedAsyncioTestCase):
                 self._arguments("pipe"),
             )
 
+    @requires_symlinks
     async def test_rejects_sensitive_paths_and_symlinks_to_them(self):
         sensitive_paths = [
             ".env",

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from tests.helpers.platforms import skip_module_on_windows
+
+skip_module_on_windows('POSIX resource limits')
+
 import math
 import resource
 import unittest
@@ -9,6 +13,10 @@ from truecoder.execution.backends.posix_limits import (
     RlimitSetting,
     apply_rlimit_settings,
     build_rlimit_settings,
+    current_platform_profile,
+)
+from truecoder.execution.backends.posix_platform import (
+    profile_for,
 )
 from truecoder.execution.models import ExecutionLimits
 
@@ -23,7 +31,8 @@ class PosixLimitTests(unittest.TestCase):
                 memory_bytes=2048,
                 cpu_seconds=1.2,
                 max_processes=4,
-            )
+            ),
+            profile_for("linux"),
         )
         values = {setting.name: setting.value for setting in settings}
 
@@ -33,6 +42,22 @@ class PosixLimitTests(unittest.TestCase):
             self.assertEqual(values["cpu"], math.ceil(1.2))
         if hasattr(resource, "RLIMIT_NPROC"):
             self.assertEqual(values["processes"], 4)
+
+    def test_the_host_profile_decides_whether_a_process_limit_applies(self):
+        settings = build_rlimit_settings(
+            ExecutionLimits(
+                timeout_seconds=10,
+                max_output_bytes=100,
+                max_return_bytes=50,
+                max_processes=4,
+            )
+        )
+        names = {setting.name for setting in settings}
+
+        if current_platform_profile().applies_process_rlimit:
+            self.assertIn("processes", names)
+        else:
+            self.assertNotIn("processes", names)
 
     def test_apply_never_weakens_a_lower_inherited_limit(self):
         setting = RlimitSetting(name="cpu", resource_id=1, value=20)

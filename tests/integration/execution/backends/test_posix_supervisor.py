@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from tests.helpers.platforms import skip_module_on_windows
+
+skip_module_on_windows('the POSIX supervisor')
+
 import asyncio
 import json
 import os

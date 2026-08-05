@@ -32,6 +32,8 @@ from truecoder.execution.models import (
 )
 from truecoder.execution.preparation import PreparedExecution
 
+ROOT = Path.cwd().resolve()
+
 
 def limits(timeout_seconds: float = 30) -> ExecutionLimits:
     return ExecutionLimits(
@@ -281,7 +283,7 @@ class ExecutionApprovalGateTests(unittest.IsolatedAsyncioTestCase):
             version="test",
             runtime=ContainerRuntimeInfo(
                 name="docker",
-                executable=Path("/usr/bin/docker"),
+                executable=ROOT / "docker",
                 client_version="test",
                 server_version="test",
                 daemon_reachable=True,

@@ -25,6 +25,9 @@ HANDLE_FLAG_INHERIT: Final = 0x00000001
 INFINITE: Final = 0xFFFFFFFF
 WAIT_OBJECT_0: Final = 0x00000000
 WAIT_TIMEOUT: Final = 0x00000102
+WAIT_FAILED: Final = 0xFFFFFFFF
+ERROR_BROKEN_PIPE: Final = 109
+ERROR_NO_DATA: Final = 232
 
 JOB_OBJECT_LIMIT_ACTIVE_PROCESS: Final = 0x00000008
 JOB_OBJECT_LIMIT_JOB_MEMORY: Final = 0x00000200
@@ -164,7 +167,7 @@ if WINDOWS:  # pragma: no cover - exercised only on Windows CI
             ("MinimumWorkingSetSize", ctypes.c_size_t),
             ("MaximumWorkingSetSize", ctypes.c_size_t),
             ("ActiveProcessLimit", wintypes.DWORD),
-            ("Affinity", ctypes.POINTER(ctypes.c_ulong)),
+            ("Affinity", ctypes.c_size_t),
             ("PriorityClass", wintypes.DWORD),
             ("SchedulingClass", wintypes.DWORD),
         ]
@@ -191,6 +194,87 @@ if WINDOWS:  # pragma: no cover - exercised only on Windows CI
             ("TotalTerminatedProcesses", wintypes.DWORD),
         ]
 
+    _kernel32.CreatePipe.argtypes = (
+        ctypes.POINTER(wintypes.HANDLE),
+        ctypes.POINTER(wintypes.HANDLE),
+        ctypes.POINTER(_SECURITY_ATTRIBUTES),
+        wintypes.DWORD,
+    )
+    _kernel32.CreatePipe.restype = wintypes.BOOL
+    _kernel32.SetHandleInformation.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    )
+    _kernel32.SetHandleInformation.restype = wintypes.BOOL
+    _kernel32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
+    _kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    _kernel32.SetInformationJobObject.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    )
+    _kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    _kernel32.CreateProcessW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.LPWSTR,
+        wintypes.LPVOID,
+        wintypes.LPVOID,
+        wintypes.BOOL,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.LPCWSTR,
+        ctypes.POINTER(_STARTUPINFOW),
+        ctypes.POINTER(_PROCESS_INFORMATION),
+    )
+    _kernel32.CreateProcessW.restype = wintypes.BOOL
+    _kernel32.AssignProcessToJobObject.argtypes = (
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+    )
+    _kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    _kernel32.ResumeThread.argtypes = (wintypes.HANDLE,)
+    _kernel32.ResumeThread.restype = wintypes.DWORD
+    _kernel32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    _kernel32.TerminateProcess.restype = wintypes.BOOL
+    _kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    _kernel32.TerminateJobObject.restype = wintypes.BOOL
+    _kernel32.PeekNamedPipe.argtypes = (
+        wintypes.HANDLE,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    _kernel32.PeekNamedPipe.restype = wintypes.BOOL
+    _kernel32.ReadFile.argtypes = (
+        wintypes.HANDLE,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPVOID,
+    )
+    _kernel32.ReadFile.restype = wintypes.BOOL
+    _kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    _kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    _kernel32.GetExitCodeProcess.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    _kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    _kernel32.QueryInformationJobObject.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    _kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+    _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _kernel32.CloseHandle.restype = wintypes.BOOL
+
     def _check(result: Any, operation: str) -> Any:
         if not result:
             raise WindowsNativeError(operation, ctypes.get_last_error())
@@ -212,10 +296,15 @@ if WINDOWS:  # pragma: no cover - exercised only on Windows CI
             ),
             "CreatePipe",
         )
-        _check(
-            _kernel32.SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0),
-            "SetHandleInformation",
-        )
+        try:
+            _check(
+                _kernel32.SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0),
+                "SetHandleInformation",
+            )
+        except WindowsNativeError:
+            _kernel32.CloseHandle(read)
+            _kernel32.CloseHandle(write)
+            raise
         return int(read.value), int(write.value)
 
     def create_job(limits: WindowsJobLimits) -> int:
@@ -228,34 +317,42 @@ if WINDOWS:  # pragma: no cover - exercised only on Windows CI
         )
         information.BasicLimitInformation.PerJobUserTimeLimit = flags.job_time_100ns
         information.JobMemoryLimit = flags.job_memory_limit
-        _check(
-            _kernel32.SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                ctypes.byref(information),
-                ctypes.sizeof(information),
-            ),
-            "SetInformationJobObject",
-        )
+        try:
+            _check(
+                _kernel32.SetInformationJobObject(
+                    job,
+                    JobObjectExtendedLimitInformation,
+                    ctypes.byref(information),
+                    ctypes.sizeof(information),
+                ),
+                "SetInformationJobObject",
+            )
+        except WindowsNativeError:
+            _kernel32.CloseHandle(job)
+            raise
         return int(job)
 
     def create_suspended(plan: WindowsLaunchPlan) -> NativeProcess:
-        job = create_job(plan.limits)
-        stdout_read, stdout_write = _inheritable_pipe()
-        stderr_read, stderr_write = _inheritable_pipe()
-
-        startup = _STARTUPINFOW()
-        startup.cb = ctypes.sizeof(_STARTUPINFOW)
-        startup.dwFlags = STARTF_USESTDHANDLES
-        startup.hStdInput = None
-        startup.hStdOutput = stdout_write
-        startup.hStdError = stderr_write
-
+        job = 0
+        stdout_read = 0
+        stdout_write = 0
+        stderr_read = 0
+        stderr_write = 0
         information = _PROCESS_INFORMATION()
-        command_line = ctypes.create_unicode_buffer(plan.command_line)
-        environment = ctypes.create_unicode_buffer(plan.environment_block())
+        created = False
 
         try:
+            job = create_job(plan.limits)
+            stdout_read, stdout_write = _inheritable_pipe()
+            stderr_read, stderr_write = _inheritable_pipe()
+            startup = _STARTUPINFOW()
+            startup.cb = ctypes.sizeof(_STARTUPINFOW)
+            startup.dwFlags = STARTF_USESTDHANDLES
+            startup.hStdInput = None
+            startup.hStdOutput = stdout_write
+            startup.hStdError = stderr_write
+            command_line = ctypes.create_unicode_buffer(plan.command_line)
+            environment = ctypes.create_unicode_buffer(plan.environment_block())
             _check(
                 _kernel32.CreateProcessW(
                     None,
@@ -271,32 +368,32 @@ if WINDOWS:  # pragma: no cover - exercised only on Windows CI
                 ),
                 "CreateProcessW",
             )
-        finally:
-            _kernel32.CloseHandle(stdout_write)
-            _kernel32.CloseHandle(stderr_write)
-
-        try:
+            created = True
             _check(
                 _kernel32.AssignProcessToJobObject(job, information.hProcess),
                 "AssignProcessToJobObject",
             )
-        except WindowsNativeError:
-            _kernel32.TerminateProcess(information.hProcess, 1)
-            _kernel32.CloseHandle(information.hThread)
-            _kernel32.CloseHandle(information.hProcess)
-            _kernel32.CloseHandle(job)
-            _kernel32.CloseHandle(stdout_read)
-            _kernel32.CloseHandle(stderr_read)
+            return NativeProcess(
+                process_handle=int(information.hProcess),
+                thread_handle=int(information.hThread),
+                process_id=int(information.dwProcessId),
+                job_handle=job,
+                stdout_read=stdout_read,
+                stderr_read=stderr_read,
+            )
+        except BaseException:
+            if created:
+                _kernel32.TerminateProcess(information.hProcess, 1)
+                _kernel32.CloseHandle(information.hThread)
+                _kernel32.CloseHandle(information.hProcess)
+            for handle in (stdout_read, stderr_read, job):
+                if handle:
+                    _kernel32.CloseHandle(wintypes.HANDLE(handle))
             raise
-
-        return NativeProcess(
-            process_handle=int(information.hProcess),
-            thread_handle=int(information.hThread),
-            process_id=int(information.dwProcessId),
-            job_handle=job,
-            stdout_read=stdout_read,
-            stderr_read=stderr_read,
-        )
+        finally:
+            for handle in (stdout_write, stderr_write):
+                if handle:
+                    _kernel32.CloseHandle(wintypes.HANDLE(handle))
 
     def resume(process: NativeProcess) -> None:
         result = _kernel32.ResumeThread(wintypes.HANDLE(process.thread_handle))
@@ -304,21 +401,43 @@ if WINDOWS:  # pragma: no cover - exercised only on Windows CI
             raise WindowsNativeError("ResumeThread", ctypes.get_last_error())
 
     def read_pipe(handle: int, size: int = 65536) -> bytes:
-        buffer = ctypes.create_string_buffer(size)
+        available = wintypes.DWORD(0)
+        ok = _kernel32.PeekNamedPipe(
+            wintypes.HANDLE(handle),
+            None,
+            0,
+            None,
+            ctypes.byref(available),
+            None,
+        )
+        if not ok:
+            error_code = ctypes.get_last_error()
+            if error_code in {ERROR_BROKEN_PIPE, ERROR_NO_DATA}:
+                return b""
+            raise WindowsNativeError("PeekNamedPipe", error_code)
+        if available.value == 0:
+            return b""
+        read_size = min(size, available.value)
+        buffer = ctypes.create_string_buffer(read_size)
         read = wintypes.DWORD(0)
         ok = _kernel32.ReadFile(
             wintypes.HANDLE(handle),
             buffer,
-            size,
+            read_size,
             ctypes.byref(read),
             None,
         )
         if not ok:
-            return b""
+            error_code = ctypes.get_last_error()
+            if error_code in {ERROR_BROKEN_PIPE, ERROR_NO_DATA}:
+                return b""
+            raise WindowsNativeError("ReadFile", error_code)
         return buffer.raw[: read.value]
 
     def wait_process(handle: int, timeout_ms: int = INFINITE) -> bool:
         result = _kernel32.WaitForSingleObject(wintypes.HANDLE(handle), timeout_ms)
+        if result == WAIT_FAILED:
+            raise WindowsNativeError("WaitForSingleObject", ctypes.get_last_error())
         return result == WAIT_OBJECT_0
 
     def exit_code(handle: int) -> int | None:
@@ -335,7 +454,10 @@ if WINDOWS:  # pragma: no cover - exercised only on Windows CI
         return normalize_exit_code(code.value)[0]
 
     def terminate_job(job_handle: int) -> None:
-        _kernel32.TerminateJobObject(wintypes.HANDLE(job_handle), 1)
+        _check(
+            _kernel32.TerminateJobObject(wintypes.HANDLE(job_handle), 1),
+            "TerminateJobObject",
+        )
 
     def active_process_count(job_handle: int) -> int:
         information = _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION()
@@ -347,13 +469,15 @@ if WINDOWS:  # pragma: no cover - exercised only on Windows CI
             ctypes.sizeof(information),
             ctypes.byref(returned),
         )
-        if not ok:
-            return 0
+        _check(ok, "QueryInformationJobObject")
         return int(information.ActiveProcesses)
 
     def close_handle(handle: int) -> None:
         if handle:
-            _kernel32.CloseHandle(wintypes.HANDLE(handle))
+            _check(
+                _kernel32.CloseHandle(wintypes.HANDLE(handle)),
+                "CloseHandle",
+            )
 
 else:
 

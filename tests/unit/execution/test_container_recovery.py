@@ -24,6 +24,7 @@ CONTAINER_ID = "c" * 64
 OTHER_CONTAINER_ID = "d" * 64
 DIGEST = "sha256:" + "a" * 64
 TOKEN = "token-recovery"
+ROOT = Path.cwd().resolve()
 
 
 def resource(**detail_overrides: str) -> BackendResourceIdentifier:
@@ -83,7 +84,7 @@ class FakeRuntime:
     ) -> None:
         self._descriptor = ContainerRuntimeInfo(
             name="docker",
-            executable=Path("/usr/bin/docker"),
+            executable=ROOT / "docker",
             client_version=version,
             server_version=version,
             daemon_reachable=True,

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.helpers.platforms import requires_posix_permissions
 from truecoder.execution.defaults import DEFAULT_EXECUTION_LIMITS
 from truecoder.execution.models import RiskLevel
 from truecoder.execution.trusted_rules import (
@@ -151,6 +152,7 @@ class StorageTests(unittest.TestCase):
 
         self.assertEqual(load_trusted_rules(self.path), rules)
 
+    @requires_posix_permissions
     def test_saved_rules_are_private_to_the_user(self):
         save_trusted_rules(TrustedRuleSet(rules=(rule(),)), self.path)
 

@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 from ..audit.models import BackendResourceIdentifier
-from ..cancellation import CancellationToken
+from ..cancellation import CancellationRequested, CancellationToken
 from ..errors import BackendStartError
 from ..models import ExecutionRequest, TerminationReason
 from ..preparation import PreparedExecution
@@ -211,6 +211,7 @@ class WindowsBackend:
         register_resource: BackendResourceRegistrar,
     ) -> WindowsExecutionHandle:
         del request
+        cancellation.raise_if_cancelled()
         if not WINDOWS:
             raise BackendStartError(
                 "the windows backend requires a windows host",
@@ -236,7 +237,7 @@ class WindowsBackend:
             version=WINDOWS_RESOURCE_VERSION,
             backend="windows",
             resource_kind=WINDOWS_RESOURCE_KIND,
-            resource_id=str(process.process_id),
+            resource_id=context.execution_id,
             ownership_token=ownership_token,
             host_id=self._host_id,
             created_at_utc=datetime.now(UTC),
@@ -253,14 +254,11 @@ class WindowsBackend:
             self._discard(process)
             raise
 
-        if cancellation.cancelled:
+        try:
+            cancellation.raise_if_cancelled()
+        except CancellationRequested:
             self._discard(process)
-            raise BackendStartError(
-                "cancelled before the windows job was released",
-                execution_id=context.execution_id,
-                backend="windows",
-                operation="start",
-            )
+            raise
 
         try:
             resume(process)

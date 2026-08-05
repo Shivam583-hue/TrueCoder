@@ -5,6 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 
+from tests.helpers.platforms import requires_posix
 from truecoder.execution.backends.models import ContainerRuntimeInfo
 from truecoder.execution.discovery import (
     PROBE_OUTPUT_LIMIT_BYTES,
@@ -198,6 +199,7 @@ class CgroupDiscoveryTests(unittest.TestCase):
         self.assertIsNotNone(info)
         self.assertFalse(info.mounted)  # type: ignore[union-attr]
 
+    @requires_posix
     def test_discovers_controllers_and_delegated_writability(self):
         io = FakeDiscoveryIO()
         delegated = Path("/sys/fs/cgroup/user.slice/test.scope")
@@ -220,6 +222,7 @@ class CgroupDiscoveryTests(unittest.TestCase):
         )
         self.assertEqual(info.delegated_path, delegated)  # type: ignore[union-attr]
 
+    @requires_posix
     def test_malformed_membership_falls_back_to_cgroup_root(self):
         io = FakeDiscoveryIO()
         root = Path("/sys/fs/cgroup")
@@ -449,6 +452,7 @@ class ContainerImageDiscoveryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BackendDescriptorDerivationTests(unittest.IsolatedAsyncioTestCase):
+    @requires_posix
     async def test_linux_capabilities_depend_on_delegated_controllers(self):
         io = FakeDiscoveryIO()
         io.executables["sh"] = ROOT / "sh"

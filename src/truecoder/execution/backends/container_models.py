@@ -241,7 +241,7 @@ class ContainerMount:
         for forbidden in FORBIDDEN_MOUNT_SOURCES:
             if source == forbidden or source.startswith(f"{forbidden}/"):
                 raise ValueError(f"mount source is forbidden: {source}")
-        if any(character in source for character in (",", ":", "=")):
+        if any(character in source for character in (",", "=")):
             raise ValueError("mount source contains unencodable delimiters")
         if any(character in str(self.target) for character in (",", ":", "=")):
             raise ValueError("mount target contains unencodable delimiters")
