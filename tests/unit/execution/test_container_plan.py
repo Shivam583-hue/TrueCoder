@@ -53,6 +53,7 @@ DIGEST = "sha256:" + "a" * 64
 OTHER_DIGEST = "sha256:" + "b" * 64
 CONTAINER_ID = "c" * 64
 TOKEN = "t" * 64
+ROOT = Path.cwd().resolve()
 
 
 def image(digest: str = DIGEST) -> ContainerImage:
@@ -68,7 +69,7 @@ def image(digest: str = DIGEST) -> ContainerImage:
 def runtime_info() -> ContainerRuntimeInfo:
     return ContainerRuntimeInfo(
         name="docker",
-        executable=Path("/usr/bin/docker"),
+        executable=ROOT / "docker",
         client_version="29.3.0",
         server_version="29.3.0",
         daemon_reachable=True,

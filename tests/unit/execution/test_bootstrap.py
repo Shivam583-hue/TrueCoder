@@ -267,7 +267,7 @@ class ExecutionBootstrapTests(BootstrapFixture):
         )
         runtime_info = ContainerRuntimeInfo(
             name="docker",
-            executable=Path("/usr/bin/docker"),
+            executable=self.root / "docker",
             client_version="test",
             server_version="test",
             daemon_reachable=True,
