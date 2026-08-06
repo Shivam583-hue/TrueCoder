@@ -22,6 +22,7 @@ from truecoder.tools.builtin.filesystem import (
     validate_workspace_root,
 )
 from truecoder.tools.context import ToolInvocationContext
+from truecoder.tools.mutation_audit import MutationAudit, record_mutation
 
 MAX_EDIT_FILE_BYTES = 1024 * 1024
 MAX_EDIT_TEXT_BYTES = 32 * 1024
@@ -84,19 +85,30 @@ class EditFileTool(BaseTool[EditFileArguments]):
     arguments_type = EditFileArguments
     approval = ToolApproval.REQUIRED
 
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(
+        self,
+        workspace_root: Path,
+        mutation_audit: MutationAudit | None = None,
+    ) -> None:
+        if mutation_audit is not None and not isinstance(mutation_audit, MutationAudit):
+            raise TypeError("mutation_audit must be a MutationAudit or None")
+
         self._workspace_root = validate_workspace_root(workspace_root)
+        self._mutation_audit = mutation_audit
 
     @property
     def workspace_root(self) -> Path:
         return self._workspace_root
+
+    @property
+    def mutation_audit(self) -> MutationAudit | None:
+        return self._mutation_audit
 
     async def run(
         self,
         arguments: EditFileArguments,
         invocation: ToolInvocationContext | None = None,
     ) -> EditFileOutput:
-        del invocation
         old_text = self._encode_edit_text(arguments.old_text, field_name="old_text")
         new_text = self._encode_edit_text(arguments.new_text, field_name="new_text")
         if len(old_text) > MAX_EDIT_TEXT_BYTES or len(new_text) > MAX_EDIT_TEXT_BYTES:
@@ -105,7 +117,7 @@ class EditFileTool(BaseTool[EditFileArguments]):
                 code="edit_too_large",
             )
 
-        return await asyncio.to_thread(self._edit_atomic, arguments)
+        return await asyncio.to_thread(self._edit_atomic, arguments, invocation)
 
     async def preview_mutation(self, arguments: EditFileArguments) -> FileDiff | None:
         return await asyncio.to_thread(self._preview, arguments)
@@ -157,7 +169,11 @@ class EditFileTool(BaseTool[EditFileArguments]):
                 code="unsupported_content",
             ) from error
 
-    def _edit_atomic(self, arguments: EditFileArguments) -> EditFileOutput:
+    def _edit_atomic(
+        self,
+        arguments: EditFileArguments,
+        invocation: ToolInvocationContext | None = None,
+    ) -> EditFileOutput:
         destination = resolve_existing_workspace_path(
             self._workspace_root,
             arguments.path,
@@ -207,6 +223,21 @@ class EditFileTool(BaseTool[EditFileArguments]):
             encoded_content,
             destination_mode,
             fingerprint,
+        )
+        record_mutation(
+            self._mutation_audit,
+            invocation,
+            tool_name=self.name,
+            path=arguments.path,
+            kind="edit",
+            before=original_content.encode("utf-8"),
+            after=encoded_content,
+            diff=build_file_diff(
+                arguments.path,
+                original_content,
+                edited_content,
+                kind="edit",
+            ),
         )
         return {
             "path": arguments.path,

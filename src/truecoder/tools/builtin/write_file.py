@@ -18,6 +18,7 @@ from truecoder.tools.base import (
 )
 from truecoder.tools.builtin.filesystem import is_sensitive_path
 from truecoder.tools.context import ToolInvocationContext
+from truecoder.tools.mutation_audit import MutationAudit, record_mutation
 
 MAX_WRITE_BYTES = 32 * 1024
 MAX_PREVIEW_BYTES = 1024 * 1024
@@ -64,9 +65,16 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
 
     # -------------------------------
 
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(
+        self,
+        workspace_root: Path,
+        mutation_audit: MutationAudit | None = None,
+    ) -> None:
         if not isinstance(workspace_root, Path):
             raise TypeError("workspace_root must be a pathlib.Path.")
+
+        if mutation_audit is not None and not isinstance(mutation_audit, MutationAudit):
+            raise TypeError("mutation_audit must be a MutationAudit or None")
 
         if not workspace_root.is_absolute():
             raise ValueError("workspace_root must be an absolute path.")
@@ -80,6 +88,7 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
             raise ValueError("workspace_root must be a directory.")
 
         self._workspace_root = resolved_root
+        self._mutation_audit = mutation_audit
 
     # -------------------------------
 
@@ -89,14 +98,24 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
 
         return self._workspace_root
 
+    @property
+    def mutation_audit(self) -> MutationAudit | None:
+        return self._mutation_audit
+
     def _write_atomic(
         self,
         requested_path: str,
         encoded_content: bytes,
+        invocation: ToolInvocationContext | None = None,
     ) -> WriteFileOutput:
         """Synchronously write content using an atomic replacement."""
 
-        destination, _ = self._resolve_destination(requested_path)
+        destination, is_new_file = self._resolve_destination(requested_path)
+        original_bytes = (
+            None
+            if is_new_file or self._mutation_audit is None
+            else self._read_for_audit(destination)
+        )
 
         temporary_path: Path | None = None
         temporary_fd: int | None = None
@@ -170,6 +189,17 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
             os.replace(temporary_path, destination)
             replacement_succeeded = True
 
+            record_mutation(
+                self._mutation_audit,
+                invocation,
+                tool_name=self.name,
+                path=requested_path,
+                kind="create" if created else "replace",
+                before=original_bytes,
+                after=encoded_content,
+                diff=self._audit_diff(original_bytes, encoded_content, requested_path),
+            )
+
             return {
                 "path": requested_path,
                 "created": created,
@@ -219,7 +249,6 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
         rollback because the atomic replacement may already have completed.
         """
 
-        del invocation
         if not isinstance(arguments.content, str):
             raise ToolExecutionError(
                 "Only text content is supported.",
@@ -263,9 +292,35 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
             self._write_atomic,
             arguments.path,
             encoded_content,
+            invocation,
         )
 
     # -------------------------------
+
+    @staticmethod
+    def _read_for_audit(destination: Path) -> bytes | None:
+        try:
+            return destination.read_bytes()
+        except OSError:
+            return None
+
+    @staticmethod
+    def _audit_diff(
+        original_bytes: bytes | None,
+        encoded_content: bytes,
+        requested_path: str,
+    ) -> FileDiff | None:
+        try:
+            before = "" if original_bytes is None else original_bytes.decode("utf-8")
+            after = encoded_content.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        return build_file_diff(
+            requested_path,
+            before,
+            after,
+            kind="create" if original_bytes is None else "replace",
+        )
 
     async def preview_mutation(self, arguments: WriteFileArguments) -> FileDiff | None:
         return await asyncio.to_thread(self._preview, arguments)

@@ -63,6 +63,10 @@ from truecoder.tools.builtin import (
     UpdatePlanTool,
     WriteFileTool,
 )
+from truecoder.tools.mutation_audit import (
+    MutationAudit,
+    default_mutation_database_path,
+)
 from truecoder.tools.registry import ToolRegistry
 
 DEFAULT_MAX_ITERATIONS = 25
@@ -485,13 +489,14 @@ def run() -> None:
     )
     state = AgentState()
 
+    mutation_audit = MutationAudit(default_mutation_database_path())
     tool_registry = ToolRegistry()
-    tool_registry.register(EditFileTool(project_root))
+    tool_registry.register(EditFileTool(project_root, mutation_audit))
     tool_registry.register(GlobTool(project_root))
     tool_registry.register(GrepTool(project_root))
     tool_registry.register(ListDirTool(project_root))
     tool_registry.register(ReadFileTool(project_root))
-    tool_registry.register(WriteFileTool(project_root))
+    tool_registry.register(WriteFileTool(project_root, mutation_audit))
     agent = Agent(
         state=state,
         context_builder=context_builder,

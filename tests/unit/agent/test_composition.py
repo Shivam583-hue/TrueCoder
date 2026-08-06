@@ -13,6 +13,7 @@ from truecoder.tools.builtin import (
     ReadFileTool,
     WriteFileTool,
 )
+from truecoder.tools.mutation_audit import MutationAudit
 
 
 class CompositionRootTests(unittest.TestCase):
@@ -96,6 +97,8 @@ class CompositionRootTests(unittest.TestCase):
             agent_type.call_args.kwargs["execution_bootstrap_config"].enabled
         )
         self.assertIsInstance(agent_type.call_args.kwargs["plan_store"], PlanStore)
+        self.assertIsInstance(write_file_tool.mutation_audit, MutationAudit)
+        self.assertIs(edit_file_tool.mutation_audit, write_file_tool.mutation_audit)
         state = agent_type.call_args.kwargs["state"]
         resolve_database.assert_called_once_with()
         store_type.assert_called_once_with(database_path)
