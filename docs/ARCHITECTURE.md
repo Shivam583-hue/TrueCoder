@@ -231,6 +231,15 @@ truncation marker when a change exceeds them. The line matcher runs with
 `autojunk` disabled, because that heuristic treats lines repeated across a long
 file as noise and would stop closing braces and blank lines from aligning.
 
+A change that differs must never render as an unchanged file. Splitting text
+into lines discards the terminators, so a CRLF file rewritten with LF content
+produces identical line lists and no hunks even though every line on disk
+changes. The diff therefore reports a trailing-newline change and a line-ending
+change alongside the hunks, and because equal line lists are exactly the
+condition that produces no hunks, any difference that survives splitting is
+classified as one of the two. That makes an empty diff mean identical text
+rather than merely identical line content.
+
 Applied mutations are recorded as durable evidence. Each record carries the
 tool, path, mutation kind, SHA-256 of the file before and after, byte counts,
 line deltas, and the originating call, turn, session, and workspace. The store
@@ -1077,6 +1086,7 @@ Keep these invariants stable as the codebase grows:
 * a mutation preview is read-only and never blocks or alters approval
 * the approval fingerprint covers the effect, never the rendered preview
 * rendered diffs stay bounded as the underlying change grows
+* an empty diff means identical text, never merely identical line content
 * every applied write and edit is recorded with both file digests
 * mutation records are insert-only evidence
 * a mutation that is already durable is never reported as failed
