@@ -30,6 +30,7 @@ from truecoder.execution.context import workspace_id_for
 from truecoder.execution.models import ExecutionLifecycleEvent
 from truecoder.session import SessionError, SessionManager
 from truecoder.session.models import SessionRecord
+from truecoder.tui.audit_view import AuditViewerScreen, audit_row_from
 from truecoder.tui.execution_view import (
     compact_approval_rows,
     full_approval_rows,
@@ -135,6 +136,7 @@ class TrueCoderApp(App[None]):
         Binding("ctrl+q", "quit", "Quit", show=False, priority=True),
         Binding("ctrl+l", "new_chat", "New chat", show=False, priority=True),
         Binding("ctrl+p", "manage_sessions", "Sessions", show=False, priority=True),
+        Binding("ctrl+a", "manage_audit", "Audit", show=False, priority=True),
         Binding("escape", "cancel_response", "Stop", show=False),
     ]
 
@@ -695,6 +697,46 @@ class TrueCoderApp(App[None]):
                 self.session_manager.active_session.session_id,
             ),
             self._handle_session_action,
+        )
+
+    async def action_manage_audit(self) -> None:
+        runtime = self.agent.execution_runtime
+        audit = runtime.audit if runtime is not None else None
+        if audit is None:
+            self.notify("Execution audit is unavailable.", severity="warning")
+            return
+        if self._busy:
+            self.notify(
+                "Stop the current response before viewing the audit.",
+                severity="warning",
+            )
+            return
+        project_root = (
+            self.session_manager.project_root
+            if self.session_manager is not None
+            else Path.cwd().resolve()
+        )
+        try:
+            snapshots = await audit.list_runs(
+                workspace_id=workspace_id_for(project_root),
+            )
+            events = await asyncio.gather(
+                *(audit.get_events(item.record.run_id) for item in snapshots)
+            )
+        except Exception as error:  # noqa: BLE001
+            self.notify(f"Audit could not be read: {error}", severity="error")
+            return
+        self.push_screen(
+            AuditViewerScreen(
+                tuple(
+                    audit_row_from(snapshot, run_events)
+                    for snapshot, run_events in zip(
+                        snapshots,
+                        events,
+                        strict=True,
+                    )
+                )
+            )
         )
 
     async def _handle_session_action(

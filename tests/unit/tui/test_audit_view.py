@@ -3,11 +3,21 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime, timedelta
 
+from truecoder.execution.audit.models import (
+    AuditFinalization,
+    AuditRunAdmission,
+    AuditRunPhase,
+    AuditRunRecord,
+    AuditRunSnapshot,
+    OutputEvidence,
+    TerminalOutcome,
+)
 from truecoder.tui.audit_view import (
     MAX_PREVIEW_CHARS,
     REDACTED,
     AuditFilter,
     AuditRow,
+    audit_row_from,
     bounded_preview,
     filter_rows,
     recent_cutoff,
@@ -21,7 +31,6 @@ NOW = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
 def audit_row(**overrides) -> AuditRow:
     values = {
         "run_id": "run-1",
-        "audit_id": "audit-1",
         "command": "pytest -q",
         "backend": "posix",
         "outcome": "completed",
@@ -53,13 +62,59 @@ class AuditRowTests(unittest.TestCase):
 
     def test_a_run_without_an_exit_code_shows_only_the_outcome(self):
         self.assertEqual(
-            audit_row(outcome="denied", exit_code=None).status_label(),
-            "denied",
+            audit_row(outcome="policy_denied", exit_code=None).status_label(),
+            "policy_denied",
         )
 
     def test_every_shipped_outcome_is_terminal(self):
-        for outcome in ("completed", "failed", "timed_out", "cancelled"):
+        for outcome in TerminalOutcome:
+            outcome = outcome.value
             self.assertTrue(audit_row(outcome=outcome).terminal)
+
+    def test_durable_snapshots_map_without_inventing_an_audit_identifier(self):
+        output = OutputEvidence(
+            stdout_sha256="1" * 64,
+            stdout_bytes=2,
+            stdout_preview="ok",
+        )
+        finalization = AuditFinalization(
+            run_id="run-1",
+            finalized_at=NOW,
+            outcome=TerminalOutcome.COMPLETED,
+            command_started=True,
+            exit_code=0,
+            output=output,
+        )
+        snapshot = AuditRunSnapshot(
+            admission=AuditRunAdmission(
+                run_id="run-1",
+                execution_id="exec-1",
+                tool_call_id="call-1",
+                session_id="session-1",
+                turn_id="turn-1",
+                workspace_id="workspace-1",
+                request_sha256="2" * 64,
+                request_summary=(
+                    ("command", "pytest -q"),
+                    ("backend", "auto"),
+                ),
+                created_at=NOW,
+            ),
+            record=AuditRunRecord(
+                run_id="run-1",
+                created_at=NOW,
+                updated_at=NOW,
+                phase=AuditRunPhase.TERMINAL,
+                finalization=finalization,
+                revision=1,
+            ),
+        )
+
+        row = audit_row_from(snapshot)
+
+        self.assertEqual(row.audit_id, "run-1")
+        self.assertEqual(row.stdout_preview, "ok")
+        self.assertEqual(row.outcome, "completed")
 
 
 class AuditFilterTests(unittest.TestCase):
@@ -100,7 +155,7 @@ class AuditFilterTests(unittest.TestCase):
         rows = (audit_row(command="RUFF check"),)
 
         self.assertEqual(len(filter_rows(rows, AuditFilter(search="ruff"))), 1)
-        self.assertEqual(len(filter_rows(rows, AuditFilter(search="audit-1"))), 1)
+        self.assertEqual(len(filter_rows(rows, AuditFilter(search="run-1"))), 1)
         self.assertEqual(len(filter_rows(rows, AuditFilter(search="absent"))), 0)
 
     def test_an_overlong_search_is_refused(self):
@@ -122,7 +177,7 @@ class FilteringTests(unittest.TestCase):
 
     def test_the_row_count_is_bounded(self):
         rows = tuple(
-            audit_row(run_id=f"run-{index}", audit_id=f"audit-{index}")
+            audit_row(run_id=f"run-{index}")
             for index in range(500)
         )
 
@@ -130,7 +185,7 @@ class FilteringTests(unittest.TestCase):
 
     def test_an_explicit_limit_is_honoured(self):
         rows = tuple(
-            audit_row(run_id=f"run-{index}", audit_id=f"audit-{index}")
+            audit_row(run_id=f"run-{index}")
             for index in range(50)
         )
 

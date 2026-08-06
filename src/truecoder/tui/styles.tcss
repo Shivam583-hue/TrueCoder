@@ -21,9 +21,63 @@ Screen {
 
 SessionManagerScreen,
 RenameSessionScreen,
-DeleteSessionScreen {
+DeleteSessionScreen,
+AuditViewerScreen {
     align: center middle;
     background: #00000099;
+}
+
+#audit-viewer-dialog {
+    width: 94%;
+    height: 88%;
+    padding: 1 2;
+    background: $tc-surface;
+    border: solid $tc-border-strong;
+}
+
+.audit-title {
+    height: 2;
+    color: $tc-text;
+    text-style: bold;
+}
+
+#audit-search {
+    height: 3;
+}
+
+#audit-filter-summary,
+.audit-help {
+    height: 1;
+    color: $tc-text-muted;
+}
+
+#audit-content {
+    height: 1fr;
+    margin: 1 0;
+}
+
+#audit-list {
+    width: 42%;
+    height: 100%;
+    background: transparent;
+    border-right: solid $tc-border;
+}
+
+#audit-list ListItem {
+    height: 3;
+    padding: 0 1;
+}
+
+#audit-list ListItem.-highlight {
+    background: $tc-surface-hover;
+}
+
+#audit-details {
+    width: 1fr;
+    height: 100%;
+    padding: 0 2;
+    overflow-y: auto;
+    color: $tc-text-secondary;
 }
 
 #session-manager-dialog {
