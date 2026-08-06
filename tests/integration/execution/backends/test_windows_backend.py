@@ -185,11 +185,11 @@ class WindowsBackendIntegrationTests(unittest.IsolatedAsyncioTestCase):
             lambda resource: register([], resource),
         )
         try:
-            output = b"".join(
+            output = b"".join([
                 chunk.data
                 async for chunk in handle.output()
                 if chunk.stream == "stdout"
-            )
+            ])
             exited = await handle.wait()
             self.assertEqual(exited.exit_code, 0)
             self.assertTrue(output.decode().startswith("blocked:"))
