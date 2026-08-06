@@ -22,9 +22,38 @@ Screen {
 SessionManagerScreen,
 RenameSessionScreen,
 DeleteSessionScreen,
-AuditViewerScreen {
+AuditViewerScreen,
+ExecutionHealthScreen {
     align: center middle;
     background: #00000099;
+}
+
+#execution-health-dialog {
+    width: 70;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $tc-surface;
+    border: solid $tc-border-strong;
+}
+
+.execution-health-title {
+    height: 2;
+    color: $tc-text;
+    text-style: bold;
+}
+
+#execution-health-details {
+    height: auto;
+    max-height: 24;
+    color: $tc-text-secondary;
+    overflow-y: auto;
+}
+
+.execution-health-help {
+    height: 1;
+    margin-top: 1;
+    color: $tc-text-muted;
 }
 
 #audit-viewer-dialog {

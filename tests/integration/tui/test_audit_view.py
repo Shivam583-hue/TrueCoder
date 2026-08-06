@@ -16,9 +16,34 @@ from truecoder.tui.audit_view import (
     AuditListItem,
     AuditViewerScreen,
 )
+from truecoder.tui.execution_health import ExecutionHealthScreen
 
 
 class AuditViewerIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ctrl_e_opens_execution_health(self):
+        agent = make_agent(FakeLLMClient([]))
+        app = TrueCoderApp(agent)
+        agent._execution_runtime = ExecutionRuntime(
+            service=None,
+            audit=None,
+            discovery=None,
+            backends=(),
+            health=ExecutionHealthReport(
+                enabled=True,
+                audit_ready=False,
+                recovery_ready=False,
+                backends=(),
+                failure_code="audit_unavailable",
+            ),
+        )
+        agent._execution_initialized = True
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("ctrl+e")
+            await pilot.pause()
+
+            self.assertIsInstance(app.screen, ExecutionHealthScreen)
+
     async def test_ctrl_a_opens_workspace_audit_and_escape_closes_it(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

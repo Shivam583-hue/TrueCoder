@@ -823,6 +823,7 @@ class StatusBar(Horizontal):
         self.max_input_tokens = max_input_tokens
         self._conversation_active = False
         self._usage_tokens = 0
+        self._execution_failure: str | None = None
         super().__init__(id="statusbar")
 
     def compose(self) -> ComposeResult:
@@ -855,6 +856,15 @@ class StatusBar(Horizontal):
         if self.is_mounted:
             self.query_one("#footer-status", Static).update(self._right_label())
 
+    def set_execution_health(self, failure: str | None) -> None:
+        if failure is not None and (
+            not isinstance(failure, str) or not failure.strip()
+        ):
+            raise ValueError("failure must be non-empty text or None")
+        self._execution_failure = failure
+        if self.is_mounted:
+            self.query_one("#footer-status", Static).update(self._right_label())
+
     def reset(self) -> None:
         self._usage_tokens = 0
         self.set_conversation_active(False)
@@ -867,6 +877,9 @@ class StatusBar(Horizontal):
     def _right_label(self) -> Text:
         label = Text()
         if not self._conversation_active:
+            if self._execution_failure is not None:
+                label.append("shell unavailable", style="#ef6f78")
+                label.append(" · ", style="#666666")
             label.append(self.version, style="#666666")
             return label
 
@@ -885,6 +898,10 @@ class StatusBar(Horizontal):
             label.append("    ")
         label.append("ctrl+p", style="#c8c8c8")
         label.append(" sessions    ", style="#707070")
+        label.append("ctrl+a", style="#c8c8c8")
+        label.append(" audit    ", style="#707070")
+        label.append("ctrl+e", style="#c8c8c8")
+        label.append(" execution    ", style="#707070")
         label.append("ctrl+q", style="#c8c8c8")
         label.append(" quit", style="#707070")
         return label

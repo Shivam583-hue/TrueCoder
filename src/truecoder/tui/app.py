@@ -31,6 +31,10 @@ from truecoder.execution.models import ExecutionLifecycleEvent
 from truecoder.session import SessionError, SessionManager
 from truecoder.session.models import SessionRecord
 from truecoder.tui.audit_view import AuditViewerScreen, audit_row_from
+from truecoder.tui.execution_health import (
+    ExecutionHealthScreen,
+    health_failure_message,
+)
 from truecoder.tui.execution_view import (
     compact_approval_rows,
     full_approval_rows,
@@ -137,6 +141,7 @@ class TrueCoderApp(App[None]):
         Binding("ctrl+l", "new_chat", "New chat", show=False, priority=True),
         Binding("ctrl+p", "manage_sessions", "Sessions", show=False, priority=True),
         Binding("ctrl+a", "manage_audit", "Audit", show=False, priority=True),
+        Binding("ctrl+e", "execution_health", "Execution", show=False, priority=True),
         Binding("escape", "cancel_response", "Stop", show=False),
     ]
 
@@ -197,7 +202,16 @@ class TrueCoderApp(App[None]):
 
     async def on_mount(self) -> None:
         self.screen.add_class("empty-chat")
-        await self.agent.initialize_execution()
+        runtime = await self.agent.initialize_execution()
+        if runtime is not None:
+            failure = health_failure_message(runtime.health)
+            self.query_one(StatusBar).set_execution_health(failure)
+            if failure is not None:
+                self.notify(
+                    f"Shell execution unavailable: {failure}.",
+                    severity="warning",
+                    timeout=8,
+                )
         self.query_one(PromptInput).focus()
 
     async def on_unmount(self) -> None:
@@ -738,6 +752,13 @@ class TrueCoderApp(App[None]):
                 )
             )
         )
+
+    def action_execution_health(self) -> None:
+        runtime = self.agent.execution_runtime
+        if runtime is None:
+            self.notify("Execution subsystem is not configured.", severity="warning")
+            return
+        self.push_screen(ExecutionHealthScreen(runtime.health))
 
     async def _handle_session_action(
         self,
