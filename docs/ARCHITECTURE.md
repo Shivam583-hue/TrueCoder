@@ -294,6 +294,14 @@ requirement, and exact capability requirements. Requested limits can only be
 tightened against policy ceilings. Policy classification improves safety and
 approval UX, but it is not an isolation boundary.
 
+Versioned trusted-command rules are applied after that base classification and
+before backend selection. They match only structured exec requests by portable
+bare executable name. A matching rule may impose an approval requirement or a
+maximum accepted risk; exceeding that ceiling denies the request. It can never
+remove an approval already required by the base policy, lower the classified
+risk, widen a capability, or increase a limit. An invalid rules file makes
+execution unavailable at startup instead of being ignored.
+
 The environment builder never copies the complete parent environment. It starts
 from a small platform-specific allowlist, optionally includes explicitly
 configured names, then applies TrueCoder-defined and request-specific values in
@@ -517,6 +525,15 @@ finalization. Concrete POSIX, Windows Job Object, and container recovery
 handlers are registered during startup only when their host or runtime
 prerequisites are present.
 
+The store also exposes workspace-scoped, newest-first run queries with a hard
+row limit for the audit viewer. It never performs an unbounded history read.
+After recovery, startup applies the configured retention policy. Operational
+retention always keeps every nonterminal row and removes expired terminal
+evidence by building and validating a replacement database, then atomically
+installing it. This preserves the schema, foreign keys, immutability triggers,
+and recent evidence without deleting trigger-protected terminal rows in place.
+A retention failure leaves shell execution unavailable.
+
 ## Execution orchestration
 
 `ExecutionRunner` owns one execution from durable admission to one normalized
@@ -585,7 +602,10 @@ Only one method calls `audit.finalize`, and it receives an immutable
 `TerminalMaterial`.
 The pure functions in `results.py` convert that material into an
 `AuditFinalization` and convert the persisted record into the public
-`ExecutionResult`, including its exact audit ID.
+`ExecutionResult`, including its exact audit ID. The public result also carries
+a bounded stable reason code and user-actionable reason message for policy
+denial, approval rejection, selection failure, and vetted startup failure.
+Arbitrary native diagnostics are not copied into the model-visible result.
 Durations come from injected monotonic time; audit timestamps remain UTC wall
 time.
 Incomplete cleanup is never reported as success: the row records
@@ -656,8 +676,10 @@ The image is pinned by content digest in `container/image.lock` and launch uses
 sandbox unavailable.
 Capability derivation comes from verified `ContainerBackendFacts` rather than
 optimistic constants, and total CPU seconds are advertised as best-effort:
-the trusted entrypoint monitors aggregate cgroup CPU accounting, but that
-enforcement is not yet adversarially proven.
+the trusted entrypoint monitors aggregate cgroup CPU accounting and the
+adversarial sandbox suite verifies that a busy process is terminated at the
+requested budget, but the backend still refuses to advertise that userspace
+monitor as kernel-enforced isolation.
 
 Start uses create, register, then start.
 The container is created stopped, inspected for exact state, labels, and image
@@ -669,12 +691,18 @@ The handle owns one exact container: a single output owner, cached
 wait/terminate/cleanup, stop-then-kill escalation by full immutable ID, explicit
 removal, and absence verification.
 
+The trusted entrypoint launches the requested command in its own process group.
+Signal forwarding and CPU-limit termination target that group, not the
+entrypoint's own group, so supervision cannot accidentally signal itself before
+the project descendants have been cleaned up.
+
 Proven adversarially against real Docker: a host secret outside the workspace
 is unreadable, `workspace-read` cannot mutate the host tree, the root filesystem
 is read-only with only approved tmpfs writable, network denial blocks a real
 external canary, no runtime socket is visible, every capability is dropped with
 no-new-privileges active, exceeding memory normalizes to `memory_limit`, streams
-stay separate and raw, and no container, client, or temporary file leaks.
+stay separate and raw, PID growth is bounded, a CPU-bound process is terminated
+at its aggregate budget, and no container, client, or temporary file leaks.
 
 Container discovery does not trust a matching image name. It inspects the exact
 locally available digest and verifies its platform, non-root user, and
@@ -733,16 +761,20 @@ cancellation, limit termination, and backend unavailability. The payload keeps
 status, exit code, duration, separate bounded stdout and stderr, raw byte
 counts, truncation flags, termination reason, backend, and audit ID. Audit or
 cleanup failures are different: they become a sanitized infrastructure tool
-error because no trustworthy public result exists.
+error because no trustworthy public result exists. Refused and failed-start
+results also include a stable reason code and a bounded actionable message, so
+the model can change its request without seeing unsafe native diagnostics.
 
 `execution/bootstrap.py` is the composition root for this subsystem. Startup
 proceeds in this order:
 
 ```text
 open and secure audit storage
+→ load strict trusted-command rules
 → discover host, shells, cgroups, runtimes, and pinned image
 → construct only exact implemented backend instances
 → recover every nonterminal audit resource
+→ compact expired terminal evidence
 → build registry, approval gate, runner, and service
 → publish a health report
 → register ShellTool only when the report is healthy
@@ -754,6 +786,17 @@ registered only on a supported POSIX host. Windows is registered only on an
 actual Windows host after `WindowsBackend.from_snapshot()` succeeds. Container
 is registered only for the certified Linux Docker profile with the verified
 pinned image.
+
+`execution/configuration.py` is an optional operator boundary, not a setup step
+for ordinary users. With no file, `load_execution_config()` returns safe
+zero-configuration defaults. If `<user config>/truecoder/execution.json`
+exists, its versioned strict schema can change deployment ceilings, environment
+inheritance, audit and lock paths, container defaults, an isolated container
+network, retention days, and the trusted-rules path. Unknown fields, invalid
+types, and malformed paths fail closed. A model request may still tighten the
+effective values but cannot exceed these configured ceilings. Network-enabled
+container requests are rejected during selection unless an isolated network
+was configured; they never silently inherit the host network.
 
 Shell-specific system guidance is also conditional. The model is told to
 prefer argv, request only necessary capabilities, use relative working
@@ -795,6 +838,9 @@ line, and a trim marker states that earlier output was dropped.
 
 `ExecutionCard` renders one execution and decides nothing. It applies typed
 stages, appends bounded preview text, and records the audit id on completion.
+The initial `requested` lifecycle event carries a bounded display form of the
+real argv or script, so the card shows the requested command immediately
+instead of a generic placeholder.
 Because it can be updated at any lifecycle point, including while the
 application unmounts and its children are already gone, a missing child is not
 an error for it.
@@ -809,6 +855,15 @@ awaited is resolved as a rejection so its tool task cannot block forever, every
 active execution is cancelled by id, and the worker is given a bounded window to
 terminate, clean up, and finalize. The interface can disappear at any lifecycle
 point without leaving a process or a nonterminal audit row.
+
+Two workspace-scoped operational screens expose the subsystem without turning
+the main composer into a control panel. `ctrl+a` opens the audit viewer, which
+loads at most 200 recent runs and filters them by text, durable outcome,
+backend, and recency; selecting a row shows bounded previews, cleanup status,
+reason, and lifecycle events. `ctrl+e` opens the execution health report,
+showing audit readiness, recovery readiness, registered backends, and explicit
+unavailable reasons. When shell is unavailable, the status bar and startup
+notification surface that fact instead of leaving the missing tool unexplained.
 
 ## Platform differences
 
@@ -863,12 +918,15 @@ to reuse the old numeric handle. `KILL_ON_JOB_CLOSE` is responsible for
 terminating descendants when the original process disappears, while audit
 recovery records uncertainty instead of guessing.
 
-The shared backend contract runs natively on `windows-latest` in CI. It launches
-real PowerShell processes through the Job Object backend and covers resource
-registration, output ownership, normal and nonzero exits, termination,
-cancellation, stable waiting, cleanup, and failed-start cleanup. The Windows
-support claim is based on that native boundary test, not only on pure quoting
-and planning tests.
+The shared backend contract and the integration suite run natively on
+`windows-latest` in CI. The contract launches real PowerShell processes through
+the Job Object backend and covers resource registration, output ownership,
+normal and nonzero exits, termination, cancellation, stable waiting, cleanup,
+and failed-start cleanup. Windows-only integration probes additionally verify
+that Job termination prevents a grandchild from surviving, the active-process
+limit blocks descendant creation, and a real timeout reaches one durable audit
+finalization through the complete service. The Windows support claim is based
+on native boundary tests, not only on pure quoting and planning tests.
 
 ## Policy hardening and operations
 
@@ -879,18 +937,23 @@ duplicate executables, paths in place of bare program names, whitespace or null
 bytes in identifiers, and oversized documents are all refused rather than
 ignored.
 
-A rule can only tighten. It never lowers a risk level it does not cover, and
-approval is retained above low risk even when a rule tries to waive it. A rule
-can never introduce approval where policy did not require it, so the editor
-cannot be used to escalate.
+A rule can only tighten. It never changes the classified risk, cannot approve a
+denied base decision, and cannot remove an approval the base policy required.
+`require_approval=true` may add approval for a matching structured executable.
+If the classified risk exceeds `max_risk`, the request is denied before backend
+selection. Shell scripts do not match trusted rules because interpreting
+arbitrary shell syntax is not a trustworthy executable identity.
 
-The trusted-rule parser, storage, and tightening operation are implemented and
-tested, but `evaluate_policy` does not yet load or apply them. Rules therefore
-do not currently change a live execution decision.
+Bootstrap loads the rule set once and supplies it to `ExecutionService`.
+Every live execution applies it after base policy evaluation. Missing files
+mean an empty rule set; malformed or unreadable files fail closed and appear in
+execution health as `trusted_rules_invalid`.
 
-`audit/retention.py` plans deletion from a bounded window. Nonterminal rows are
-retained by default because they are exactly the evidence a stuck or crashed run
-leaves behind, and dropping them would discard the investigation trail.
+`audit/retention.py` calculates the UTC cutoff and a bounded deletion plan.
+Nonterminal rows are retained because they are exactly the evidence a stuck or
+crashed run leaves behind, and operational configuration cannot disable that
+guarantee. `SQLiteAuditStore.apply_retention()` performs the actual atomic
+database rebuild after recovery at startup.
 
 `tui/audit_view.py` filters audit rows by outcome, backend, recency, and search
 text, orders them newest first, and bounds both the row count and every rendered
@@ -898,9 +961,9 @@ value. Detail names matching credential, token, password, or environment-value
 rules render as `<redacted>`. Incomplete cleanup is surfaced ahead of the exit
 code, because a run that could not clean up is not a successful run.
 
-Retention planning is not yet scheduled, and the audit view is not yet routed
-to a TUI screen or key binding. Both are tested building blocks rather than
-currently reachable user features.
+The viewer is reachable through `ctrl+a`; `escape` closes it. Execution health
+is reachable through `ctrl+e`. Both screens are presentation-only consumers of
+bounded service data and never mutate audit evidence or backend state.
 
 Parsers and sanitizers are fuzzed deterministically. A fixed seed drives noisy
 Unicode, control-sequence, and structural input through the terminal sanitizer,
@@ -973,8 +1036,15 @@ Keep these invariants stable as the codebase grows:
 * macOS never applies a per-user process rlimit as a process-tree limit
 * project code stays suspended until its Job Object identity is durable
 * a Job Object is always killed on close so descendants cannot be orphaned
-* native Windows support is exercised through the shared contract on Windows
+* native Windows support is exercised through contract and integration suites on Windows
 * persisted Win32 handle values are never trusted across a process restart
 * trusted-command rules can only tighten policy, never widen it
-* audit retention never deletes nonterminal evidence by default
+* invalid trusted-command rules make execution unavailable rather than being ignored
+* optional execution configuration has safe defaults and a strict versioned schema
+* a network-enabled container is never selected without a configured isolated network
+* audit retention never deletes nonterminal evidence
+* retention preserves schema invariants by atomically replacing a verified database
 * audit details matching credential rules render only as redacted
+* model-visible failure reasons are bounded and never expose arbitrary native diagnostics
+* execution cards show the bounded requested command from the first lifecycle event
+* execution health and audit history remain visible even when shell is unavailable
