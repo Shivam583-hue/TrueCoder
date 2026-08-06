@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from tests.helpers.platforms import skip_module_on_windows
+
+skip_module_on_windows('POSIX process group signalling')
+
 import importlib.util
 import signal
 import unittest
