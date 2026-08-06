@@ -25,6 +25,12 @@ from truecoder.tools.builtin.list_dir import (
     ListDirOutput,
     ListDirTool,
 )
+from truecoder.tools.builtin.plan import (
+    PlanStepArgument,
+    UpdatePlanArguments,
+    UpdatePlanOutput,
+    UpdatePlanTool,
+)
 from truecoder.tools.builtin.read_file import (
     MAX_LINE_COUNT,
     ReadFileArguments,
@@ -70,6 +76,7 @@ __all__ = [
     "ListDirEntry",
     "ListDirOutput",
     "ListDirTool",
+    "PlanStepArgument",
     "ReadFileArguments",
     "ReadFileOutput",
     "ReadFileTool",
@@ -77,6 +84,9 @@ __all__ = [
     "ShellDefaults",
     "ShellOutput",
     "ShellTool",
+    "UpdatePlanArguments",
+    "UpdatePlanOutput",
+    "UpdatePlanTool",
     "WriteFileArguments",
     "WriteFileOutput",
     "WriteFileTool",
