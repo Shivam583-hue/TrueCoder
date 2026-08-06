@@ -14,6 +14,7 @@ from textual.message import Message
 from textual.widgets import Button, Markdown, Static, TextArea
 
 from truecoder.client.response import TokenUsage
+from truecoder.planning import Plan, PlanStepStatus
 from truecoder.tui.execution_view import (
     EXECUTION_CARD_STATES,
     BoundedPreview,
@@ -810,6 +811,73 @@ class ExecutionCard(Vertical):
         return "\n\n".join(sections)
 
 
+PLAN_STEP_GLYPHS: dict[PlanStepStatus, str] = {
+    "pending": "○",
+    "in_progress": "▸",
+    "done": "✓",
+}
+_PLAN_STEP_STYLES: dict[PlanStepStatus, str] = {
+    "pending": "#a2a2a2",
+    "in_progress": "#4da3ff bold",
+    "done": "#707070",
+}
+
+
+class PlanCard(Vertical):
+    def __init__(self, plan: Plan) -> None:
+        if not isinstance(plan, Plan):
+            raise TypeError("plan must be a Plan")
+
+        self.plan = plan
+        classes = "plan-card"
+        if plan.is_complete:
+            classes += " complete"
+        super().__init__(classes=classes)
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="plan-heading"):
+            yield Static("◈", classes="plan-glyph", markup=False)
+            yield Static("Plan", classes="plan-title", markup=False)
+            yield Static("", classes="tool-spacer")
+            yield Static(
+                self._progress_label(),
+                classes="plan-progress",
+                markup=False,
+            )
+
+        yield Static(self._steps_text(), classes="plan-steps", markup=False)
+
+    def update_plan(self, plan: Plan) -> None:
+        if not isinstance(plan, Plan):
+            raise TypeError("plan must be a Plan")
+
+        self.plan = plan
+        self.set_class(plan.is_complete, "complete")
+        self._refresh_static(".plan-progress", self._progress_label())
+        self._refresh_static(".plan-steps", self._steps_text())
+
+    def _progress_label(self) -> str:
+        return f"{self.plan.completed}/{self.plan.total}"
+
+    def _steps_text(self) -> Text:
+        text = Text()
+        for index, step in enumerate(self.plan.steps):
+            if index:
+                text.append("\n")
+            style = _PLAN_STEP_STYLES[step.status]
+            text.append(f"{PLAN_STEP_GLYPHS[step.status]} ", style=style)
+            text.append(step.title, style=style)
+        return text
+
+    def _refresh_static(self, selector: str, value: str | Text) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one(selector, Static).update(value)
+        except NoMatches:
+            return
+
+
 # Kept as a compatibility alias for integrations importing the original widget.
 ApprovalCard = ToolCallCard
 
@@ -832,6 +900,7 @@ class StatusBar(Horizontal):
         self._conversation_active = False
         self._usage_tokens = 0
         self._execution_failure: str | None = None
+        self._plan: Plan | None = None
         super().__init__(id="statusbar")
 
     def compose(self) -> ComposeResult:
@@ -873,8 +942,16 @@ class StatusBar(Horizontal):
         if self.is_mounted:
             self.query_one("#footer-status", Static).update(self._right_label())
 
+    def set_plan(self, plan: Plan | None) -> None:
+        if plan is not None and not isinstance(plan, Plan):
+            raise TypeError("plan must be a Plan or None")
+        self._plan = plan
+        if self.is_mounted:
+            self.query_one("#footer-status", Static).update(self._right_label())
+
     def reset(self) -> None:
         self._usage_tokens = 0
+        self._plan = None
         self.set_conversation_active(False)
 
     def _workspace_label(self) -> str:
@@ -890,6 +967,13 @@ class StatusBar(Horizontal):
                 label.append(" · ", style="#666666")
             label.append(self.version, style="#666666")
             return label
+
+        if self._plan is not None:
+            label.append(
+                f"plan {self._plan.completed}/{self._plan.total}",
+                style="#4da3ff" if not self._plan.is_complete else "#67c587",
+            )
+            label.append("    ")
 
         if self._usage_tokens:
             if self._usage_tokens >= 1000:

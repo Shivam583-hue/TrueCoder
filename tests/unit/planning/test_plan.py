@@ -11,14 +11,6 @@ from truecoder.planning import (
 )
 
 
-class RecordingSink:
-    def __init__(self) -> None:
-        self.published: list[Plan | None] = []
-
-    def publish(self, plan: Plan | None) -> None:
-        self.published.append(plan)
-
-
 def _steps(*pairs: tuple[str, PlanStepStatus]) -> tuple[PlanStep, ...]:
     return tuple(PlanStep(title=title, status=status) for title, status in pairs)
 
@@ -178,32 +170,9 @@ class PlanStoreTests(unittest.TestCase):
 
         self.assertIsNone(store.current)
 
-    def test_clear_without_a_plan_does_not_publish(self):
-        sink = RecordingSink()
-        store = PlanStore(sink)
-
-        store.clear()
-
-        self.assertEqual(sink.published, [])
-
-    def test_the_sink_receives_every_change(self):
-        sink = RecordingSink()
-        store = PlanStore(sink)
-
-        plan = store.replace(_steps(("First", "pending")))
-        store.clear()
-
-        self.assertEqual(sink.published, [plan, None])
-
-    def test_a_sink_can_be_attached_after_construction(self):
-        sink = RecordingSink()
+    def test_clear_without_a_plan_is_a_no_op(self):
         store = PlanStore()
-        store.attach_sink(sink)
 
-        plan = store.replace(_steps(("First", "pending")))
+        store.clear()
 
-        self.assertEqual(sink.published, [plan])
-
-    def test_a_sink_without_publish_is_rejected(self):
-        with self.assertRaises(TypeError):
-            PlanStore(object())  # type: ignore[arg-type]
+        self.assertIsNone(store.current)

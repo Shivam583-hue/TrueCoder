@@ -734,6 +734,61 @@ Screen.-narrow.empty-chat #launcher-tip {
     margin-top: 2;
 }
 
+/* Task plan */
+PlanCard {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+    padding: 1 3;
+    background: transparent;
+    border: none;
+    border-left: solid $tc-blue;
+}
+
+PlanCard.complete {
+    border-left: solid $tc-green;
+}
+
+.plan-heading {
+    width: 100%;
+    height: 1;
+}
+
+.plan-glyph {
+    width: 2;
+    min-width: 2;
+    color: $tc-blue;
+    text-style: bold;
+}
+
+PlanCard.complete .plan-glyph {
+    color: $tc-green;
+}
+
+.plan-title {
+    width: auto;
+    color: $tc-text;
+    text-style: bold;
+}
+
+.plan-progress {
+    width: auto;
+    margin-left: 1;
+    color: $tc-text-muted;
+    text-align: right;
+}
+
+.plan-steps {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+    padding-left: 2;
+}
+
+Screen.-narrow PlanCard {
+    padding: 1 1;
+}
+
 /* Shell execution card */
 ExecutionCard {
     width: 100%;

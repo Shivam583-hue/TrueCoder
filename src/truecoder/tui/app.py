@@ -28,8 +28,10 @@ from truecoder.agent.messages import ModelMessage
 from truecoder.client.response import TokenUsage
 from truecoder.execution.context import workspace_id_for
 from truecoder.execution.models import ExecutionLifecycleEvent
+from truecoder.planning import Plan
 from truecoder.session import SessionError, SessionManager
 from truecoder.session.models import SessionRecord
+from truecoder.tools.builtin import UpdatePlanTool
 from truecoder.tui.audit_view import AuditViewerScreen, audit_row_from
 from truecoder.tui.execution_health import (
     ExecutionHealthScreen,
@@ -51,6 +53,7 @@ from truecoder.tui.widgets import (
     Composer,
     EmptyState,
     ExecutionCard,
+    PlanCard,
     PromptInput,
     StatusBar,
     ToolCallCard,
@@ -172,6 +175,8 @@ class TrueCoderApp(App[None]):
         self._pending_approval: _PendingApproval | None = None
         self._tool_cards: dict[str, ToolCallCard] = {}
         self._execution_cards: dict[str, ExecutionCard] = {}
+        self._plan_card: PlanCard | None = None
+        self._plan_calls: dict[str, str] = {}
         self._model_name = "model not configured"
         self.agent.set_execution_sinks(
             event_sink=_AppEventSink(self),
@@ -415,12 +420,18 @@ class TrueCoderApp(App[None]):
                     await assistant_message.append_delta(content)
                     self._scroll_to_latest()
                 elif event.type == AgentEventType.TOOL_CALL:
-                    assistant_message = await self._show_tool_call(
-                        call_id=str(event.data.get("call_id", "")),
-                        tool_name=str(event.data.get("name", "tool")),
-                        arguments=str(event.data.get("arguments", "{}")),
-                        assistant_message=assistant_message,
-                    )
+                    call_id = str(event.data.get("call_id", ""))
+                    tool_name = str(event.data.get("name", "tool"))
+                    arguments = str(event.data.get("arguments", "{}"))
+                    if tool_name == UpdatePlanTool.name:
+                        self._plan_calls[call_id] = arguments
+                    else:
+                        assistant_message = await self._show_tool_call(
+                            call_id=call_id,
+                            tool_name=tool_name,
+                            arguments=arguments,
+                            assistant_message=assistant_message,
+                        )
                 elif event.type == AgentEventType.APPROVAL_REQUESTED:
                     call_id = str(event.data.get("call_id", ""))
                     card = self._tool_cards.get(call_id)
@@ -442,16 +453,34 @@ class TrueCoderApp(App[None]):
                         )
                         self._scroll_to_latest()
                 elif event.type == AgentEventType.TOOL_RESULT:
-                    self._finish_tool_call(
-                        call_id=str(event.data.get("call_id", "")),
-                        status=str(event.data.get("status", "error")),
-                        content=str(event.data.get("content", "")),
-                    )
+                    call_id = str(event.data.get("call_id", ""))
+                    status = str(event.data.get("status", "error"))
+                    content = str(event.data.get("content", ""))
+                    if call_id in self._plan_calls:
+                        assistant_message = await self._resolve_plan_call(
+                            call_id=call_id,
+                            status=status,
+                            content=content,
+                            assistant_message=assistant_message,
+                        )
+                    else:
+                        self._finish_tool_call(
+                            call_id=call_id,
+                            status=status,
+                            content=content,
+                        )
                 elif event.type == AgentEventType.TOOL_REJECTED:
-                    self._reject_tool_call(
-                        call_id=str(event.data.get("call_id", "")),
-                        content=str(event.data.get("content", "")),
-                    )
+                    call_id = str(event.data.get("call_id", ""))
+                    content = str(event.data.get("content", ""))
+                    if call_id in self._plan_calls:
+                        assistant_message = await self._resolve_plan_call(
+                            call_id=call_id,
+                            status="rejected",
+                            content=content,
+                            assistant_message=assistant_message,
+                        )
+                    else:
+                        self._reject_tool_call(call_id=call_id, content=content)
                 elif event.type == AgentEventType.AGENT_END:
                     usage_data = event.data.get("usage")
                     usage = (
@@ -621,6 +650,26 @@ class TrueCoderApp(App[None]):
             full_approval_rows(execution),
         )
 
+    async def _mount_after_assistant(
+        self,
+        widget: ToolCallCard | PlanCard,
+        assistant_message: ChatMessage,
+    ) -> ChatMessage:
+        if assistant_message.content_text:
+            assistant_message.finish_segment()
+        else:
+            await assistant_message.remove()
+
+        transcript = self.query_one("#transcript", VerticalScroll)
+        next_assistant = ChatMessage(
+            "assistant",
+            model_name=self._model_name,
+        )
+        await transcript.mount(widget, next_assistant)
+        self._active_assistant = next_assistant
+        self._scroll_to_latest()
+        return next_assistant
+
     async def _show_tool_call(
         self,
         *,
@@ -629,11 +678,6 @@ class TrueCoderApp(App[None]):
         arguments: str,
         assistant_message: ChatMessage,
     ) -> ChatMessage:
-        if assistant_message.content_text:
-            assistant_message.finish_segment()
-        else:
-            await assistant_message.remove()
-
         card = ToolCallCard(
             call_id,
             tool_name,
@@ -641,15 +685,55 @@ class TrueCoderApp(App[None]):
             state="running",
         )
         self._tool_cards[call_id] = card
-        transcript = self.query_one("#transcript", VerticalScroll)
-        next_assistant = ChatMessage(
-            "assistant",
-            model_name=self._model_name,
-        )
-        await transcript.mount(card, next_assistant)
-        self._active_assistant = next_assistant
+        return await self._mount_after_assistant(card, assistant_message)
+
+    async def _resolve_plan_call(
+        self,
+        *,
+        call_id: str,
+        status: str,
+        content: str,
+        assistant_message: ChatMessage,
+    ) -> ChatMessage:
+        arguments = self._plan_calls.pop(call_id, "{}")
+        plan = self._current_plan()
+
+        if status != "success" or plan is None:
+            next_assistant = await self._show_tool_call(
+                call_id=call_id,
+                tool_name=UpdatePlanTool.name,
+                arguments=arguments,
+                assistant_message=assistant_message,
+            )
+            self._finish_tool_call(
+                call_id=call_id,
+                status=status,
+                content=content,
+            )
+            return next_assistant
+
+        self.query_one(StatusBar).set_plan(plan)
+
+        if self._plan_card is None:
+            self._plan_card = PlanCard(plan)
+            return await self._mount_after_assistant(
+                self._plan_card,
+                assistant_message,
+            )
+
+        self._plan_card.update_plan(plan)
         self._scroll_to_latest()
-        return next_assistant
+        return assistant_message
+
+    def _current_plan(self) -> Plan | None:
+        store = self.agent.plan_store
+        return None if store is None else store.current
+
+    def _clear_plan(self) -> None:
+        self._plan_card = None
+        self._plan_calls.clear()
+        if self.agent.plan_store is not None:
+            self.agent.plan_store.clear()
 
     def _finish_tool_call(
         self,
@@ -697,8 +781,10 @@ class TrueCoderApp(App[None]):
         await self.query(".chat-message").remove()
         await self.query(".tool-call-card").remove()
         await self.query(".execution-card").remove()
+        await self.query(".plan-card").remove()
         self._tool_cards.clear()
         self._execution_cards.clear()
+        self._clear_plan()
         self._active_assistant = None
         self.query_one("#empty-state", EmptyState).styles.display = "block"
         self._set_busy(False)
@@ -856,8 +942,10 @@ class TrueCoderApp(App[None]):
         await self.query(".chat-message").remove()
         await self.query(".tool-call-card").remove()
         await self.query(".execution-card").remove()
+        await self.query(".plan-card").remove()
         self._tool_cards.clear()
         self._execution_cards.clear()
+        self._clear_plan()
         self._active_assistant = None
         transcript = self.query_one("#transcript", VerticalScroll)
         cards: dict[str, ToolCallCard] = {}
@@ -884,6 +972,8 @@ class TrueCoderApp(App[None]):
                         segment.finish_segment()
                     for raw_call in message["tool_calls"]:
                         function = raw_call["function"]
+                        if function["name"] == UpdatePlanTool.name:
+                            continue
                         card = ToolCallCard(
                             raw_call["id"],
                             function["name"],

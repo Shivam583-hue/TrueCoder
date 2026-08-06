@@ -8,7 +8,7 @@ from truecoder.planning.models import (
     PlanStepStatus,
     normalize_step_title,
 )
-from truecoder.planning.store import PlanEventSink, PlanStore
+from truecoder.planning.store import PlanStore
 
 __all__ = [
     "MAX_PLAN_STEPS",
@@ -16,7 +16,6 @@ __all__ = [
     "PLAN_STEP_STATUSES",
     "STATUS_GLYPHS",
     "Plan",
-    "PlanEventSink",
     "PlanStep",
     "PlanStepStatus",
     "PlanStore",
