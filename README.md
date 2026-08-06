@@ -9,7 +9,7 @@
 [![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](#testing)
 
 TrueCoder is a Python agent runtime that reads, searches, edits, and runs code inside one project.
-It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, seven approval-gated tools, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
+It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, seven approval-gated tools, a task planner, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
 Shell execution passes through policy evaluation, capability-based backend selection, an approval fingerprint, a durable audit admission, a resource launch gate, arbitrated terminal outcomes, and one immutable terminal audit record.
 The certified sandbox profile runs commands in a digest-pinned, non-root, read-only, network-denied, capability-dropped Docker container that is proven against real Docker rather than assumed safe.
 
@@ -44,6 +44,7 @@ Coming soon...
 - **Turn-based conversation model** - only complete, valid turns enter history, so a tool call never survives without its result.
 - **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
 - **Seven approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, and `shell`, each with its own validated schema and security boundary.
+- **A task planner that survives context eviction** - `update_plan` keeps an ordered checklist with exactly one step in progress, and the current plan is reprojected into every model request instead of being left in history to roll off the token budget.
 - **Atomic filesystem edits** - `write_file` and `edit_file` write beside the destination and install with `os.replace()`, so a reader sees the old complete file or the new complete file and never a partial one.
 - **Concurrency-aware editing** - `edit_file` verifies device, inode, size, and modification time before replacement and reports `file_changed` instead of overwriting a file that moved underneath it.
 - **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
@@ -101,8 +102,12 @@ TrueCoder/
 │   │   ├── messages.py                # Durable model message types
 │   │   ├── events.py                  # Agent event stream consumed by the UI
 │   │   ├── approval.py                # Agent-side approval routing
-│   │   ├── prompts.py                 # System prompt and conditional shell guidance
+│   │   ├── prompts.py                 # System prompt and conditional tool guidance
 │   │   └── project_instructions.py    # Project root discovery and AGENTS.md loading
+│   │
+│   ├── planning/                      # Dependency-free task plan domain
+│   │   ├── models.py                  # Plan and step invariants, bounds, and rendering
+│   │   └── store.py                   # The single in-memory plan for the active task
 │   │
 │   ├── client/
 │   │   ├── llm_client.py              # OpenAI-compatible streaming and non-streaming calls
@@ -122,6 +127,7 @@ TrueCoder/
 │   │       ├── list_dir.py            # Immediate children, 500 results, 5,000 scanned
 │   │       ├── glob.py                # Rooted * and recursive ** path patterns
 │   │       ├── grep.py                # Regex search with 200 matches and 20,000 scanned
+│   │       ├── plan.py                # Whole-list plan replacement, no approval needed
 │   │       └── shell.py               # Model boundary for execution, not an executor
 │   │
 │   ├── execution/                     # Execution control plane
@@ -195,7 +201,7 @@ TrueCoder/
 │       ├── execution_view.py          # Pure stage mapping, approval rows, bounded preview
 │       ├── audit_view.py              # Workspace audit browser and bounded detail view
 │       ├── execution_health.py        # Audit, recovery, and backend status screen
-│       ├── widgets.py                 # Transcript, tool cards, and approval widgets
+│       ├── widgets.py                 # Transcript, tool cards, plan card, and approvals
 │       ├── sessions.py                # Session browser
 │       └── styles.tcss                # Terminal stylesheet
 │
@@ -203,7 +209,8 @@ TrueCoder/
     ├── unit/                          # Mostly pure logic and injected platform fixtures
     │   ├── agent/                     # Loop, state, messages, composition, instructions
     │   ├── client/                    # Streaming, retries, and error translation
-    │   ├── context/                   # Turn selection and token budgeting
+    │   ├── context/                   # Turn selection, token budgeting, plan projection
+    │   ├── planning/                  # Plan and step invariants
     │   ├── session/                   # Durable turn codec
     │   ├── tools/                     # Base, executor, registry, and every builtin tool
     │   ├── tui/                       # Presentation mapping, cards, and audit summaries
@@ -235,6 +242,7 @@ TrueCoder/
 | Agent loop or turn lifecycle          | `src/truecoder/agent/agent.py` and `state.py`     | Context builder, session codec, and unit agent tests                   |
 | Provider behavior                     | `src/truecoder/client`                            | `response.py` event translation and client unit tests                  |
 | A new tool                            | `src/truecoder/tools/builtin`                     | `builtin/__init__.py`, registration in `agent.py`, and tool tests      |
+| Plan shape or invariants              | `src/truecoder/planning`                          | `builtin/plan.py`, `PlanCard`, plan projection in `context.py`         |
 | Filesystem safety rules               | `src/truecoder/tools/builtin/filesystem.py`       | Every filesystem tool and its sensitive-path tests                     |
 | Command classification or limits      | `src/truecoder/execution/policy.py`               | `defaults.py`, approval display, and policy unit tests                 |
 | Host detection                        | `src/truecoder/execution/discovery.py`            | `selection.py`, `bootstrap.py`, and discovery integration tests        |
@@ -256,11 +264,11 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                       **27,417** across 97 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,435 lines**, 71% of src | The execution control plane, audit store, and platform backends. Tools and the TUI are 2,734 lines each, the agent is 1,551, sessions are 519, and the client is 440. |
-| Test lines                 |                      **24,610** across 117 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.90 to 1.                                       |
-| Automated scenarios        |                      **1,002**, locally clean   | 850 unit, 89 integration, 41 contract, and 22 sandbox scenarios. On Linux, 989 pass and 13 Windows-only scenarios skip.                                      |
-| Unit suite                 |                    **850 passing in 5.4 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **27,906** across 101 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,435 lines**, 70% of src | The execution control plane, audit store, and platform backends. The TUI is 2,908 lines, tools are 2,836, the agent is 1,619, sessions are 518, the client is 440, and planning is 146. |
+| Test lines                 |                      **25,865** across 125 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.93 to 1.                                       |
+| Automated scenarios        |                      **1,093**, locally clean   | 933 unit, 97 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,080 pass and 13 Windows-only scenarios skip.                                    |
+| Unit suite                 |                    **933 passing in 4.3 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
 | Lint                       |                          **ruff check clean** | ruff 0.16.0 over `src`, `tests`, and `container`.                                                                                                            |
@@ -671,6 +679,7 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **macOS and Docker Desktop are not certified.** The container backend stays gated to the Linux Docker profile, so macOS reports `container-platform-unsupported`. Extending certification needs the adversarial sandbox suite to pass on a macOS runner, which has not happened.
 - **cgroup limits depend on delegation.** Hard limits use only controllers that discovery found both available and enabled in a writable delegated subtree. Elsewhere they degrade to explicit best-effort rlimits.
 - **Approval grants are in-memory only.** Session and workspace grants live in the running application and do not survive a restart. Rejections are never remembered.
+- **The task plan is scratch, not a record.** The plan lives in memory for the active task and is cleared by a new chat or a session switch. Restoring a session brings back its turns but not its plan, and historical `update_plan` calls are deliberately not redrawn as tool cards so the transcript never implies a plan the model no longer has.
 - **No coverage measurement is committed.** No coverage tool is installed or configured, so this README claims no coverage percentage.
 - **No formatter configuration is committed.** `ruff check` is clean, but the repository pins no `[tool.ruff]` section, so `ruff format` would apply defaults that disagree with the codebase's existing line width. Either commit a configuration matching the current style or accept a one-time reformat, but do not leave it ambiguous.
 - **The sandbox suite needs a matching local image.** A rebuilt image with an unlocked digest makes the container backend unavailable, which is correct behavior but easy to trip over during development.

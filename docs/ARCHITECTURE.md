@@ -13,8 +13,10 @@ Agent
  ├─ Context and state
  ├─ LLM client
  ├─ Approval service
+ ├─ Plan store
  └─ Tools
      ├─ Workspace filesystem tools
+     ├─ Plan adapter
      └─ Shell adapter
 
 Shell adapter
@@ -47,6 +49,8 @@ Tools are independent units that validate arguments, perform work, and return st
 
 Dependencies should point toward the core. Tools must not depend on the agent, client, or UI.
 
+Where the agent, a tool, and the UI all need the same domain type, that type belongs in a leaf package that depends on none of them. `truecoder.planning` is the current example: it imports nothing from the rest of the package, which is what lets `update_plan`, the context builder, and the plan card share one `Plan` without the tool layer reaching into the agent.
+
 ## Conversation model
 
 A session contains completed turns.
@@ -70,8 +74,11 @@ Each model request includes:
 * the system prompt
 * recent completed turns
 * the complete active turn
+* the current task plan, when one exists
 
 History is selected as one contiguous recent block. Older turns are removed whole. Selection stops when the next turn does not fit.
+
+The plan is not part of history. It is rendered fresh from the plan store on every build and appended after the active turn, so it is always the most recent thing the model sees and can never be evicted by trimming. It is counted against the token budget before history selection begins, so adding a plan tightens how much history fits instead of silently overflowing the limit.
 
 ## Agent loop
 
@@ -205,6 +212,44 @@ compact completed summaries such as `Listed src · 4 entries`,
 `Matched . · 12 matches`, `Searched src · 3 matches`, and
 `Edited src/app.py · 1 replacement`; the same summaries are reconstructed when
 a session is resumed.
+
+## Task planning
+
+The planner exists so a long task keeps its shape. It is a checklist, not an
+issue tracker: ordered steps, three statuses, no assignees, priorities, due
+dates, dependencies, or backlog.
+
+`truecoder.planning` holds the domain. A `Plan` is a frozen tuple of steps that
+validates itself on construction: between one and twenty steps, titles
+normalized to a single line of at most 120 characters, and **at most one step in
+progress**. That last invariant is what forces the model to sequence its work
+instead of marking everything active at once, and it is what makes the plan
+legible in one glance. `PlanStore` holds at most one plan for the active task.
+
+`update_plan` replaces the whole list on every call rather than applying
+incremental operations. Replacement is idempotent and needs no reconciliation;
+incremental edits would require the model to track stable step identifiers
+across calls, which is exactly the thing models do unreliably. An invalid plan
+is rejected as a recoverable `invalid_plan` tool error and leaves the previous
+plan intact, so a bad call costs the model one turn rather than its plan.
+
+The tool is the only tool that does not require approval. It touches nothing
+outside memory, and gating it would put an approval prompt between the agent and
+every checklist update.
+
+The plan is deliberately not persisted. It is scratch for the task in flight,
+cleared by a new chat or a session switch. Because the store does not survive a
+restart, the UI also skips historical `update_plan` calls when redrawing a
+resumed session: showing tool cards for a plan the model no longer holds would
+imply state that does not exist.
+
+The UI mounts one `PlanCard` at the point of the first successful call and
+updates it in place afterwards, mirroring the one-evolving-card treatment
+already used for shell executions. This is driven directly from the agent event
+stream rather than through a published event. The transcript is an ordered log,
+and a queued message would be processed by the app's message pump while the
+turn worker keeps advancing, which would let a plan update land at the wrong
+position relative to the text and tool cards around it.
 
 ## Approval
 
@@ -979,6 +1024,12 @@ Keep these invariants stable as the codebase grows:
 
 * completed history contains only valid turns
 * context is recent, contiguous, and turn-based
+* the task plan is reprojected into every request and never trimmed as history
+* the plan costs tokens before history is selected, never after
+* at most one plan step is in progress at a time
+* an invalid plan update leaves the previous plan intact
+* the plan is scratch: it never persists across a session switch or restart
+* transcript order follows the agent event stream, not a queued message
 * tool calls always have matching results
 * provider-specific behavior stays inside the client
 * tools do not depend on outer layers
@@ -1024,6 +1075,7 @@ Keep these invariants stable as the codebase grows:
 * normal nonzero exits remain bounded successful tool payloads
 * shell is advertised only after audit, recovery, and a backend are healthy
 * shell-specific prompt guidance exists only while the tool is registered
+* plan-specific prompt guidance exists only while a plan store is attached
 * session saves happen only at completed-turn boundaries
 * restoring a session cannot partially replace agent state
 * presentation sinks never block, delay, or fail an execution
