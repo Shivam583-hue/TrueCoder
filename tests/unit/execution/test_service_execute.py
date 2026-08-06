@@ -30,6 +30,7 @@ from truecoder.execution.policy import PolicyConfig
 from truecoder.execution.registry import ExecutionRegistry
 from truecoder.execution.runner import ExecutionRunner
 from truecoder.execution.service import ExecutionService
+from truecoder.execution.trusted_rules import TrustedCommandRule, TrustedRuleSet
 
 HOST_ENVIRONMENT = {"PATH": "/usr/bin", "LANG": "C.UTF-8"}
 
@@ -122,6 +123,7 @@ class ExecuteLifecycleTests(unittest.IsolatedAsyncioTestCase):
             discovery=overrides.pop("discovery", snapshot()),
             environment_policy=EnvironmentPolicy(),
             host_environment=HOST_ENVIRONMENT,
+            trusted_rules=overrides.pop("trusted_rules", None),
         )
 
     async def test_execute_runs_the_whole_lifecycle_from_a_request(self):
@@ -174,6 +176,31 @@ class ExecuteLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "denied")
         self.assertIsNone(result.backend)
+        self.assertEqual(self.backend.start_count, 0)
+        assert self.spy.finalization is not None
+        self.assertIs(
+            self.spy.finalization.outcome,
+            TerminalOutcome.POLICY_DENIED,
+        )
+
+    async def test_execute_applies_trusted_rule_risk_ceilings(self):
+        rules = TrustedRuleSet(
+            rules=(
+                TrustedCommandRule(
+                    rule_id="python-low-only",
+                    executable="python",
+                    max_risk=RiskLevel.LOW,
+                    require_approval=True,
+                ),
+            )
+        )
+
+        result = await self.service(trusted_rules=rules).execute(
+            request(),
+            context(),
+        )
+
+        self.assertEqual(result.status, "denied")
         self.assertEqual(self.backend.start_count, 0)
         assert self.spy.finalization is not None
         self.assertIs(

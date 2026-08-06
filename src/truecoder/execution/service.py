@@ -24,6 +24,7 @@ from truecoder.execution.registry import (
 )
 from truecoder.execution.runner import ExecutionRunner
 from truecoder.execution.selection import select_backend
+from truecoder.execution.trusted_rules import TrustedRuleSet, apply_trusted_rules
 
 DiscoveryProvider: TypeAlias = Callable[[], DiscoverySnapshot]
 
@@ -39,6 +40,7 @@ class ExecutionService:
         discovery: DiscoverySnapshot | DiscoveryProvider | None = None,
         environment_policy: EnvironmentPolicy | None = None,
         host_environment: Mapping[str, str] | None = None,
+        trusted_rules: TrustedRuleSet | None = None,
     ) -> None:
         if runner is not None and not isinstance(runner, ExecutionRunner):
             raise TypeError("runner must be an ExecutionRunner")
@@ -61,6 +63,11 @@ class ExecutionService:
             raise TypeError("environment_policy must be an EnvironmentPolicy")
         if host_environment is not None and not isinstance(host_environment, Mapping):
             raise TypeError("host_environment must be a mapping")
+        if trusted_rules is not None and not isinstance(
+            trusted_rules,
+            TrustedRuleSet,
+        ):
+            raise TypeError("trusted_rules must be a TrustedRuleSet")
 
         self._registry = registry or ExecutionRegistry()
         self._runner = runner
@@ -71,6 +78,7 @@ class ExecutionService:
         self._host_environment = (
             dict(host_environment) if host_environment is not None else {}
         )
+        self._trusted_rules = trusted_rules or TrustedRuleSet()
 
     @property
     def registry(self) -> ExecutionRegistry:
@@ -98,6 +106,7 @@ class ExecutionService:
             raise RuntimeError("this service was built without a policy configuration")
 
         decision = evaluate_policy(request, self._policy_config)
+        decision = apply_trusted_rules(self._trusted_rules, request, decision)
         if not decision.allowed:
             return await runner.deny(request, decision, context)
 

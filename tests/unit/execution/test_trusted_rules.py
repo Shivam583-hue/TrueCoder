@@ -7,7 +7,12 @@ from pathlib import Path
 
 from tests.helpers.platforms import requires_posix_permissions
 from truecoder.execution.defaults import DEFAULT_EXECUTION_LIMITS
-from truecoder.execution.models import RiskLevel
+from truecoder.execution.models import (
+    CapabilityRequirements,
+    ExecutionRequest,
+    PolicyDecision,
+    RiskLevel,
+)
 from truecoder.execution.trusted_rules import (
     MAX_RULES,
     TRUSTED_RULES_SCHEMA_VERSION,
@@ -172,63 +177,100 @@ class StorageTests(unittest.TestCase):
 
 
 class ApplicationTests(unittest.TestCase):
-    def apply(self, rules: TrustedRuleSet, **overrides):
+    def request(self, **overrides) -> ExecutionRequest:
         values = {
-            "executable": "pytest",
-            "risk": RiskLevel.LOW,
-            "requires_approval": True,
-            "ceiling": DEFAULT_EXECUTION_LIMITS,
-            "requested": DEFAULT_EXECUTION_LIMITS,
+            "mode": "exec",
+            "argv": ("pytest", "-q"),
+            "script": None,
+            "working_directory": Path.cwd().resolve(),
+            "limits": DEFAULT_EXECUTION_LIMITS,
+            "network_access": False,
+            "filesystem_mode": "host",
             **overrides,
         }
-        return apply_trusted_rules(rules, **values)
+        return ExecutionRequest(**values)
+
+    def decision(self, **overrides) -> PolicyDecision:
+        values = {
+            "allowed": True,
+            "risk": RiskLevel.LOW,
+            "requires_approval": False,
+            "effective_limits": DEFAULT_EXECUTION_LIMITS,
+            "requirements": CapabilityRequirements(),
+            "reasons": (),
+            **overrides,
+        }
+        return PolicyDecision(**values)
 
     def test_an_unmatched_command_is_left_untouched(self):
-        risk, approval, reasons = self.apply(
-            TrustedRuleSet(), executable="rm"
+        original = self.decision(requires_approval=True)
+
+        applied = apply_trusted_rules(
+            TrustedRuleSet(),
+            self.request(argv=("rm", "file")),
+            original,
         )
 
-        self.assertIs(risk, RiskLevel.LOW)
-        self.assertTrue(approval)
-        self.assertEqual(reasons, ())
+        self.assertIs(applied, original)
 
-    def test_a_matching_low_risk_rule_can_waive_approval(self):
-        risk, approval, reasons = self.apply(TrustedRuleSet(rules=(rule(),)))
+    def test_a_matching_rule_can_force_approval(self):
+        applied = apply_trusted_rules(
+            TrustedRuleSet(rules=(rule(require_approval=True),)),
+            self.request(),
+            self.decision(),
+        )
 
-        self.assertIs(risk, RiskLevel.LOW)
-        self.assertFalse(approval)
-        self.assertEqual(reasons, ("policy.020.trusted.applied.pytest",))
+        self.assertTrue(applied.requires_approval)
+        self.assertEqual(applied.reasons[-1].code, "trusted-rule-applied")
 
-    def test_a_rule_never_lowers_a_risk_level_it_does_not_cover(self):
-        risk, approval, reasons = self.apply(
+    def test_a_rule_denies_risk_above_its_ceiling(self):
+        applied = apply_trusted_rules(
             TrustedRuleSet(rules=(rule(),)),
-            risk=RiskLevel.HIGH,
+            self.request(),
+            self.decision(risk=RiskLevel.HIGH, requires_approval=True),
         )
 
-        self.assertIs(risk, RiskLevel.HIGH)
-        self.assertTrue(approval)
-        self.assertEqual(reasons, ("policy.020.trusted.rejected.pytest",))
+        self.assertFalse(applied.allowed)
+        self.assertIs(applied.risk, RiskLevel.HIGH)
+        self.assertFalse(applied.requires_approval)
+        self.assertEqual(applied.reasons[-1].code, "trusted-risk-ceiling")
 
-    def test_approval_is_retained_above_low_risk_even_when_waived(self):
+    def test_a_rule_never_removes_an_existing_approval_requirement(self):
         rules = TrustedRuleSet(
             rules=(rule(max_risk=RiskLevel.HIGH, require_approval=False),)
         )
 
-        risk, approval, reasons = self.apply(rules, risk=RiskLevel.MEDIUM)
-
-        self.assertIs(risk, RiskLevel.MEDIUM)
-        self.assertTrue(approval)
-        self.assertEqual(
-            reasons,
-            ("policy.020.trusted.approval_retained.pytest",),
+        applied = apply_trusted_rules(
+            rules,
+            self.request(),
+            self.decision(risk=RiskLevel.MEDIUM, requires_approval=True),
         )
 
-    def test_a_rule_cannot_introduce_approval_where_policy_wanted_none(self):
-        rules = TrustedRuleSet(rules=(rule(require_approval=True),))
+        self.assertTrue(applied.allowed)
+        self.assertTrue(applied.requires_approval)
+        self.assertIs(applied.risk, RiskLevel.MEDIUM)
 
-        _, approval, _ = self.apply(rules, requires_approval=False)
+    def test_shell_scripts_never_match_executable_rules(self):
+        original = self.decision(risk=RiskLevel.HIGH, requires_approval=True)
 
-        self.assertFalse(approval)
+        applied = apply_trusted_rules(
+            TrustedRuleSet(
+                rules=(rule(max_risk=RiskLevel.HIGH, require_approval=True),)
+            ),
+            self.request(mode="shell", argv=None, script="pytest -q"),
+            original,
+        )
+
+        self.assertIs(applied, original)
+
+    def test_executable_matching_is_portable(self):
+        applied = apply_trusted_rules(
+            TrustedRuleSet(rules=(rule(require_approval=True),)),
+            self.request(argv=(r"C:\tools\pytest.exe", "-q")),
+            self.decision(),
+        )
+
+        self.assertTrue(applied.requires_approval)
 
 
 if __name__ == "__main__":

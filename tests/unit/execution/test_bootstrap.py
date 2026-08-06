@@ -124,12 +124,26 @@ class BootstrapFixture(unittest.IsolatedAsyncioTestCase):
         values = {
             "audit_database_path": self.database,
             "image_lock_path": self.image_lock,
+            "trusted_rules_path": self.root / "trusted-commands.json",
             **overrides,
         }
         return ExecutionBootstrapConfig(**values)
 
 
 class ExecutionBootstrapTests(BootstrapFixture):
+    async def test_corrupt_trusted_rules_fail_closed(self):
+        trusted_rules = self.root / "trusted-commands.json"
+        trusted_rules.write_text("{ broken", encoding="utf-8")
+
+        runtime = await bootstrap_execution(
+            self.approvals,
+            config=self.config(),
+            discovery_snapshot=snapshot(posix=posix_descriptor()),
+        )
+
+        self.assertFalse(runtime.shell_available)
+        self.assertEqual(runtime.health.failure_code, "trusted_rules_invalid")
+
     async def test_healthy_posix_backend_enables_the_service(self):
         runtime = await bootstrap_execution(
             self.approvals,

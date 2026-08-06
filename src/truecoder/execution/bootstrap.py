@@ -48,6 +48,11 @@ from truecoder.execution.policy import PolicyConfig
 from truecoder.execution.registry import ExecutionRegistry
 from truecoder.execution.runner import ExecutionRunner, PreviewSink
 from truecoder.execution.service import ExecutionService
+from truecoder.execution.trusted_rules import (
+    TrustedRulesError,
+    default_trusted_rules_path,
+    load_trusted_rules,
+)
 
 
 def default_policy_config() -> PolicyConfig:
@@ -67,6 +72,7 @@ class ExecutionBootstrapConfig:
         default_factory=default_audit_database_path
     )
     image_lock_path: Path = DEFAULT_IMAGE_LOCK
+    trusted_rules_path: Path = field(default_factory=default_trusted_rules_path)
     policy_config: PolicyConfig = field(default_factory=default_policy_config)
     environment_policy: EnvironmentPolicy = field(
         default_factory=EnvironmentPolicy
@@ -81,6 +87,8 @@ class ExecutionBootstrapConfig:
             raise TypeError("audit_database_path must be a pathlib.Path")
         if not isinstance(self.image_lock_path, Path):
             raise TypeError("image_lock_path must be a pathlib.Path")
+        if not isinstance(self.trusted_rules_path, Path):
+            raise TypeError("trusted_rules_path must be a pathlib.Path")
         if not isinstance(self.policy_config, PolicyConfig):
             raise TypeError("policy_config must be a PolicyConfig")
         if not isinstance(self.environment_policy, EnvironmentPolicy):
@@ -155,6 +163,15 @@ async def bootstrap_execution(
         return _unavailable_runtime(
             enabled=settings.enabled,
             failure_code="audit_unavailable",
+        )
+
+    try:
+        trusted_rules = load_trusted_rules(settings.trusted_rules_path)
+    except TrustedRulesError:
+        return _unavailable_runtime(
+            enabled=settings.enabled,
+            audit=audit,
+            failure_code="trusted_rules_invalid",
         )
 
     try:
@@ -236,6 +253,7 @@ async def bootstrap_execution(
         discovery=snapshot,
         environment_policy=settings.environment_policy,
         host_environment=os.environ,
+        trusted_rules=trusted_rules,
     )
     runtime = _runtime_with_health(
         enabled=True,

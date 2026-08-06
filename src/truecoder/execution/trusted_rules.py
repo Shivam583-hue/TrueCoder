@@ -7,7 +7,12 @@ from typing import Final
 
 from platformdirs import user_config_path
 
-from truecoder.execution.models import ExecutionLimits, RiskLevel
+from truecoder.execution.models import (
+    ExecutionRequest,
+    PolicyDecision,
+    PolicyReason,
+    RiskLevel,
+)
 
 TRUSTED_RULES_SCHEMA_VERSION: Final = 1
 MAX_RULES: Final = 500
@@ -187,33 +192,57 @@ def save_trusted_rules(rules: TrustedRuleSet, path: Path | None = None) -> Path:
 
 def apply_trusted_rules(
     rules: TrustedRuleSet,
-    *,
-    executable: str,
-    risk: RiskLevel,
-    requires_approval: bool,
-    ceiling: ExecutionLimits,
-    requested: ExecutionLimits,
-) -> tuple[RiskLevel, bool, tuple[str, ...]]:
-    del ceiling, requested
+    request: ExecutionRequest,
+    decision: PolicyDecision,
+) -> PolicyDecision:
+    if not isinstance(rules, TrustedRuleSet):
+        raise TypeError("rules must be a TrustedRuleSet")
+    if not isinstance(request, ExecutionRequest):
+        raise TypeError("request must be an ExecutionRequest")
+    if not isinstance(decision, PolicyDecision):
+        raise TypeError("decision must be a PolicyDecision")
+    if request.mode != "exec" or not request.argv:
+        return decision
+
+    executable = _portable_executable_name(request.argv[0])
     rule = rules.rule_for(executable)
     if rule is None:
-        return risk, requires_approval, ()
+        return decision
 
-    if _risk_rank(risk) > _risk_rank(rule.max_risk):
-        return (
-            risk,
-            requires_approval,
-            (f"policy.020.trusted.rejected.{rule.rule_id}",),
+    if _risk_rank(decision.risk) > _risk_rank(rule.max_risk):
+        reason = PolicyReason(
+            code="trusted-risk-ceiling",
+            rule_id=f"policy.020.trusted.denied.{rule.rule_id}",
+            message=(
+                f"Trusted rule {rule.rule_id!r} allows at most "
+                f"{rule.max_risk.value} risk for {executable!r}."
+            ),
+        )
+        return PolicyDecision(
+            allowed=False,
+            risk=decision.risk,
+            requires_approval=False,
+            effective_limits=decision.effective_limits,
+            requirements=decision.requirements,
+            reasons=(*decision.reasons, reason),
         )
 
-    effective_approval = requires_approval and rule.require_approval
-    if requires_approval and not effective_approval and risk is not RiskLevel.LOW:
-        effective_approval = True
-        return risk, effective_approval, (
-            f"policy.020.trusted.approval_retained.{rule.rule_id}",
-        )
-
-    return risk, effective_approval, (f"policy.020.trusted.applied.{rule.rule_id}",)
+    reason = PolicyReason(
+        code="trusted-rule-applied",
+        rule_id=f"policy.020.trusted.applied.{rule.rule_id}",
+        message=f"Trusted rule {rule.rule_id!r} applies to {executable!r}.",
+    )
+    return PolicyDecision(
+        allowed=decision.allowed,
+        risk=decision.risk,
+        requires_approval=(
+            decision.allowed
+            and (decision.requires_approval or rule.require_approval)
+        ),
+        effective_limits=decision.effective_limits,
+        requirements=decision.requirements,
+        reasons=(*decision.reasons, reason),
+    )
 
 
 _RISK_ORDER: Final = {
@@ -225,6 +254,14 @@ _RISK_ORDER: Final = {
 
 def _risk_rank(level: RiskLevel) -> int:
     return _RISK_ORDER.get(level, len(_RISK_ORDER))
+
+
+def _portable_executable_name(argv_zero: str) -> str:
+    name = argv_zero.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    for suffix in (".exe", ".cmd", ".bat", ".com"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
 
 
 def _require_identifier(value: object, name: str, maximum: int) -> None:
