@@ -16,6 +16,8 @@ Agent
  ├─ Plan store
  └─ Tools
      ├─ Workspace filesystem tools
+     │   ├─ Mutation preview
+     │   └─ Mutation audit store
      ├─ Plan adapter
      └─ Shell adapter
 
@@ -49,7 +51,9 @@ Tools are independent units that validate arguments, perform work, and return st
 
 Dependencies should point toward the core. Tools must not depend on the agent, client, or UI.
 
-Where the agent, a tool, and the UI all need the same domain type, that type belongs in a leaf package that depends on none of them. `truecoder.planning` is the current example: it imports nothing from the rest of the package, which is what lets `update_plan`, the context builder, and the plan card share one `Plan` without the tool layer reaching into the agent.
+Where the agent, a tool, and the UI all need the same domain type, that type belongs in a leaf package that depends on none of them. `truecoder.planning` and `truecoder.mutation` are the current examples: they import nothing from the rest of the package, which is what lets a tool, the context builder, the approval request, and a card share one `Plan` or one `FileDiff` without the tool layer reaching into the agent.
+
+`truecoder.tools` may depend on `truecoder.execution`, and does. The reverse never happens, which is why the mutation evidence store lives beside the tools that write to it rather than inside the execution audit.
 
 ## Conversation model
 
@@ -204,6 +208,44 @@ are skipped during a recursive search. Its pattern is a Python regular
 expression, so callers can use anchors, groups, and inline flags such as
 `(?i)`. `glob` is for path-name patterns instead: `*` stays within one directory
 level, while `**` may cross levels.
+
+## Reviewable file mutations
+
+`write_file` and `edit_file` implement a `MutatingTool` protocol: given validated
+arguments, they can describe the change they intend to make before anything is
+approved. The agent asks for that preview while building the approval request,
+and the UI renders it as a unified diff with hunk headers, line numbers, and
+colored gutters. Reviewing a code change as escaped JSON arguments is not a
+review.
+
+A preview is read-only display evidence and never participates in the approval
+fingerprint. The fingerprint already covers the canonical arguments, workspace
+identity, and execution contract, which together determine the effect; the diff
+only describes how that effect reads against the current file. It follows that
+a preview failure must never block approval, so the agent absorbs any error from
+it and falls back to the raw arguments.
+
+Diffs are bounded like everything else: at most 400 rendered lines, 500
+characters per line, and three lines of context per hunk, with a visible
+truncation marker when a change exceeds them. The line matcher runs with
+`autojunk` disabled, because that heuristic treats lines repeated across a long
+file as noise and would stop closing braces and blank lines from aligning.
+
+Applied mutations are recorded as durable evidence. Each record carries the
+tool, path, mutation kind, SHA-256 of the file before and after, byte counts,
+line deltas, and the originating call, turn, session, and workspace. The store
+is its own WAL-journaled SQLite database with its own schema version and
+insert-only triggers. It is deliberately not a table inside the execution audit:
+a file change has no phase machine to arbitrate and no live resource to recover,
+and raising the execution audit's schema version would make an existing
+installation report an unsupported database and lose shell execution.
+
+Recording is best effort, which is a deliberate divergence from the execution
+rule that audit failure withholds the result. An execution can be reported as
+failed because its result is still in flight, but `os.replace()` has already
+landed by the time a mutation could be recorded, so failing the call would tell
+the model the file did not change when it did. A storage failure therefore
+increments a counter on the store rather than fabricating a failed outcome.
 
 All shipped filesystem tools require the normal awaited approval interaction.
 Successful and failed calls remain part of the current turn and are persisted
@@ -1031,6 +1073,13 @@ Keep these invariants stable as the codebase grows:
 * the plan is scratch: it never persists across a session switch or restart
 * transcript order follows the agent event stream, not a queued message
 * tool calls always have matching results
+* a file change is reviewed as a diff, never as raw serialized arguments
+* a mutation preview is read-only and never blocks or alters approval
+* the approval fingerprint covers the effect, never the rendered preview
+* rendered diffs stay bounded as the underlying change grows
+* every applied write and edit is recorded with both file digests
+* mutation records are insert-only evidence
+* a mutation that is already durable is never reported as failed
 * provider-specific behavior stays inside the client
 * tools do not depend on outer layers
 * the UI does not contain agent logic

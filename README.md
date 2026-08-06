@@ -45,6 +45,8 @@ Coming soon...
 - **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
 - **Seven approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, and `shell`, each with its own validated schema and security boundary.
 - **A task planner that survives context eviction** - `update_plan` keeps an ordered checklist with exactly one step in progress, and the current plan is reprojected into every model request instead of being left in history to roll off the token budget.
+- **Reviewable file mutations** - `write_file` and `edit_file` render a real unified diff in the approval card, with hunk headers, line numbers, and colored gutters, so a code change is reviewed as a diff rather than as escaped JSON arguments.
+- **Durable mutation evidence** - every applied write and edit is recorded in its own immutable SQLite store with SHA-256 digests of the file before and after, byte counts, line deltas, and the originating call, turn, session, and workspace.
 - **Atomic filesystem edits** - `write_file` and `edit_file` write beside the destination and install with `os.replace()`, so a reader sees the old complete file or the new complete file and never a partial one.
 - **Concurrency-aware editing** - `edit_file` verifies device, inode, size, and modification time before replacement and reports `file_changed` instead of overwriting a file that moved underneath it.
 - **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
@@ -109,6 +111,10 @@ TrueCoder/
 │   │   ├── models.py                  # Plan and step invariants, bounds, and rendering
 │   │   └── store.py                   # The single in-memory plan for the active task
 │   │
+│   ├── mutation/                      # Dependency-free file-change domain
+│   │   ├── models.py                  # Hunks, lines, and bounded diff limits
+│   │   └── diff.py                    # Pure unified diff with context and truncation
+│   │
 │   ├── client/
 │   │   ├── llm_client.py              # OpenAI-compatible streaming and non-streaming calls
 │   │   └── response.py                # Provider responses translated into internal events
@@ -119,10 +125,11 @@ TrueCoder/
 │   │   ├── executor.py                # Validate, prepare once, approve, then execute
 │   │   ├── registry.py                # Explicit registration and lookup
 │   │   ├── serialization.py           # Deterministic tool payloads
+│   │   ├── mutation_audit.py          # Immutable evidence for every applied change
 │   │   └── builtin/
 │   │       ├── filesystem.py          # Shared sensitive-path and containment policy
 │   │       ├── read_file.py           # Bounded UTF-8 line ranges
-│   │       ├── write_file.py          # Atomic whole-file replacement, 32 KiB cap
+│   │       ├── write_file.py          # Atomic replacement, 32 KiB cap, diff preview
 │   │       ├── edit_file.py           # Exact-text edits with concurrent-change detection
 │   │       ├── list_dir.py            # Immediate children, 500 results, 5,000 scanned
 │   │       ├── glob.py                # Rooted * and recursive ** path patterns
@@ -211,6 +218,7 @@ TrueCoder/
     │   ├── client/                    # Streaming, retries, and error translation
     │   ├── context/                   # Turn selection, token budgeting, plan projection
     │   ├── planning/                  # Plan and step invariants
+    │   ├── mutation/                  # Diff hunks, bounds, and truncation
     │   ├── session/                   # Durable turn codec
     │   ├── tools/                     # Base, executor, registry, and every builtin tool
     │   ├── tui/                       # Presentation mapping, cards, and audit summaries
@@ -243,6 +251,8 @@ TrueCoder/
 | Provider behavior                     | `src/truecoder/client`                            | `response.py` event translation and client unit tests                  |
 | A new tool                            | `src/truecoder/tools/builtin`                     | `builtin/__init__.py`, registration in `agent.py`, and tool tests      |
 | Plan shape or invariants              | `src/truecoder/planning`                          | `builtin/plan.py`, `PlanCard`, plan projection in `context.py`         |
+| Diff rendering or bounds              | `src/truecoder/mutation`                          | `ToolCallCard` diff view, `styles.tcss`, preview tests                 |
+| Mutation evidence                     | `src/truecoder/tools/mutation_audit.py`           | `write_file.py`, `edit_file.py`, and the schema immutability triggers  |
 | Filesystem safety rules               | `src/truecoder/tools/builtin/filesystem.py`       | Every filesystem tool and its sensitive-path tests                     |
 | Command classification or limits      | `src/truecoder/execution/policy.py`               | `defaults.py`, approval display, and policy unit tests                 |
 | Host detection                        | `src/truecoder/execution/discovery.py`            | `selection.py`, `bootstrap.py`, and discovery integration tests        |
@@ -264,11 +274,11 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **27,906** across 101 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,435 lines**, 70% of src | The execution control plane, audit store, and platform backends. The TUI is 2,908 lines, tools are 2,836, the agent is 1,619, sessions are 518, the client is 440, and planning is 146. |
-| Test lines                 |                      **25,865** across 125 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.93 to 1.                                       |
-| Automated scenarios        |                      **1,093**, locally clean   | 933 unit, 97 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,080 pass and 13 Windows-only scenarios skip.                                    |
-| Unit suite                 |                    **933 passing in 4.3 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **28,795** across 105 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,443 lines**, 68% of src | The execution control plane, audit store, and platform backends. Tools are 3,355 lines, the TUI is 2,979, the agent is 1,644, sessions are 518, the client is 440, mutation is 266, and planning is 146. |
+| Test lines                 |                      **27,116** across 133 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.94 to 1.                                       |
+| Automated scenarios        |                      **1,186**, locally clean   | 1,021 unit, 102 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,173 pass and 13 Windows-only scenarios skip.                                 |
+| Unit suite                 |                  **1,021 passing in 4.9 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
 | Lint                       |                          **ruff check clean** | ruff 0.16.0 over `src`, `tests`, and `container`.                                                                                                            |
@@ -651,13 +661,15 @@ TrueCoder never writes its state into your repository.
 | ------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------ |
 | Sessions            | `<user data dir>/truecoder/sessions.sqlite3`                | Completed turns, scoped by canonical project root                  |
 | Execution audit     | `<user data dir>/truecoder/audit.sqlite3`                   | Runs, immutable event log, resource identities, terminal outcomes  |
+| Mutation audit      | `<user data dir>/truecoder/mutations.sqlite3`               | One immutable record per applied write or edit, with both digests  |
 | Execution policy    | `<user config dir>/truecoder/execution.json`                | Optional operator ceilings and backend settings                    |
 | Trusted rules       | `<user config dir>/truecoder/trusted-commands.json`         | Optional executable-specific restrictions                          |
 | Project instructions | `AGENTS.md` and `AGENTS.override.md` in the repository      | Read only, never written                                           |
 
 The user data directory is resolved by platformdirs, so it follows the operating system's convention.
 
-Both databases use WAL journaling and full synchronous durability.
+Every database uses WAL journaling and full synchronous durability.
+The mutation audit is a separate database with its own schema version rather than a table inside the execution audit, because a file change has no lifecycle to arbitrate and no resource to recover, and because bumping the execution audit's schema version would make an existing installation report an unsupported database and lose shell execution entirely.
 The audit directory and files are private by construction: POSIX uses directory mode `0700` and file mode `0600` including SQLite sidecars, and Windows removes inherited ACLs and grants access only to the current user and LocalSystem.
 Failing to establish those restrictions makes audit storage unavailable rather than silently weakening it, which in turn removes `shell` from the tool schema.
 On startup, nonterminal runs are recovered before terminal evidence older than
@@ -679,6 +691,9 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **macOS and Docker Desktop are not certified.** The container backend stays gated to the Linux Docker profile, so macOS reports `container-platform-unsupported`. Extending certification needs the adversarial sandbox suite to pass on a macOS runner, which has not happened.
 - **cgroup limits depend on delegation.** Hard limits use only controllers that discovery found both available and enabled in a writable delegated subtree. Elsewhere they degrade to explicit best-effort rlimits.
 - **Approval grants are in-memory only.** Session and workspace grants live in the running application and do not survive a restart. Rejections are never remembered.
+- **A reused approval grant shows no diff.** Session and workspace grants for `write_file` and `edit_file` skip the approval interaction entirely, so a later call under the same grant applies without a rendered review. The fingerprint still covers the canonical arguments, so an identical fingerprint means an identical change; approve once when you want to see each diff.
+- **Mutation evidence is best effort, unlike execution evidence.** An execution withholds its result when audit finalization fails, but a file replacement is already durable by the time it could be recorded, so failing the call would report an outcome that did not happen. A recording failure therefore increments a counter instead of failing the tool.
+- **Mutation evidence has no retention policy yet.** The execution audit compacts expired terminal evidence on startup; the mutation store only grows. Records are small, but nothing prunes them.
 - **The task plan is scratch, not a record.** The plan lives in memory for the active task and is cleared by a new chat or a session switch. Restoring a session brings back its turns but not its plan, and historical `update_plan` calls are deliberately not redrawn as tool cards so the transcript never implies a plan the model no longer has.
 - **No coverage measurement is committed.** No coverage tool is installed or configured, so this README claims no coverage percentage.
 - **No formatter configuration is committed.** `ruff check` is clean, but the repository pins no `[tool.ruff]` section, so `ruff format` would apply defaults that disagree with the codebase's existing line width. Either commit a configuration matching the current style or accept a one-time reformat, but do not leave it ambiguous.
