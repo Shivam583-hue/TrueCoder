@@ -25,17 +25,22 @@ from truecoder.execution.errors import (
 NOW = datetime(2026, 8, 2, 9, 0, tzinfo=UTC)
 
 
-def admission(run_id: str = "run-01") -> AuditRunAdmission:
+def admission(
+    run_id: str = "run-01",
+    *,
+    workspace_id: str = "workspace-01",
+    created_at: datetime = NOW,
+) -> AuditRunAdmission:
     return AuditRunAdmission(
         run_id=run_id,
         execution_id=f"exec-{run_id}",
         tool_call_id="call-01",
         session_id="session-01",
         turn_id="turn-01",
-        workspace_id="workspace-01",
+        workspace_id=workspace_id,
         request_sha256="1" * 64,
         request_summary=(("command", "python -V"),),
-        created_at=NOW,
+        created_at=created_at,
     )
 
 
@@ -163,6 +168,41 @@ class SQLiteAuditStoreTests(unittest.TestCase):
         self.assertEqual(blocked, ())
         self.assertEqual(len(reclaimed), 2)
         self.assertTrue(all(item.recovery_owner == "owner-two" for item in reclaimed))
+
+    def test_list_runs_is_bounded_newest_first_and_workspace_scoped(self):
+        self.store.create_pending(
+            admission(
+                "old",
+                created_at=NOW - timedelta(minutes=2),
+            )
+        )
+        self.store.create_pending(
+            admission(
+                "other-workspace",
+                workspace_id="workspace-02",
+                created_at=NOW - timedelta(minutes=1),
+            )
+        )
+        self.store.create_pending(admission("new"))
+
+        all_runs = self.store.list_runs(limit=2)
+        workspace_runs = self.store.list_runs(
+            workspace_id="workspace-01",
+            limit=10,
+        )
+
+        self.assertEqual(
+            [snapshot.record.run_id for snapshot in all_runs],
+            ["new", "other-workspace"],
+        )
+        self.assertEqual(
+            [snapshot.record.run_id for snapshot in workspace_runs],
+            ["new", "old"],
+        )
+
+    def test_list_runs_rejects_unbounded_limits(self):
+        with self.assertRaises(ValueError):
+            self.store.list_runs(limit=501)
 
     def test_sqlite_triggers_prevent_mutating_evidence(self):
         self.store.create_pending(admission())

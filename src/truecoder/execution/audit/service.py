@@ -59,6 +59,13 @@ class AuditStore(Protocol):
 
     def get_events(self, run_id: str) -> tuple[AuditEvent, ...]: ...
 
+    def list_runs(
+        self,
+        *,
+        workspace_id: str | None = None,
+        limit: int = 200,
+    ) -> tuple[AuditRunSnapshot, ...]: ...
+
     def claim_nonterminal(
         self,
         owner: str,
@@ -130,6 +137,18 @@ class AuditService:
             message=message,
             metadata=metadata,
             occurred_at=self._now(),
+        )
+
+    async def list_runs(
+        self,
+        *,
+        workspace_id: str | None = None,
+        limit: int = 200,
+    ) -> tuple[AuditRunSnapshot, ...]:
+        return await asyncio.to_thread(
+            self._store.list_runs,
+            workspace_id=workspace_id,
+            limit=limit,
         )
 
     async def attach_resource(

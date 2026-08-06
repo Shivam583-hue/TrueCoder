@@ -383,6 +383,62 @@ class SQLiteAuditStore:
                 operation="read_audit_events",
             ) from error
 
+    def list_runs(
+        self,
+        *,
+        workspace_id: str | None = None,
+        limit: int = 200,
+    ) -> tuple[AuditRunSnapshot, ...]:
+        if workspace_id is not None:
+            _required_text(workspace_id, "workspace_id")
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise TypeError("limit must be an integer")
+        if not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500")
+        try:
+            with self._connection() as connection:
+                if workspace_id is None:
+                    rows = connection.execute(
+                        """
+                        SELECT *
+                        FROM audit_runs
+                        ORDER BY updated_at DESC, run_id DESC
+                        LIMIT ?
+                        """,
+                        (limit,),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        """
+                        SELECT *
+                        FROM audit_runs
+                        WHERE workspace_id = ?
+                        ORDER BY updated_at DESC, run_id DESC
+                        LIMIT ?
+                        """,
+                        (workspace_id, limit),
+                    ).fetchall()
+                return tuple(
+                    self._snapshot_from_row(connection, row) for row in rows
+                )
+        except AuditPersistenceError:
+            raise
+        except (
+            ExecutionSerializationError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as error:
+            raise AuditPersistenceError(
+                f"stored audit runs are invalid: {error}",
+                operation="list_audit_runs",
+            ) from error
+        except sqlite3.Error as error:
+            raise AuditPersistenceError(
+                f"could not list audit runs: {error}",
+                operation="list_audit_runs",
+            ) from error
+
     def claim_nonterminal(
         self,
         owner: str,
