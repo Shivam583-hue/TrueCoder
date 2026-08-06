@@ -70,3 +70,5 @@ jobs:
       - run: python -m unittest discover -s tests/unit -t .
       - name: Backend contract suite
         run: python -m unittest discover -s tests/contract -t .
+      - name: Job Object and integration suites
+        run: python -m unittest discover -s tests/integration -t .
