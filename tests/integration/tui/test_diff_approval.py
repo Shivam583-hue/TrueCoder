@@ -91,7 +91,7 @@ class DiffApprovalTests(unittest.IsolatedAsyncioTestCase):
         return self._app(call, registry)
 
     async def test_an_edit_approval_shows_the_rendered_diff(self):
-        (self.workspace / "a.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"one\ntwo\nthree\n")
         app = self._edit_app()
 
         async with awaiting_approval(app):
@@ -105,7 +105,7 @@ class DiffApprovalTests(unittest.IsolatedAsyncioTestCase):
             app.reject_pending_tool()
 
     async def test_the_diff_region_is_visible_while_awaiting_approval(self):
-        (self.workspace / "a.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"one\ntwo\nthree\n")
         app = self._edit_app()
 
         async with awaiting_approval(app):
@@ -116,7 +116,7 @@ class DiffApprovalTests(unittest.IsolatedAsyncioTestCase):
             app.reject_pending_tool()
 
     async def test_the_summary_shows_the_diff_stat_instead_of_raw_arguments(self):
-        (self.workspace / "a.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"one\ntwo\nthree\n")
         app = self._edit_app()
 
         async with awaiting_approval(app):
@@ -147,7 +147,7 @@ class DiffApprovalTests(unittest.IsolatedAsyncioTestCase):
             app.reject_pending_tool()
 
     async def test_the_diff_disappears_once_the_call_completes(self):
-        (self.workspace / "a.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"one\ntwo\nthree\n")
         app = self._edit_app()
 
         async with awaiting_approval(app) as pilot:

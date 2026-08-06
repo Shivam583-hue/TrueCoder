@@ -78,7 +78,7 @@ class MutationApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((mutation.added, mutation.removed), (2, 0))
 
     async def test_a_write_approval_over_an_existing_file_carries_a_replacement(self):
-        (self.workspace / "a.py").write_text("one\ntwo\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"one\ntwo\n")
         handler = RecordingApprovalHandler(ApprovalDecision.REJECTED)
         client = _turn(_write_call("a.py", "one\nTWO\n"))
         agent = self._agent(client, self._write_registry(), handler)
@@ -91,7 +91,7 @@ class MutationApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((mutation.added, mutation.removed), (1, 1))
 
     async def test_an_edit_approval_carries_an_edit_diff(self):
-        (self.workspace / "a.py").write_text("one\ntwo\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"one\ntwo\n")
         handler = RecordingApprovalHandler(ApprovalDecision.REJECTED)
         call = ToolCall(
             "call_1",
@@ -144,7 +144,7 @@ class MutationApprovalTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_tool_without_a_preview_supplies_no_diff(self):
         from truecoder.tools.builtin import ReadFileTool
 
-        (self.workspace / "a.py").write_text("one\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"one\n")
         handler = RecordingApprovalHandler(ApprovalDecision.REJECTED)
         registry = ToolRegistry()
         registry.register(ReadFileTool(self.workspace))
@@ -161,7 +161,7 @@ class MutationApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(handler.requests[0].mutation)
 
     async def test_the_diff_does_not_change_the_approval_fingerprint(self):
-        (self.workspace / "a.py").write_text("original\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"original\n")
         handler = RecordingApprovalHandler(ApprovalDecision.REJECTED)
         agent = self._agent(
             _turn(_write_call("a.py", "replacement\n")),
@@ -171,7 +171,7 @@ class MutationApprovalTests(unittest.IsolatedAsyncioTestCase):
         [event async for event in agent.run("write it")]
         with_existing_file = handler.requests[0].fingerprint
 
-        (self.workspace / "a.py").write_text("something else entirely\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"something else entirely\n")
         second_handler = RecordingApprovalHandler(ApprovalDecision.REJECTED)
         second_agent = self._agent(
             _turn(_write_call("a.py", "replacement\n")),

@@ -62,7 +62,7 @@ class MutationRecordingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((records[0].lines_added, records[0].lines_removed), (2, 0))
 
     async def test_replacing_a_file_records_both_digests(self):
-        (self.workspace / "a.py").write_text("one\ntwo\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"one\ntwo\n")
         tool = WriteFileTool(self.workspace, self.audit)
 
         await tool.run(
@@ -77,7 +77,7 @@ class MutationRecordingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((record.lines_added, record.lines_removed), (1, 1))
 
     async def test_editing_a_file_is_recorded(self):
-        (self.workspace / "a.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"one\ntwo\nthree\n")
         tool = EditFileTool(self.workspace, self.audit)
 
         await tool.run(
@@ -122,7 +122,7 @@ class MutationRecordingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self._records(), ())
 
     async def test_a_failed_edit_records_nothing(self):
-        (self.workspace / "a.py").write_text("one\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"one\n")
         tool = EditFileTool(self.workspace, self.audit)
 
         with self.assertRaises(ToolExecutionError):
@@ -163,7 +163,7 @@ class MutationRecordingTests(unittest.IsolatedAsyncioTestCase):
         broken = MutationAudit(self.workspace / "blocked.sqlite3")
         broken.open()
         broken.close()
-        broken.database_path.write_text("not a database", encoding="utf-8")
+        broken.database_path.write_bytes(b"not a database")
         tool = WriteFileTool(self.workspace, broken)
 
         result = await tool.run(

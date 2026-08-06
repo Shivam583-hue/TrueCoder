@@ -36,7 +36,7 @@ class WriteFilePreviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(diff.path, "new.py")
 
     async def test_an_existing_file_previews_as_a_replacement(self):
-        (self.workspace / "a.py").write_text("one\ntwo\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"one\ntwo\n")
 
         diff = await self._preview("a.py", "one\nTWO\n")
 
@@ -45,7 +45,7 @@ class WriteFilePreviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((diff.added, diff.removed), (1, 1))
 
     async def test_an_unchanged_write_previews_as_an_empty_diff(self):
-        (self.workspace / "a.py").write_text("one\n", encoding="utf-8")
+        (self.workspace / "a.py").write_bytes(b"one\n")
 
         diff = await self._preview("a.py", "one\n")
 
@@ -58,13 +58,13 @@ class WriteFilePreviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self._preview("a.bin", "text"))
 
     async def test_an_oversized_file_has_no_preview(self):
-        (self.workspace / "big.txt").write_text("x" * (1024 * 1024 + 1), encoding="utf-8")
+        (self.workspace / "big.txt").write_bytes(b"x" * (1024 * 1024 + 1))
 
         self.assertIsNone(await self._preview("big.txt", "small"))
 
     async def test_previewing_does_not_create_or_change_anything(self):
         target = self.workspace / "a.py"
-        target.write_text("original\n", encoding="utf-8")
+        target.write_bytes(b"original\n")
 
         await self._preview("a.py", "changed\n")
         await self._preview("brand-new.py", "content\n")
@@ -83,7 +83,7 @@ class EditFilePreviewTests(unittest.IsolatedAsyncioTestCase):
         self.workspace = Path(self._directory.name).resolve()
         self.tool = EditFileTool(self.workspace)
         self.target = self.workspace / "a.py"
-        self.target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        self.target.write_bytes(b"one\ntwo\nthree\n")
         self.addCleanup(self._directory.cleanup)
 
     async def _preview(self, old: str, new: str, *, replace_all: bool = False):
@@ -116,12 +116,12 @@ class EditFilePreviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self._preview("missing", "x"))
 
     async def test_an_ambiguous_match_has_no_preview(self):
-        self.target.write_text("dup\ndup\n", encoding="utf-8")
+        self.target.write_bytes(b"dup\ndup\n")
 
         self.assertIsNone(await self._preview("dup", "x"))
 
     async def test_an_ambiguous_match_previews_when_replacing_all(self):
-        self.target.write_text("dup\ndup\n", encoding="utf-8")
+        self.target.write_bytes(b"dup\ndup\n")
 
         diff = await self._preview("dup", "x", replace_all=True)
 
