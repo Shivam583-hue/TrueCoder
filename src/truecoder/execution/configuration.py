@@ -6,6 +6,7 @@ from typing import Final
 
 from platformdirs import user_config_path
 
+from truecoder.execution.audit.retention import RetentionPolicy
 from truecoder.execution.bootstrap import (
     ExecutionBootstrapConfig,
     default_policy_config,
@@ -72,6 +73,7 @@ def parse_execution_config(
             "policy",
             "environment",
             "container",
+            "retention",
         },
         "configuration",
     )
@@ -99,6 +101,8 @@ def parse_execution_config(
         },
         "container",
     )
+    retention = _object(payload.get("retention"), "retention")
+    _reject_unknown(retention, {"days"}, "retention")
 
     return ExecutionBootstrapConfig(
         enabled=_boolean(payload.get("enabled", defaults.enabled), "enabled"),
@@ -149,6 +153,10 @@ def parse_execution_config(
                 defaults.container_isolated_network,
             ),
             "container.isolated_network",
+        ),
+        retention_policy=_retention_policy(
+            retention,
+            defaults.retention_policy,
         ),
     )
 
@@ -337,3 +345,20 @@ def _optional_text(value: object, name: str) -> str | None:
     if not isinstance(value, str) or not value.strip() or "\x00" in value:
         raise ExecutionConfigError(f"{name} must be non-empty text or null")
     return value.strip()
+
+
+def _retention_policy(
+    values: dict,
+    defaults: RetentionPolicy,
+) -> RetentionPolicy:
+    try:
+        return RetentionPolicy(
+            days=_positive_integer(
+                values.get("days", defaults.days),
+                "retention.days",
+            )
+        )
+    except ValueError as error:
+        raise ExecutionConfigError(
+            f"invalid retention policy: {error}"
+        ) from None

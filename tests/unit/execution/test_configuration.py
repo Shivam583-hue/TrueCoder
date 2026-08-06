@@ -67,6 +67,9 @@ class ExecutionConfigurationTests(unittest.TestCase):
                     "cpu_rate_ceiling": 1.5,
                     "isolated_network": "truecoder-isolated",
                 },
+                "retention": {
+                    "days": 45,
+                },
             }
         )
 
@@ -87,6 +90,7 @@ class ExecutionConfigurationTests(unittest.TestCase):
         self.assertEqual(config.container_default_pids_limit, 16)
         self.assertEqual(config.container_cpu_rate_ceiling, 1.5)
         self.assertEqual(config.container_isolated_network, "truecoder-isolated")
+        self.assertEqual(config.retention_policy.days, 45)
 
     def test_unknown_fields_are_refused(self):
         with self.assertRaises(ExecutionConfigError):

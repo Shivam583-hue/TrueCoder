@@ -16,6 +16,7 @@ from truecoder.execution.audit.models import (
     OutputEvidence,
     TerminalOutcome,
 )
+from truecoder.execution.audit.retention import RetentionPolicy
 from truecoder.execution.audit.store import SQLiteAuditStore
 from truecoder.execution.errors import (
     AuditPersistenceError,
@@ -203,6 +204,47 @@ class SQLiteAuditStoreTests(unittest.TestCase):
     def test_list_runs_rejects_unbounded_limits(self):
         with self.assertRaises(ValueError):
             self.store.list_runs(limit=501)
+
+    def test_retention_atomically_rebuilds_only_terminal_expired_evidence(self):
+        old_time = NOW - timedelta(days=90)
+        self.store.create_pending(admission("old", created_at=old_time))
+        self.store.finalize(
+            AuditFinalization(
+                run_id="old",
+                finalized_at=old_time,
+                outcome=TerminalOutcome.POLICY_DENIED,
+                command_started=False,
+            )
+        )
+        self.store.create_pending(admission("recent"))
+        self.store.create_pending(
+            admission("old-nonterminal", created_at=old_time)
+        )
+
+        report = self.store.apply_retention(RetentionPolicy(days=30))
+
+        self.assertEqual(report.deleted, 1)
+        with self.assertRaises(AuditPersistenceError):
+            self.store.get_run("old")
+        self.assertEqual(self.store.get_run("recent").record.run_id, "recent")
+        self.assertEqual(
+            self.store.get_run("old-nonterminal").record.phase,
+            AuditRunPhase.PENDING,
+        )
+        reopened = SQLiteAuditStore(self.path, clock=lambda: NOW)
+        self.assertEqual(len(reopened.get_events("recent")), 1)
+        connection = sqlite3.connect(self.path)
+        try:
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute("DELETE FROM audit_runs")
+        finally:
+            connection.close()
+
+    def test_operational_retention_never_accepts_nonterminal_deletion(self):
+        with self.assertRaises(ValueError):
+            self.store.apply_retention(
+                RetentionPolicy(days=30, keep_nonterminal=False)
+            )
 
     def test_sqlite_triggers_prevent_mutating_evidence(self):
         self.store.create_pending(admission())

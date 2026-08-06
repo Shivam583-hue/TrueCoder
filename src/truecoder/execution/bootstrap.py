@@ -13,6 +13,7 @@ from truecoder.execution.audit import (
     TerminalOutcome,
     default_audit_database_path,
 )
+from truecoder.execution.audit.retention import RetentionPolicy
 from truecoder.execution.backends.base import ExecutionBackend
 from truecoder.execution.backends.container import ContainerBackend
 from truecoder.execution.backends.container_plan import (
@@ -83,6 +84,7 @@ class ExecutionBootstrapConfig:
     container_default_pids_limit: int = DEFAULT_PIDS_LIMIT
     container_cpu_rate_ceiling: float | None = None
     container_isolated_network: str | None = None
+    retention_policy: RetentionPolicy = field(default_factory=RetentionPolicy)
     event_sink: ExecutionEventSink | None = None
     preview_sink: PreviewSink | None = None
 
@@ -119,6 +121,10 @@ class ExecutionBootstrapConfig:
                 raise TypeError("container_isolated_network must be a string or None")
             if not value.strip():
                 raise ValueError("container_isolated_network cannot be empty")
+        if not isinstance(self.retention_policy, RetentionPolicy):
+            raise TypeError("retention_policy must be a RetentionPolicy")
+        if not self.retention_policy.keep_nonterminal:
+            raise ValueError("retention_policy must preserve nonterminal runs")
         if self.event_sink is not None and not isinstance(
             self.event_sink,
             ExecutionEventSink,
@@ -244,6 +250,19 @@ async def bootstrap_execution(
             build_failures=build_failures,
             recovery_ready=False,
             failure_code="recovery_failed",
+        )
+
+    try:
+        await audit.apply_retention(settings.retention_policy)
+    except (ExecutionInfrastructureError, OSError, TypeError, ValueError):
+        return _runtime_with_health(
+            enabled=settings.enabled,
+            audit=audit,
+            snapshot=snapshot,
+            backends=backends,
+            build_failures=build_failures,
+            recovery_ready=True,
+            failure_code="retention_failed",
         )
 
     if not settings.enabled or not backends:

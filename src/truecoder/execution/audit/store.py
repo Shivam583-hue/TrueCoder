@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -36,7 +37,8 @@ from .models import (
     OutputEvidence,
 )
 from .permissions import AuditPermissions
-from .schema import configure_connection, initialize_schema
+from .retention import RetentionPolicy, RetentionReport, plan_retention
+from .schema import configure_connection, initialize_schema, verify_schema
 
 UtcClock: TypeAlias = Callable[[], datetime]
 IdFactory: TypeAlias = Callable[[], str]
@@ -66,6 +68,7 @@ class SQLiteAuditStore:
         self._event_id_factory = event_id_factory or (
             lambda: f"event_{uuid.uuid4().hex}"
         )
+        self._access_lock = threading.RLock()
         self._initialize()
 
     def create_pending(self, admission: AuditRunAdmission) -> AuditRunHandle:
@@ -439,6 +442,63 @@ class SQLiteAuditStore:
                 operation="list_audit_runs",
             ) from error
 
+    def apply_retention(self, policy: RetentionPolicy) -> RetentionReport:
+        if not isinstance(policy, RetentionPolicy):
+            raise TypeError("policy must be a RetentionPolicy")
+        if not policy.keep_nonterminal:
+            raise ValueError("operational retention must preserve nonterminal runs")
+
+        with self._access_lock:
+            temporary: Path | None = None
+            try:
+                with self._connection() as source:
+                    rows = source.execute(
+                        """
+                        SELECT run_id, updated_at, phase = 'terminal' AS terminal
+                        FROM audit_runs
+                        ORDER BY updated_at, run_id
+                        """
+                    ).fetchall()
+                    deletable, report = plan_retention(
+                        tuple(
+                            (
+                                str(row["run_id"]),
+                                _parse_datetime(str(row["updated_at"])),
+                                bool(row["terminal"]),
+                            )
+                            for row in rows
+                        ),
+                        policy,
+                        now=self._now(),
+                    )
+                    if not deletable:
+                        return report
+                    source.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    deleted = frozenset(deletable)
+                    retained = tuple(
+                        str(row["run_id"])
+                        for row in rows
+                        if str(row["run_id"]) not in deleted
+                    )
+                    temporary = self._build_retained_database(source, retained)
+                self._install_retained_database(temporary)
+                return report
+            except (AuditPersistenceError, ValueError):
+                raise
+            except (
+                sqlite3.Error,
+                OSError,
+                AuditUnavailableError,
+                ExecutionSerializationError,
+            ) as error:
+                raise AuditPersistenceError(
+                    f"audit retention failed: {error}",
+                    operation="apply_audit_retention",
+                ) from error
+            finally:
+                if temporary is not None:
+                    self._remove_database_files(temporary)
+
     def claim_nonterminal(
         self,
         owner: str,
@@ -509,18 +569,149 @@ class SQLiteAuditStore:
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
-        connection: sqlite3.Connection | None = None
+        with self._access_lock:
+            connection: sqlite3.Connection | None = None
+            try:
+                connection = sqlite3.connect(
+                    self.database_path,
+                    isolation_level=None,
+                    timeout=5.0,
+                )
+                configure_connection(connection)
+                yield connection
+            finally:
+                if connection is not None:
+                    connection.close()
+
+    def _build_retained_database(
+        self,
+        source: sqlite3.Connection,
+        retained: tuple[str, ...],
+    ) -> Path:
+        temporary = self.database_path.with_name(
+            f".{self.database_path.name}.retention-{uuid.uuid4().hex}"
+        )
+        complete = False
         try:
-            connection = sqlite3.connect(
-                self.database_path,
+            self._permissions.prepare(temporary)
+            destination = sqlite3.connect(
+                temporary,
                 isolation_level=None,
                 timeout=5.0,
             )
-            configure_connection(connection)
-            yield connection
+            try:
+                configure_connection(destination)
+                initialize_schema(destination)
+                destination.execute(
+                    "DROP TRIGGER audit_resources_not_after_terminal"
+                )
+                destination.execute("BEGIN IMMEDIATE")
+                try:
+                    self._copy_retained_rows(
+                        source,
+                        destination,
+                        "audit_runs",
+                        retained,
+                    )
+                    self._copy_retained_rows(
+                        source,
+                        destination,
+                        "audit_resources",
+                        retained,
+                    )
+                    self._copy_retained_rows(
+                        source,
+                        destination,
+                        "audit_events",
+                        retained,
+                    )
+                    destination.execute(
+                        """
+                        CREATE TRIGGER audit_resources_not_after_terminal
+                        BEFORE INSERT ON audit_resources
+                        WHEN (
+                            SELECT phase FROM audit_runs WHERE run_id = NEW.run_id
+                        ) = 'terminal'
+                        BEGIN
+                            SELECT RAISE(
+                                ABORT,
+                                'cannot attach a resource to a terminal run'
+                            );
+                        END
+                        """
+                    )
+                    destination.commit()
+                except Exception:
+                    if destination.in_transaction:
+                        destination.rollback()
+                    raise
+                verify_schema(destination)
+                if destination.execute("PRAGMA foreign_key_check").fetchall():
+                    raise AuditPersistenceError(
+                        "retained audit database has invalid foreign keys",
+                        operation="apply_audit_retention",
+                    )
+                destination.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            finally:
+                destination.close()
+            self._permissions.secure_sidecars(temporary)
+            complete = True
+            return temporary
         finally:
-            if connection is not None:
-                connection.close()
+            if not complete:
+                self._remove_database_files(temporary)
+
+    def _install_retained_database(self, temporary: Path) -> None:
+        self._remove_sidecars(self.database_path)
+        os.replace(temporary, self.database_path)
+        self._permissions.prepare(self.database_path)
+        self._permissions.secure_sidecars(self.database_path)
+
+    @staticmethod
+    def _remove_sidecars(database_path: Path) -> None:
+        for suffix in ("-wal", "-shm"):
+            try:
+                Path(f"{database_path}{suffix}").unlink()
+            except FileNotFoundError:
+                pass
+
+    @classmethod
+    def _remove_database_files(cls, database_path: Path) -> None:
+        try:
+            database_path.unlink()
+        except FileNotFoundError:
+            pass
+        cls._remove_sidecars(database_path)
+
+    @staticmethod
+    def _copy_retained_rows(
+        source: sqlite3.Connection,
+        destination: sqlite3.Connection,
+        table: str,
+        retained: tuple[str, ...],
+    ) -> None:
+        if table not in {"audit_runs", "audit_resources", "audit_events"}:
+            raise ValueError("unsupported audit table")
+        if not retained:
+            return
+        columns = tuple(
+            str(row["name"])
+            for row in source.execute(f"PRAGMA table_info({table})").fetchall()
+        )
+        column_sql = ", ".join(columns)
+        placeholders = ", ".join("?" for _ in columns)
+        run_placeholders = ", ".join("?" for _ in retained)
+        rows = source.execute(
+            f"SELECT {column_sql} FROM {table} "
+            f"WHERE run_id IN ({run_placeholders})"
+            + (" ORDER BY run_id, sequence" if table == "audit_events" else ""),
+            retained,
+        ).fetchall()
+        destination.executemany(
+            f"INSERT INTO {table} ({column_sql}) VALUES ({placeholders})",
+            (tuple(row[column] for column in columns) for row in rows),
+        )
+
 
     def _write(
         self,

@@ -25,6 +25,7 @@ from .models import (
     BackendResourceIdentifier,
     Metadata,
 )
+from .retention import RetentionPolicy, RetentionReport
 
 UtcClock: TypeAlias = Callable[[], datetime]
 IdFactory: TypeAlias = Callable[[], str]
@@ -65,6 +66,11 @@ class AuditStore(Protocol):
         workspace_id: str | None = None,
         limit: int = 200,
     ) -> tuple[AuditRunSnapshot, ...]: ...
+
+    def apply_retention(
+        self,
+        policy: RetentionPolicy,
+    ) -> RetentionReport: ...
 
     def claim_nonterminal(
         self,
@@ -150,6 +156,14 @@ class AuditService:
             workspace_id=workspace_id,
             limit=limit,
         )
+
+    async def apply_retention(
+        self,
+        policy: RetentionPolicy,
+    ) -> RetentionReport:
+        if not isinstance(policy, RetentionPolicy):
+            raise TypeError("policy must be a RetentionPolicy")
+        return await asyncio.to_thread(self._store.apply_retention, policy)
 
     async def attach_resource(
         self,
