@@ -32,18 +32,26 @@ class SQLiteSessionStore:
             raise TypeError("database_path must be a pathlib.Path")
 
         self.database_path = database_path.expanduser().resolve()
+        connection: sqlite3.Connection | None = None
         try:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
-            self._connection = sqlite3.connect(self.database_path)
+            connection = sqlite3.connect(self.database_path)
+            self._connection = connection
             self._connection.row_factory = sqlite3.Row
             self._connection.execute("PRAGMA foreign_keys = ON")
             self._connection.execute("PRAGMA journal_mode = WAL")
             self._connection.execute("PRAGMA busy_timeout = 5000")
             self._initialize_schema()
         except sqlite3.Error as error:
+            if connection is not None:
+                connection.close()
             raise SessionStorageError(
                 f"Could not open session database: {error}"
             ) from error
+        except BaseException:
+            if connection is not None:
+                connection.close()
+            raise
 
     def _initialize_schema(self) -> None:
         version = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
