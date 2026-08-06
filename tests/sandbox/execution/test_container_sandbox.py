@@ -156,6 +156,7 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
         filesystem_mode: str = "workspace-read",
         network_access: bool = False,
         memory_bytes: int | None = 256 * 1024 * 1024,
+        cpu_seconds: float | None = None,
         max_processes: int | None = 32,
         timeout_seconds: float = 90.0,
     ) -> ExecutionRequest:
@@ -169,6 +170,7 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
                 max_output_bytes=1 << 20,
                 max_return_bytes=64 * 1024,
                 memory_bytes=memory_bytes,
+                cpu_seconds=cpu_seconds,
                 max_processes=max_processes,
                 termination_grace_seconds=1,
             ),
@@ -369,6 +371,16 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(exit_status.exit_code, 0)
         self.assertIn("PID-LIMIT-ENFORCED", stdout)
         self.assertNotIn("PID-LIMIT-MISSED", stdout)
+
+    async def test_cpu_budget_terminates_a_busy_process_group(self):
+        _stdout, _stderr, exit_status, _resource = await self.run_script(
+            "python3 -c \"while True: pass\"",
+            label="cpu",
+            cpu_seconds=0.25,
+        )
+
+        self.assertEqual(exit_status.native_reason, "cpu_limit")
+        self.assertIsNone(exit_status.exit_code)
 
     async def test_a_nonzero_exit_is_ordinary_backend_data(self):
         _stdout, _stderr, exit_status, _resource = await self.run_script(

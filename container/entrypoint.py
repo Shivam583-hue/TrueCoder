@@ -13,9 +13,11 @@ CPU_STAT_PATH = "/sys/fs/cgroup/cpu.stat"
 POLL_SECONDS = 0.1
 
 _terminating = False
+_child_process_group: int | None = None
 
 
 def main(argv: list[str]) -> int:
+    global _child_process_group
     if not argv:
         print("truecoder entrypoint requires a command", file=sys.stderr)
         return 64
@@ -38,6 +40,7 @@ def main(argv: list[str]) -> int:
         os.setpgid(child, child)
     except OSError:
         pass
+    _child_process_group = child
 
     signal.signal(signal.SIGTERM, _forward)
     signal.signal(signal.SIGINT, _forward)
@@ -48,8 +51,9 @@ def main(argv: list[str]) -> int:
 def _forward(signal_number: int, _frame) -> None:
     global _terminating
     _terminating = True
-    with _suppressed():
-        os.killpg(os.getpgid(0), signal_number)
+    if _child_process_group is not None:
+        with _suppressed():
+            os.killpg(_child_process_group, signal_number)
 
 
 def _supervise(child: int, budget: float | None) -> int:
@@ -64,7 +68,7 @@ def _supervise(child: int, budget: float | None) -> int:
             if budget is not None and not exceeded and _cpu_seconds() > budget:
                 exceeded = True
                 _mark_cpu_exceeded()
-                _terminate_group()
+                _terminate_group(child)
             time.sleep(POLL_SECONDS)
 
 
@@ -103,9 +107,9 @@ def _mark_cpu_exceeded() -> None:
         handle.write(ENTRYPOINT_VERSION)
 
 
-def _terminate_group() -> None:
+def _terminate_group(process_group: int) -> None:
     with _suppressed():
-        os.killpg(os.getpgid(0), signal.SIGKILL)
+        os.killpg(process_group, signal.SIGKILL)
 
 
 class _suppressed:

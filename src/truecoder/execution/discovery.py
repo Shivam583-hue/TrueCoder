@@ -917,21 +917,6 @@ def _windows_capabilities(
     )
 
 
-def _container_capabilities() -> BackendCapabilities:
-    return BackendCapabilities(
-        filesystem_isolation="enforced",
-        network_isolation="enforced",
-        memory_limits="enforced",
-        cpu_limits="enforced",
-        process_limits="enforced",
-        timeout_enforcement="enforced",
-        cancellation="enforced",
-        supported_execution_modes=("exec", "shell"),
-        supported_filesystem_modes=("workspace-read", "workspace-write"),
-        supported_shells=("posix",),
-    )
-
-
 def _container_unavailable_reasons(
     runtimes: tuple[ContainerRuntimeInfo, ...],
 ) -> tuple[UnavailableReason, ...]:

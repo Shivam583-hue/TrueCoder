@@ -230,6 +230,20 @@ class CapabilityTruthTableTests(unittest.TestCase):
 
 
 class BackendCompatibilityTests(unittest.TestCase):
+    def test_best_effort_container_cpu_never_satisfies_enforced_policy(self):
+        container = descriptor(
+            "container",
+            capabilities=capabilities(cpu_limits="best_effort"),
+        )
+
+        compatibility = check_backend(container, request(), decision())
+
+        self.assertFalse(compatibility.compatible)
+        self.assertIn(
+            "cpu-limits-insufficient",
+            tuple(reason.code for reason in compatibility.reasons),
+        )
+
     def test_matches_each_capability_requirement_independently(self):
         fields = (
             ("filesystem_isolation", "filesystem-isolation-insufficient"),
