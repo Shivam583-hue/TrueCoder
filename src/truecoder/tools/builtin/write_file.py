@@ -9,6 +9,7 @@ from typing import TypedDict
 
 from pydantic import Field
 
+from truecoder.mutation import FileDiff, build_file_diff
 from truecoder.tools.base import (
     BaseTool,
     ToolApproval,
@@ -19,6 +20,7 @@ from truecoder.tools.builtin.filesystem import is_sensitive_path
 from truecoder.tools.context import ToolInvocationContext
 
 MAX_WRITE_BYTES = 32 * 1024
+MAX_PREVIEW_BYTES = 1024 * 1024
 
 # --------------------------------------------------------------------
 
@@ -261,6 +263,42 @@ class WriteFileTool(BaseTool[WriteFileArguments]):
             self._write_atomic,
             arguments.path,
             encoded_content,
+        )
+
+    # -------------------------------
+
+    async def preview_mutation(self, arguments: WriteFileArguments) -> FileDiff | None:
+        return await asyncio.to_thread(self._preview, arguments)
+
+    def _preview(self, arguments: WriteFileArguments) -> FileDiff | None:
+        destination, created = self._resolve_destination(arguments.path)
+
+        if created:
+            return build_file_diff(
+                arguments.path,
+                "",
+                arguments.content,
+                kind="create",
+            )
+
+        try:
+            raw_content = destination.read_bytes()
+        except OSError:
+            return None
+
+        if len(raw_content) > MAX_PREVIEW_BYTES:
+            return None
+
+        try:
+            original_content = raw_content.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+
+        return build_file_diff(
+            arguments.path,
+            original_content,
+            arguments.content,
+            kind="replace",
         )
 
     # -------------------------------

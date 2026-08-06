@@ -10,6 +10,7 @@ from typing import TypedDict
 
 from pydantic import Field
 
+from truecoder.mutation import FileDiff, build_file_diff
 from truecoder.tools.base import (
     BaseTool,
     ToolApproval,
@@ -105,6 +106,36 @@ class EditFileTool(BaseTool[EditFileArguments]):
             )
 
         return await asyncio.to_thread(self._edit_atomic, arguments)
+
+    async def preview_mutation(self, arguments: EditFileArguments) -> FileDiff | None:
+        return await asyncio.to_thread(self._preview, arguments)
+
+    def _preview(self, arguments: EditFileArguments) -> FileDiff | None:
+        destination = resolve_existing_workspace_path(
+            self._workspace_root,
+            arguments.path,
+            expected="file",
+        )
+        original_content, _, _ = self._read_original(destination)
+
+        occurrences = original_content.count(arguments.old_text)
+        if occurrences == 0 or (not arguments.replace_all and occurrences != 1):
+            return None
+
+        edited_content = original_content.replace(
+            arguments.old_text,
+            arguments.new_text,
+            -1 if arguments.replace_all else 1,
+        )
+        if edited_content == original_content:
+            return None
+
+        return build_file_diff(
+            arguments.path,
+            original_content,
+            edited_content,
+            kind="edit",
+        )
 
     @staticmethod
     def _encode_edit_text(text: str, *, field_name: str) -> bytes:

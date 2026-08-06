@@ -22,6 +22,7 @@ from truecoder.execution.models import (
     RiskLevel,
 )
 from truecoder.execution.preparation import PreparedExecution
+from truecoder.mutation import FileDiff
 
 _FINGERPRINT_VERSION = 1
 
@@ -97,6 +98,7 @@ class ApprovalRequest:
     fingerprint: str
     allowed_scopes: tuple[ApprovalScope, ...]
     execution: ExecutionApprovalDetails | None = None
+    mutation: FileDiff | None = None
 
     def __post_init__(self) -> None:
         _require_identity(self.call_id, "call_id")
@@ -115,6 +117,8 @@ class ApprovalRequest:
             ExecutionApprovalDetails,
         ):
             raise TypeError("execution must be ExecutionApprovalDetails or None")
+        if self.mutation is not None and not isinstance(self.mutation, FileDiff):
+            raise TypeError("mutation must be a FileDiff or None")
 
     @classmethod
     def create(
@@ -125,6 +129,7 @@ class ApprovalRequest:
         arguments: dict[str, Any],
         identity: ApprovalIdentity,
         execution: ExecutionApprovalDetails | None = None,
+        mutation: FileDiff | None = None,
         requested_scopes: tuple[ApprovalScope, ...] | None = None,
     ) -> ApprovalRequest:
         if not isinstance(identity, ApprovalIdentity):
@@ -134,6 +139,8 @@ class ApprovalRequest:
             ExecutionApprovalDetails,
         ):
             raise TypeError("execution must be ExecutionApprovalDetails or None")
+        if mutation is not None and not isinstance(mutation, FileDiff):
+            raise TypeError("mutation must be a FileDiff or None")
         arguments_json = _canonical_json(arguments)
         safe_scopes = safe_approval_scopes(execution, tool_name=tool_name)
         allowed_scopes = _restrict_scopes(requested_scopes, safe_scopes)
@@ -151,6 +158,7 @@ class ApprovalRequest:
             fingerprint=fingerprint,
             allowed_scopes=allowed_scopes,
             execution=execution,
+            mutation=mutation,
         )
 
     @property

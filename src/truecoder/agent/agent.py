@@ -33,14 +33,21 @@ from truecoder.execution.cancellation import CancellationSource
 from truecoder.execution.context import ExecutionContextFactory, workspace_id_for
 from truecoder.execution.events import ExecutionEventSink
 from truecoder.execution.runner import PreviewSink
+from truecoder.mutation import FileDiff
 from truecoder.planning import PlanStore
 from truecoder.session import (
     SessionManager,
     SQLiteSessionStore,
     default_session_database_path,
 )
-from truecoder.tools import ToolExecutor, ToolInvocationContext, serialize_tool_result
+from truecoder.tools import (
+    PreparedToolCall,
+    ToolExecutor,
+    ToolInvocationContext,
+    serialize_tool_result,
+)
 from truecoder.tools.base import (
+    MutatingTool,
     ToolApproval,
     ToolCall,
     ToolResult,
@@ -357,6 +364,7 @@ class Agent:
                         tool_name=call.name,
                         arguments=prepared.arguments.model_dump(mode="json"),
                         identity=self._approval_identity(),
+                        mutation=await self._preview_mutation(prepared),
                     )
                     response = self.approval_service.reusable_response(request)
                     if response is None:
@@ -399,6 +407,18 @@ class Agent:
                     result.status.value,
                     content,
                 )
+
+    @staticmethod
+    async def _preview_mutation(prepared: PreparedToolCall) -> FileDiff | None:
+        tool = prepared.tool
+        if not isinstance(tool, MutatingTool):
+            return None
+        try:
+            return await tool.preview_mutation(prepared.arguments)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a preview never blocks approval
+            return None
 
     def _approval_identity(self) -> ApprovalIdentity:
         identity = self._approval_identity_provider()

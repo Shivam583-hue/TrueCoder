@@ -6,10 +6,11 @@ from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from truecoder.mutation import FileDiff
 from truecoder.tools.context import ToolInvocationContext
 
 _TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -296,3 +297,8 @@ class BaseTool(ABC, Generic[ArgumentsT]):
         """Execute the tool using previously validated arguments."""
 
         raise NotImplementedError
+
+
+@runtime_checkable
+class MutatingTool(Protocol):
+    async def preview_mutation(self, arguments: Any) -> FileDiff | None: ...
