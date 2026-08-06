@@ -130,6 +130,15 @@ def build_file_diff(
         _ends_with_newline(before) != _ends_with_newline(after)
     )
 
+    # Equal split lines mean no hunks, so without this any difference that
+    # survives splitlines - CRLF against LF above all - would render as an
+    # unchanged file while the write still rewrites every line.
+    line_endings_changed = (
+        before != after
+        and before_lines == after_lines
+        and not newline_changed
+    )
+
     return FileDiff(
         path=path,
         kind=kind,
@@ -138,4 +147,5 @@ def build_file_diff(
         removed=removed,
         truncated=truncated,
         newline_changed=newline_changed,
+        line_endings_changed=line_endings_changed,
     )

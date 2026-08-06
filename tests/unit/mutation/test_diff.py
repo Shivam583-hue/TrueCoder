@@ -130,6 +130,69 @@ class BuildFileDiffTests(unittest.TestCase):
 
         self.assertFalse(diff.newline_changed)
 
+    def test_a_crlf_to_lf_rewrite_is_not_reported_as_unchanged(self):
+        diff = build_file_diff(
+            "a.py",
+            "one\r\ntwo\r\nthree\r\n",
+            "one\ntwo\nthree\n",
+            kind="replace",
+        )
+
+        self.assertTrue(diff.line_endings_changed)
+        self.assertFalse(diff.is_empty)
+
+    def test_an_lf_to_crlf_rewrite_is_not_reported_as_unchanged(self):
+        diff = build_file_diff(
+            "a.py",
+            "one\ntwo\n",
+            "one\r\ntwo\r\n",
+            kind="replace",
+        )
+
+        self.assertTrue(diff.line_endings_changed)
+        self.assertFalse(diff.is_empty)
+
+    def test_matching_line_endings_report_no_change(self):
+        diff = build_file_diff("a.py", "one\r\ntwo\r\n", "one\r\ntwo\r\n", kind="edit")
+
+        self.assertFalse(diff.line_endings_changed)
+        self.assertTrue(diff.is_empty)
+
+    def test_a_content_change_is_not_labelled_a_line_ending_change(self):
+        diff = build_file_diff("a.py", "one\ntwo\n", "one\nTWO\n", kind="edit")
+
+        self.assertFalse(diff.line_endings_changed)
+
+    def test_a_trailing_newline_change_is_not_labelled_a_line_ending_change(self):
+        diff = build_file_diff("a.py", "one\n", "one", kind="edit")
+
+        self.assertTrue(diff.newline_changed)
+        self.assertFalse(diff.line_endings_changed)
+
+    def test_any_real_change_renders_as_something(self):
+        pairs = [
+            ("one\n", "two\n"),
+            ("one\r\n", "one\n"),
+            ("one\n", "one\r\n"),
+            ("one\n", "one"),
+            ("one", "one\n"),
+            ("one\r\ntwo\r\n", "one\ntwo\n"),
+            ("a\nb\nc\n", "a\nc\n"),
+            ("", "one\n"),
+            ("one\rtwo\r", "one\ntwo\n"),
+            ("one\n\n", "one\n"),
+        ]
+
+        for before, after in pairs:
+            with self.subTest(before=before, after=after):
+                diff = build_file_diff("a.py", before, after, kind="replace")
+
+                self.assertNotEqual(before, after)
+                self.assertFalse(
+                    diff.is_empty,
+                    f"a change from {before!r} to {after!r} rendered as unchanged",
+                )
+
     def test_repeated_lines_still_align_in_a_long_file(self):
         before = "\n".join(["def f():", "    pass", ""] * 90)
         after = before.replace("def f():", "def g():", 1)

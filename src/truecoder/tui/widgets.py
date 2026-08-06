@@ -536,6 +536,11 @@ class ToolCallCard(Vertical):
                 "\\ trailing newline changed\n",
                 style=_DIFF_HEADER_STYLE,
             )
+        if diff.line_endings_changed:
+            text.append(
+                "\\ line endings changed\n",
+                style=_DIFF_TRUNCATION_STYLE,
+            )
         if diff.truncated:
             text.append(
                 f"… diff truncated, {diff.summary}\n",

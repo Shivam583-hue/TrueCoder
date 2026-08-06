@@ -73,6 +73,7 @@ class FileDiff:
     removed: int
     truncated: bool = False
     newline_changed: bool = False
+    line_endings_changed: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.path, str) or not self.path.strip():
@@ -86,7 +87,11 @@ class FileDiff:
 
     @property
     def is_empty(self) -> bool:
-        return not self.hunks and not self.newline_changed
+        return (
+            not self.hunks
+            and not self.newline_changed
+            and not self.line_endings_changed
+        )
 
     @property
     def summary(self) -> str:

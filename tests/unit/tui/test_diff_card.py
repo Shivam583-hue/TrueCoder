@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import unittest
 
-from truecoder.mutation import FileDiff, build_file_diff
+from truecoder.mutation import FileDiff, MutationKind, build_file_diff
 from truecoder.tui.widgets import ToolCallCard
 
 
-def _diff(before: str, after: str, *, kind="edit", **kwargs) -> FileDiff:
+def _diff(
+    before: str,
+    after: str,
+    *,
+    kind: MutationKind = "edit",
+    **kwargs,
+) -> FileDiff:
     return build_file_diff("src/app.py", before, after, kind=kind, **kwargs)
 
 
@@ -87,6 +93,14 @@ class DiffCardRenderingTests(unittest.TestCase):
         card = _card(_diff("one\n", "one"))
 
         self.assertIn("trailing newline changed", card._diff_text().plain)
+
+    def test_a_line_ending_change_is_shown_rather_than_an_empty_diff(self):
+        card = _card(_diff("one\r\ntwo\r\n", "one\ntwo\n", kind="replace"))
+
+        rendered = card._diff_text().plain
+
+        self.assertIn("line endings changed", rendered)
+        self.assertNotIn("trailing newline changed", rendered)
 
     def test_separate_hunks_are_separated_by_a_blank_line(self):
         before = "\n".join(str(number) for number in range(1, 41))
