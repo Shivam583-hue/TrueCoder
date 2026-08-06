@@ -5,6 +5,7 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
+from tests.helpers.tui import wait_until
 from truecoder.agent import Agent, ContextBuilder
 from truecoder.client.response import (
     EventType,
@@ -109,6 +110,10 @@ def make_agent(
             token_counter=FixedTokenCounter(),
         ),
     )
+
+
+def tool_cards(app: TrueCoderApp) -> list[ToolCallCard]:
+    return list(app.query(ToolCallCard))
 
 
 def registry_with(tool: GuardedTool) -> ToolRegistry:
@@ -613,12 +618,24 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(120, 40)) as pilot:
             app.query_one(PromptInput).text = "read it"
             await pilot.press("enter")
-            await pilot.pause()
+            await wait_until(
+                pilot,
+                lambda: bool(tool_cards(app))
+                and tool_cards(app)[0].state == "awaiting-approval",
+                description="the first tool call to await approval",
+            )
+
             first_card = app.query_one(ToolCallCard)
             await pilot.click(first_card.query_one(".approval-session"))
-            await pilot.pause()
+            await wait_until(
+                pilot,
+                lambda: len(tool_cards(app)) == 2
+                and tool_cards(app)[1].state == "awaiting-approval"
+                and app._pending_approval is not None,
+                description="the changed arguments to ask for approval again",
+            )
 
-            cards = list(app.query(ToolCallCard))
+            cards = tool_cards(app)
             self.assertEqual(tool.runs, 1)
             self.assertEqual(len(cards), 2)
             self.assertEqual(cards[1].state, "awaiting-approval")

@@ -6,6 +6,7 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import patch
 
+from tests.helpers.tui import wait_until
 from truecoder.agent import Agent, ContextBuilder
 from truecoder.agent.approval import (
     ApprovalDecision,
@@ -321,7 +322,12 @@ class ApprovalFocusTests(unittest.IsolatedAsyncioTestCase):
                 task = asyncio.create_task(
                     app._request_tool_approval(approval_request())
                 )
-                await pilot.pause()
+                await wait_until(
+                    pilot,
+                    lambda: app.focused is not None
+                    and "approval-once" in app.focused.classes,
+                    description="the open approval to focus its approve-once control",
+                )
 
                 assert app.focused is not None
                 self.assertIn("approval-once", app.focused.classes)
