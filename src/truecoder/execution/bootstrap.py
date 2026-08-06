@@ -16,6 +16,8 @@ from truecoder.execution.audit import (
 from truecoder.execution.backends.base import ExecutionBackend
 from truecoder.execution.backends.container import ContainerBackend
 from truecoder.execution.backends.container_plan import (
+    DEFAULT_MEMORY_BYTES,
+    DEFAULT_PIDS_LIMIT,
     ContainerLaunchConfig,
     load_image_lock,
 )
@@ -77,6 +79,10 @@ class ExecutionBootstrapConfig:
     environment_policy: EnvironmentPolicy = field(
         default_factory=EnvironmentPolicy
     )
+    container_default_memory_bytes: int = DEFAULT_MEMORY_BYTES
+    container_default_pids_limit: int = DEFAULT_PIDS_LIMIT
+    container_cpu_rate_ceiling: float | None = None
+    container_isolated_network: str | None = None
     event_sink: ExecutionEventSink | None = None
     preview_sink: PreviewSink | None = None
 
@@ -93,6 +99,26 @@ class ExecutionBootstrapConfig:
             raise TypeError("policy_config must be a PolicyConfig")
         if not isinstance(self.environment_policy, EnvironmentPolicy):
             raise TypeError("environment_policy must be an EnvironmentPolicy")
+        for name, value in (
+            ("container_default_memory_bytes", self.container_default_memory_bytes),
+            ("container_default_pids_limit", self.container_default_pids_limit),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer")
+            if value <= 0:
+                raise ValueError(f"{name} must be greater than zero")
+        if self.container_cpu_rate_ceiling is not None:
+            value = self.container_cpu_rate_ceiling
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError("container_cpu_rate_ceiling must be a number or None")
+            if value <= 0:
+                raise ValueError("container_cpu_rate_ceiling must be greater than zero")
+        if self.container_isolated_network is not None:
+            value = self.container_isolated_network
+            if not isinstance(value, str):
+                raise TypeError("container_isolated_network must be a string or None")
+            if not value.strip():
+                raise ValueError("container_isolated_network cannot be empty")
         if self.event_sink is not None and not isinstance(
             self.event_sink,
             ExecutionEventSink,
@@ -254,6 +280,9 @@ async def bootstrap_execution(
         environment_policy=settings.environment_policy,
         host_environment=os.environ,
         trusted_rules=trusted_rules,
+        container_network_configured=(
+            settings.container_isolated_network is not None
+        ),
     )
     runtime = _runtime_with_health(
         enabled=True,
@@ -314,7 +343,13 @@ def _build_backends(
                 ContainerBackend(
                     container,
                     runtime,
-                    ContainerLaunchConfig(image=image),
+                    ContainerLaunchConfig(
+                        image=image,
+                        default_memory_bytes=config.container_default_memory_bytes,
+                        default_pids_limit=config.container_default_pids_limit,
+                        cpu_rate_ceiling=config.container_cpu_rate_ceiling,
+                        isolated_network=config.container_isolated_network,
+                    ),
                     host_id=current_host_id(),
                 )
             )

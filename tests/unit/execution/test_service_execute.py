@@ -14,6 +14,7 @@ from truecoder.execution.audit.models import TerminalOutcome
 from truecoder.execution.audit.service import AuditService
 from truecoder.execution.backends.models import (
     BackendDescriptor,
+    ContainerRuntimeInfo,
     DiscoverySnapshot,
     HostPlatformInfo,
     UnavailableReason,
@@ -222,6 +223,70 @@ class ExecuteLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.spy.finalization.detail, "backend_unavailable")
         self.assertEqual(await self.registry.active_execution_ids(), ())
+
+    async def test_container_network_is_refused_before_backend_start(self):
+        runtime = ContainerRuntimeInfo(
+            name="docker",
+            executable=ROOT / "docker",
+            client_version="test",
+            server_version="test",
+            daemon_reachable=True,
+            rootless="unknown",
+        )
+        container = BackendDescriptor(
+            name="container",
+            available=True,
+            capabilities=BackendCapabilities(
+                filesystem_isolation="enforced",
+                network_isolation="enforced",
+                memory_limits="enforced",
+                cpu_limits="best_effort",
+                process_limits="enforced",
+                timeout_enforcement="enforced",
+                cancellation="enforced",
+                supported_execution_modes=("exec", "shell"),
+                supported_filesystem_modes=("workspace-read", "workspace-write"),
+                supported_shells=("posix",),
+            ),
+            version="test",
+            runtime=runtime,
+        )
+        self.backend = ScriptedBackend(container, handle_options={"exit_code": 0})
+        discovery = DiscoverySnapshot(
+            host=snapshot().host,
+            shells=(),
+            cgroup_v2=None,
+            runtimes=(runtime,),
+            backends=(
+                unavailable("posix"),
+                unavailable("windows"),
+                container,
+            ),
+        )
+        base = request()
+        sandboxed = ExecutionRequest(
+            mode="exec",
+            argv=("python", "-V"),
+            script=None,
+            working_directory=ROOT,
+            limits=base.limits,
+            network_access=True,
+            filesystem_mode="workspace-read",
+            backend="container",
+        )
+
+        result = await self.service(discovery=discovery).execute(
+            sandboxed,
+            context(),
+        )
+
+        self.assertEqual(result.status, "failed_to_start")
+        self.assertEqual(self.backend.start_count, 0)
+        assert self.spy.finalization is not None
+        self.assertEqual(
+            self.spy.finalization.detail,
+            "container_network_unconfigured",
+        )
 
     async def test_execute_accepts_a_discovery_provider(self):
         calls: list[int] = []

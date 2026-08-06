@@ -439,6 +439,7 @@ class Agent:
 
 def run() -> None:
     """Launch the TrueCoder terminal application."""
+    from truecoder.execution.configuration import load_execution_config
     from truecoder.tui.app import TrueCoderApp
 
     launch_directory = Path.cwd().resolve(strict=True)
@@ -464,7 +465,7 @@ def run() -> None:
         context_builder=context_builder,
         tool_registry=tool_registry,
         project_root=project_root,
-        execution_bootstrap_config=ExecutionBootstrapConfig(),
+        execution_bootstrap_config=load_execution_config(),
     )
     session_store = SQLiteSessionStore(default_session_database_path())
     session_manager = SessionManager(session_store, state, project_root)

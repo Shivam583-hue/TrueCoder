@@ -41,6 +41,7 @@ class ExecutionService:
         environment_policy: EnvironmentPolicy | None = None,
         host_environment: Mapping[str, str] | None = None,
         trusted_rules: TrustedRuleSet | None = None,
+        container_network_configured: bool = False,
     ) -> None:
         if runner is not None and not isinstance(runner, ExecutionRunner):
             raise TypeError("runner must be an ExecutionRunner")
@@ -68,6 +69,8 @@ class ExecutionService:
             TrustedRuleSet,
         ):
             raise TypeError("trusted_rules must be a TrustedRuleSet")
+        if not isinstance(container_network_configured, bool):
+            raise TypeError("container_network_configured must be a boolean")
 
         self._registry = registry or ExecutionRegistry()
         self._runner = runner
@@ -79,6 +82,7 @@ class ExecutionService:
             dict(host_environment) if host_environment is not None else {}
         )
         self._trusted_rules = trusted_rules or TrustedRuleSet()
+        self._container_network_configured = container_network_configured
 
     @property
     def registry(self) -> ExecutionRegistry:
@@ -118,6 +122,19 @@ class ExecutionService:
                 context,
                 detail="backend_unavailable",
                 error=error,
+            )
+        if (
+            selection.descriptor.name == "container"
+            and request.network_access
+            and not self._container_network_configured
+        ):
+            return await runner.refuse(
+                request,
+                context,
+                detail="container_network_unconfigured",
+                error=RuntimeError(
+                    "container network access requires an isolated network"
+                ),
             )
 
         prepared = prepare_execution(
