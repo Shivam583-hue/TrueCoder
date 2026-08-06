@@ -555,6 +555,17 @@ class ExecutionResultTests(unittest.TestCase):
         self.assertEqual(value.exit_code, 2)
         self.assertEqual(value.stderr, "tests failed")
 
+    def test_results_accept_bounded_actionable_diagnostics(self):
+        value = result(
+            status="failed_to_start",
+            exit_code=None,
+            reason_code="backend_unavailable",
+            reason_message="Install or enable a compatible backend.",
+        )
+
+        self.assertEqual(value.reason_code, "backend_unavailable")
+        self.assertIn("compatible backend", value.reason_message)
+
     def test_result_validates_metrics_and_identifiers(self):
         invalid_results = (
             {"duration_seconds": -1},
@@ -565,6 +576,8 @@ class ExecutionResultTests(unittest.TestCase):
             {"audit_id": ""},
             {"backend": "unknown"},
             {"exit_code": True},
+            {"reason_code": "bad code"},
+            {"reason_message": "bad\x00message"},
         )
 
         for overrides in invalid_results:

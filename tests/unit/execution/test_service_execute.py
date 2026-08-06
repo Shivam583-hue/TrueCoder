@@ -221,7 +221,11 @@ class ExecuteLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.spy.finalization.outcome,
             TerminalOutcome.FAILED_TO_START,
         )
-        self.assertEqual(self.spy.finalization.detail, "backend_unavailable")
+        self.assertTrue(
+            self.spy.finalization.detail.startswith("backend_unavailable:")
+        )
+        self.assertEqual(result.reason_code, "backend_unavailable")
+        self.assertIn("compatible execution backend", result.reason_message)
         self.assertEqual(await self.registry.active_execution_ids(), ())
 
     async def test_container_network_is_refused_before_backend_start(self):
@@ -283,10 +287,13 @@ class ExecuteLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "failed_to_start")
         self.assertEqual(self.backend.start_count, 0)
         assert self.spy.finalization is not None
-        self.assertEqual(
-            self.spy.finalization.detail,
-            "container_network_unconfigured",
+        self.assertTrue(
+            self.spy.finalization.detail.startswith(
+                "container_network_unconfigured:"
+            )
         )
+        self.assertEqual(result.reason_code, "container_network_unconfigured")
+        self.assertIn("Retry without network access", result.reason_message)
 
     async def test_execute_accepts_a_discovery_provider(self):
         calls: list[int] = []

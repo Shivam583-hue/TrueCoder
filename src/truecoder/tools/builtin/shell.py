@@ -108,6 +108,8 @@ class ShellOutput(TypedDict):
     termination_reason: str | None
     backend: str | None
     audit_id: str
+    reason_code: str | None
+    reason_message: str | None
 
 
 class ShellExecutionService(Protocol):
@@ -227,6 +229,8 @@ def format_shell_result(result: ExecutionResult) -> ShellOutput:
         "termination_reason": result.termination_reason,
         "backend": result.backend,
         "audit_id": result.audit_id,
+        "reason_code": result.reason_code,
+        "reason_message": result.reason_message,
     }
 
 

@@ -193,7 +193,12 @@ class StatusMappingTests(unittest.TestCase):
 
     def test_denied_results_never_name_a_backend(self):
         built = material(claim("denied", None, "policy_denied"), started=None)
-        finalization = build_finalization("run_02", built, finalized_at=NOW)
+        finalization = build_finalization(
+            "run_02",
+            built,
+            finalized_at=NOW,
+            detail="policy_denied: The requested operation is forbidden.",
+        )
 
         result = build_execution_result(
             terminal_record(finalization),
@@ -202,6 +207,11 @@ class StatusMappingTests(unittest.TestCase):
         )
 
         self.assertIsNone(result.backend)
+        self.assertEqual(result.reason_code, "policy_denied")
+        self.assertEqual(
+            result.reason_message,
+            "The requested operation is forbidden.",
+        )
 
     def test_approval_rejection_uses_its_own_outcome(self):
         built = material(claim("denied", None, "approval_rejected"), started=None)

@@ -228,6 +228,7 @@ def build_execution_result(
         raise ValueError("a terminal audit record requires a finalization")
 
     status = public_status(record.finalization)
+    reason_code, reason_message = public_diagnostic(record.finalization)
     return ExecutionResult(
         status=status,
         exit_code=public_exit_code(status, material),
@@ -241,6 +242,8 @@ def build_execution_result(
         termination_reason=public_termination_reason(status, material),
         backend=None if status == "denied" else backend,
         audit_id=record.run_id,
+        reason_code=reason_code,
+        reason_message=reason_message,
     )
 
 
@@ -311,6 +314,29 @@ def public_termination_reason(
     if status not in REASON_BEARING_STATUSES:
         return None
     return material.claim.reason
+
+
+def public_diagnostic(
+    finalization: AuditFinalization,
+) -> tuple[str | None, str | None]:
+    detail = finalization.detail
+    if detail is None:
+        if finalization.outcome in {
+            TerminalOutcome.POLICY_DENIED,
+            TerminalOutcome.APPROVAL_REJECTED,
+            TerminalOutcome.FAILED_TO_START,
+        }:
+            return finalization.outcome.value, None
+        return None, None
+    code, separator, message = detail.partition(": ")
+    if not separator:
+        if all(
+            character.isalnum() or character in "._-"
+            for character in detail
+        ):
+            return detail, None
+        return finalization.outcome.value, detail
+    return code, message
 
 
 def finalization_exit_code(

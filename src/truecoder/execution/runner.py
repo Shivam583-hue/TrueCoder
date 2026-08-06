@@ -30,7 +30,9 @@ from truecoder.execution.errors import (
     AuditUnavailableError,
     BackendCleanupError,
     BackendOperationError,
+    BackendSelectionError,
     BackendStartError,
+    ExecutionInfrastructureError,
     InvalidExecutionStateError,
 )
 from truecoder.execution.events import (
@@ -414,7 +416,15 @@ class ExecutionRunner:
         )
         state.transition(RunState.FINALIZING)
         material = self._pre_start_material("denied", "policy_denied")
-        record = await self._settle(handle, material, context)
+        record = await self._settle(
+            handle,
+            material,
+            context,
+            detail=_bounded_diagnostic(
+                "policy_denied",
+                _first_reason(decision),
+            ),
+        )
         state.transition(RunState.TERMINAL)
         return await self._publish_result(record, material, None, publisher)
 
@@ -469,6 +479,10 @@ class ExecutionRunner:
             material,
             context,
             outcome_override=TerminalOutcome.APPROVAL_REJECTED,
+            detail=_bounded_diagnostic(
+                "approval_rejected",
+                "The user rejected this execution request.",
+            ),
         )
         state.transition(RunState.TERMINAL)
         return await self._publish_result(record, material, None, publisher)
@@ -909,6 +923,7 @@ class ExecutionRunner:
         reraise: bool = False,
         raise_original: bool = False,
     ) -> ExecutionResult:
+        public_detail = _public_failure_detail(detail, error)
         state.transition(RunState.FINALIZING)
         material = self._pre_start_material("failed_to_start", "failed_to_start")
         record = await self._try_settle(
@@ -916,10 +931,10 @@ class ExecutionRunner:
             material,
             context,
             resource=resource,
-            detail=detail,
+            detail=public_detail,
         )
         state.transition(RunState.TERMINAL)
-        await publisher.publish("failed_to_start", message=detail)
+        await publisher.publish("failed_to_start", message=public_detail)
 
         if raise_original:
             raise error
@@ -1109,6 +1124,48 @@ def choose_terminal_candidate(
             operation="await_terminal",
         )
     return resolve_terminal_claim(tuple(candidates))
+
+
+def _public_failure_detail(code: str, error: BaseException) -> str:
+    messages = {
+        "backend_unavailable": (
+            "No enabled execution backend satisfies the requested capabilities."
+        ),
+        "container_network_unconfigured": (
+            "Sandbox network access is not configured. Retry without network access."
+        ),
+        "backend_start_failed": "The selected backend could not start the command.",
+        "starting_event_unavailable": (
+            "The required audit start event could not be stored."
+        ),
+        "pre_start_event_unavailable": (
+            "Required pre-execution evidence could not be stored."
+        ),
+        "runtime_evidence_lost": (
+            "The backend started but its durable resource evidence was lost."
+        ),
+    }
+    message = messages.get(code, "The execution could not be started safely.")
+    if isinstance(error, (BackendSelectionError, BackendStartError)):
+        message = error.message
+    elif isinstance(error, ExecutionInfrastructureError):
+        message = messages.get(code, message)
+    return _bounded_diagnostic(code, message)
+
+
+def _bounded_diagnostic(code: str, message: str | None) -> str:
+    normalized_code = "".join(
+        character
+        for character in code.strip().replace(" ", "_")
+        if character.isalnum() or character in "._-"
+    )[:128]
+    if not normalized_code:
+        normalized_code = "execution_failure"
+    if not message:
+        return normalized_code
+    normalized_message = " ".join(message.split())
+    budget = 512 - len(normalized_code) - 2
+    return f"{normalized_code}: {normalized_message[:budget]}"
 
 
 def _enter_terminating(state: LifecycleState) -> None:

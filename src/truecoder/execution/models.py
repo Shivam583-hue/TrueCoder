@@ -761,6 +761,8 @@ class ExecutionResult:
     termination_reason: TerminationReason | None
     backend: BackendName | None
     audit_id: str
+    reason_code: str | None = None
+    reason_message: str | None = None
 
     def __post_init__(self) -> None:
         _require_choice(self.status, EXECUTION_STATUSES, "execution status")
@@ -772,6 +774,27 @@ class ExecutionResult:
         _require_bool(self.stdout_truncated, "stdout_truncated")
         _require_bool(self.stderr_truncated, "stderr_truncated")
         _require_nonempty_string(self.audit_id, "audit_id")
+        if self.reason_code is not None:
+            code = _require_nonempty_string(self.reason_code, "reason_code")
+            if len(code) > 128 or any(
+                not (character.isalnum() or character in "._-")
+                for character in code
+            ):
+                raise ValueError(
+                    "reason_code must contain at most 128 letters, digits, "
+                    "periods, underscores, or hyphens"
+                )
+        if self.reason_message is not None:
+            message = _require_nonempty_string(
+                self.reason_message,
+                "reason_message",
+            )
+            _require_no_null_bytes(message, "reason_message")
+            _require_utf8_size_at_most(
+                message,
+                name="reason_message",
+                maximum=4096,
+            )
 
         if self.exit_code is not None and (
             isinstance(self.exit_code, bool) or not isinstance(self.exit_code, int)
