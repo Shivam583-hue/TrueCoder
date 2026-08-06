@@ -14,6 +14,7 @@ from textual.message import Message
 from textual.widgets import Button, Markdown, Static, TextArea
 
 from truecoder.client.response import TokenUsage
+from truecoder.mutation import DIFF_LINE_PREFIXES, DiffLineKind, FileDiff
 from truecoder.planning import Plan, PlanStepStatus
 from truecoder.tui.execution_view import (
     EXECUTION_CARD_STATES,
@@ -285,6 +286,15 @@ class ChatMessage(Vertical):
         )
 
 
+_DIFF_HEADER_STYLE = "#707070"
+_DIFF_TRUNCATION_STYLE = "#f2a33a"
+_DIFF_LINE_STYLES: dict[DiffLineKind, str] = {
+    "context": "#a2a2a2",
+    "added": "#67c587",
+    "removed": "#ef6f78",
+}
+
+
 class ToolCallCard(Vertical):
     """Persistent tool activity with approval controls and expandable details."""
 
@@ -296,10 +306,14 @@ class ToolCallCard(Vertical):
         *,
         state: str = "queued",
         allowed_approval_scopes: tuple[str, ...] = ("once",),
+        mutation: FileDiff | None = None,
     ) -> None:
         if state not in _TOOL_STATE_LABELS:
             raise ValueError(f"Unsupported tool-call state: {state}")
+        if mutation is not None and not isinstance(mutation, FileDiff):
+            raise TypeError("mutation must be a FileDiff or None")
 
+        self.mutation = mutation
         self.call_id = call_id
         self.tool_name = tool_name
         self.arguments = self._parse_arguments(arguments)
@@ -342,6 +356,9 @@ class ToolCallCard(Vertical):
 
     @property
     def _parameter_summary(self) -> str:
+        if self.mutation is not None:
+            return self.mutation.summary
+
         start_line = self.arguments.get("start_line")
         line_count = self.arguments.get("line_count")
         if isinstance(start_line, int) and isinstance(line_count, int):
@@ -408,6 +425,9 @@ class ToolCallCard(Vertical):
             )
             yield Button("Reject", classes="approval-reject")
 
+        with VerticalScroll(classes="tool-diff"):
+            yield Static(self._diff_text(), classes="tool-diff-content", markup=False)
+
         with VerticalScroll(classes="tool-details"):
             yield Static(self._details_text(), classes="tool-details-content")
 
@@ -417,8 +437,13 @@ class ToolCallCard(Vertical):
         *,
         allowed_scopes: tuple[str, ...] = ("once",),
         approval_details: tuple[tuple[str, str], ...] = (),
+        mutation: FileDiff | None = None,
     ) -> None:
+        if mutation is not None and not isinstance(mutation, FileDiff):
+            raise TypeError("mutation must be a FileDiff or None")
+
         self.arguments = arguments
+        self.mutation = mutation
         self.allowed_approval_scopes = self._validate_approval_scopes(
             allowed_scopes
         )
@@ -432,6 +457,7 @@ class ToolCallCard(Vertical):
         )
         self._sync_approval_buttons()
         self._refresh_summary()
+        self._refresh_diff()
         self.set_state("awaiting-approval")
 
     def set_state(self, state: str) -> None:
@@ -473,6 +499,49 @@ class ToolCallCard(Vertical):
         expanded = not self.has_class("expanded")
         self.set_class(expanded, "expanded")
         event.button.label = "Hide" if expanded else "Details"
+
+    def _refresh_diff(self) -> None:
+        self.set_class(self.mutation is not None, "has-diff")
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one(".tool-diff-content", Static).update(self._diff_text())
+        except NoMatches:
+            return
+
+    def _diff_text(self) -> Text:
+        text = Text()
+        diff = self.mutation
+        if diff is None:
+            return text
+
+        for hunk_index, hunk in enumerate(diff.hunks):
+            if hunk_index:
+                text.append("\n")
+            text.append(f"{hunk.header}\n", style=_DIFF_HEADER_STYLE)
+            for line in hunk.lines:
+                number = (
+                    line.before_number
+                    if line.kind == "removed"
+                    else line.after_number
+                )
+                label = "    " if number is None else f"{number:>4}"
+                text.append(
+                    f"{DIFF_LINE_PREFIXES[line.kind]} {label}  {line.text}\n",
+                    style=_DIFF_LINE_STYLES[line.kind],
+                )
+
+        if diff.newline_changed:
+            text.append(
+                "\\ trailing newline changed\n",
+                style=_DIFF_HEADER_STYLE,
+            )
+        if diff.truncated:
+            text.append(
+                f"… diff truncated, {diff.summary}\n",
+                style=_DIFF_TRUNCATION_STYLE,
+            )
+        return text
 
     def _refresh_summary(self) -> None:
         if not self.is_mounted:

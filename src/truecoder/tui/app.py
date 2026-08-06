@@ -557,6 +557,7 @@ class TrueCoderApp(App[None]):
                 allowed_approval_scopes=tuple(
                     scope.value for scope in request.allowed_scopes
                 ),
+                mutation=request.mutation,
             )
             card.approval_details = self._approval_detail_rows(request)
             self._tool_cards[request.call_id] = card
@@ -575,6 +576,7 @@ class TrueCoderApp(App[None]):
                     scope.value for scope in request.allowed_scopes
                 ),
                 approval_details=self._approval_detail_rows(request),
+                mutation=request.mutation,
             )
 
         self._attach_execution_approval(request)

@@ -734,6 +734,33 @@ Screen.-narrow.empty-chat #launcher-tip {
     margin-top: 2;
 }
 
+/* Reviewable file mutation */
+.tool-diff {
+    display: none;
+    width: 100%;
+    height: auto;
+    max-height: 22;
+    margin-top: 1;
+    padding: 0 1;
+    background: #0f0f0f;
+    border-left: solid $tc-border-strong;
+    scrollbar-size-vertical: 1;
+}
+
+ToolCallCard.state-awaiting-approval.has-diff .tool-diff {
+    display: block;
+}
+
+.tool-diff-content {
+    width: auto;
+    height: auto;
+}
+
+Screen.-narrow .tool-diff {
+    max-height: 14;
+    padding: 0;
+}
+
 /* Task plan */
 PlanCard {
     width: 100%;
