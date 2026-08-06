@@ -713,6 +713,14 @@ class ExecutionCard(Vertical):
         self._refresh_static(".execution-summary", self._compact_text())
         self._refresh_static(".execution-details-content", self._details_text())
 
+    def set_command(self, command: str) -> None:
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError("command cannot be empty")
+        self.command = command
+        self._refresh_static(".execution-title", self._headline())
+        if not self.compact_rows:
+            self._refresh_static(".execution-summary", self.command)
+
     def apply_stage(self, stage: str, message: str | None = None) -> None:
         presentation = stage_presentation(stage)  # type: ignore[arg-type]
         self.stage = stage

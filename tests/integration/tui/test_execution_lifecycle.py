@@ -99,13 +99,20 @@ def attach_execution(agent: Agent, service: FakeExecutionService) -> None:
     agent._execution_initialized = True
 
 
-def stage(execution_id: str, name: str, sequence: int = 0) -> ExecutionStageMessage:
+def stage(
+    execution_id: str,
+    name: str,
+    sequence: int = 0,
+    *,
+    details: tuple[tuple[str, str], ...] = (),
+) -> ExecutionStageMessage:
     return ExecutionStageMessage(
         ExecutionLifecycleEvent(
             execution_id=execution_id,
             stage=name,  # type: ignore[arg-type]
             occurred_at_utc=datetime.now(UTC),
             sequence=sequence,
+            details=details,
         )
     )
 
@@ -129,6 +136,21 @@ def approval_request(
 
 
 class ExecutionCardLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_requested_command_replaces_the_generic_card_title(self):
+        app = TrueCoderApp(make_agent())
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.post_message(
+                stage(
+                    "exec-1",
+                    "requested",
+                    details=(("command", "pytest -q"),),
+                )
+            )
+            await pilot.pause()
+
+            self.assertEqual(app.query_one(ExecutionCard).command, "pytest -q")
+
     async def test_a_card_appears_and_evolves_from_typed_stages(self):
         app = TrueCoderApp(make_agent())
 

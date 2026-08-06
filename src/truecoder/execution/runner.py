@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from typing import Final, Protocol, TypeAlias, runtime_checkable
@@ -185,7 +186,10 @@ class ExecutionRunner:
         publisher = self._publisher(context)
         state = LifecycleState(context.execution_id)
         try:
-            await publisher.publish("requested")
+            await publisher.publish(
+                "requested",
+                details=_request_event_details(prepared.request),
+            )
             return await self._run(
                 prepared,
                 decision,
@@ -209,7 +213,10 @@ class ExecutionRunner:
         publisher = self._publisher(context)
         state = LifecycleState(context.execution_id)
         try:
-            await publisher.publish("requested")
+            await publisher.publish(
+                "requested",
+                details=_request_event_details(request),
+            )
             handle = await self._admit(request, context)
             state.transition(RunState.POLICY_EVALUATED)
             await publisher.publish("policy_evaluated")
@@ -228,7 +235,10 @@ class ExecutionRunner:
         publisher = self._publisher(context)
         state = LifecycleState(context.execution_id)
         try:
-            await publisher.publish("requested")
+            await publisher.publish(
+                "requested",
+                details=_request_event_details(request),
+            )
             handle = await self._admit(request, context)
             state.transition(RunState.POLICY_EVALUATED)
             await publisher.publish("policy_evaluated")
@@ -1151,6 +1161,18 @@ def _public_failure_detail(code: str, error: BaseException) -> str:
     elif isinstance(error, ExecutionInfrastructureError):
         message = messages.get(code, message)
     return _bounded_diagnostic(code, message)
+
+
+def _request_event_details(
+    request: ExecutionRequest,
+) -> tuple[tuple[str, str], ...]:
+    if request.mode == "shell":
+        command = request.script or ""
+    else:
+        command = shlex.join(request.argv or ())
+    if len(command) > 500:
+        command = f"{command[:499]}…"
+    return (("command", command),)
 
 
 def _bounded_diagnostic(code: str, message: str | None) -> str:

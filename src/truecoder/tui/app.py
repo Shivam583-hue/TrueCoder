@@ -273,7 +273,11 @@ class TrueCoderApp(App[None]):
     @on(ExecutionStageMessage)
     async def advance_execution_card(self, message: ExecutionStageMessage) -> None:
         event = message.event
-        card = await self._execution_card(event.execution_id)
+        details = dict(event.details)
+        card = await self._execution_card(
+            event.execution_id,
+            command=details.get("command"),
+        )
         if card is None:
             return
         card.apply_stage(event.stage, event.message)
@@ -311,14 +315,21 @@ class TrueCoderApp(App[None]):
         except Exception as error:  # noqa: BLE001 - cancellation is a request
             self.notify(f"Cancellation failed: {error}", severity="warning")
 
-    async def _execution_card(self, execution_id: str) -> ExecutionCard | None:
+    async def _execution_card(
+        self,
+        execution_id: str,
+        *,
+        command: str | None = None,
+    ) -> ExecutionCard | None:
         card = self._execution_cards.get(execution_id)
         if card is not None:
+            if command:
+                card.set_command(command)
             return card
         if not self.is_mounted:
             return None
 
-        card = ExecutionCard(execution_id, "shell command")
+        card = ExecutionCard(execution_id, command or "shell command")
         self._execution_cards[execution_id] = card
         transcript = self.query_one("#transcript", VerticalScroll)
         before = (
@@ -600,7 +611,7 @@ class TrueCoderApp(App[None]):
         card = self._execution_cards.get(execution.execution_id)
         if card is None:
             return
-        card.command = execution.command_display
+        card.set_command(execution.command_display)
         card.call_id = request.call_id
         card.set_approval(
             compact_approval_rows(
