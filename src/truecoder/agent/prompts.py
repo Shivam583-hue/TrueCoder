@@ -21,6 +21,18 @@ not as proof that the shell tool itself failed.
 """
 
 
+PLAN_TOOL_GUIDANCE = """\
+The update_plan tool records a short checklist for the task in progress. Use it
+when the work needs three or more distinct steps, or whenever the user asks for a
+plan. Skip it for single-step requests, where a one-item plan is noise. Send the
+complete ordered list of steps on every call, because each call replaces the
+previous plan. Keep exactly one step marked in_progress, and update the plan as
+soon as a step finishes rather than batching the updates at the end. The current
+plan is supplied back to you before every reply, so rely on that copy instead of
+searching the conversation for it.
+"""
+
+
 def build_system_prompt(project_instructions: str = "") -> str:
     """Combine the base prompt with project instructions loaded at startup."""
     if not isinstance(project_instructions, str):
@@ -39,13 +51,21 @@ def build_system_prompt(project_instructions: str = "") -> str:
     )
 
 
-def add_shell_tool_guidance(system_prompt: str) -> str:
+def _append_guidance(system_prompt: str, guidance: str) -> str:
     if not isinstance(system_prompt, str):
         raise TypeError("system_prompt must be a string")
     prompt = system_prompt.strip()
     if not prompt:
         raise ValueError("system_prompt cannot be empty")
-    guidance = SHELL_TOOL_GUIDANCE.strip()
-    if guidance in prompt:
+    addition = guidance.strip()
+    if addition in prompt:
         return prompt
-    return f"{prompt}\n\n{guidance}"
+    return f"{prompt}\n\n{addition}"
+
+
+def add_shell_tool_guidance(system_prompt: str) -> str:
+    return _append_guidance(system_prompt, SHELL_TOOL_GUIDANCE)
+
+
+def add_plan_tool_guidance(system_prompt: str) -> str:
+    return _append_guidance(system_prompt, PLAN_TOOL_GUIDANCE)

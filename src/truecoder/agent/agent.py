@@ -33,6 +33,7 @@ from truecoder.execution.cancellation import CancellationSource
 from truecoder.execution.context import ExecutionContextFactory, workspace_id_for
 from truecoder.execution.events import ExecutionEventSink
 from truecoder.execution.runner import PreviewSink
+from truecoder.planning import PlanStore
 from truecoder.session import (
     SessionManager,
     SQLiteSessionStore,
@@ -52,6 +53,7 @@ from truecoder.tools.builtin import (
     ReadFileTool,
     ShellDefaults,
     ShellTool,
+    UpdatePlanTool,
     WriteFileTool,
 )
 from truecoder.tools.registry import ToolRegistry
@@ -78,6 +80,7 @@ class Agent:
         project_root: Path | None = None,
         execution_context_factory: ExecutionContextFactory | None = None,
         execution_bootstrap_config: ExecutionBootstrapConfig | None = None,
+        plan_store: PlanStore | None = None,
     ) -> None:
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
@@ -106,6 +109,8 @@ class Agent:
             raise TypeError(
                 "execution_bootstrap_config must be an ExecutionBootstrapConfig."
             )
+        if plan_store is not None and not isinstance(plan_store, PlanStore):
+            raise TypeError("plan_store must be a PlanStore.")
 
         root = project_root or Path.cwd()
         try:
@@ -127,6 +132,12 @@ class Agent:
         )
         self.tool_executor = ToolExecutor(self.tool_registry)
         self.max_iterations = max_iterations
+        self.plan_store = plan_store
+        if plan_store is not None:
+            if "update_plan" not in self.tool_registry:
+                self.tool_registry.register(UpdatePlanTool(plan_store))
+            self.context_builder.attach_plan_store(plan_store)
+            self.context_builder.enable_plan_tool()
         self._execution_context_factory = (
             execution_context_factory or ExecutionContextFactory()
         )
@@ -448,6 +459,7 @@ def run() -> None:
         project_root=project_root,
         launch_directory=launch_directory,
     )
+    plan_store = PlanStore()
     context_builder = ContextBuilder.from_environment(
         project_instructions=project_instructions,
     )
@@ -466,6 +478,7 @@ def run() -> None:
         tool_registry=tool_registry,
         project_root=project_root,
         execution_bootstrap_config=load_execution_config(),
+        plan_store=plan_store,
     )
     session_store = SQLiteSessionStore(default_session_database_path())
     session_manager = SessionManager(session_store, state, project_root)

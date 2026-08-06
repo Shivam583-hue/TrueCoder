@@ -7,10 +7,16 @@ from dotenv import load_dotenv
 
 from truecoder.agent.messages import (
     ModelMessage,
+    SystemMessage,
     copy_messages,
     create_system_message,
 )
-from truecoder.agent.prompts import add_shell_tool_guidance, build_system_prompt
+from truecoder.agent.prompts import (
+    add_plan_tool_guidance,
+    add_shell_tool_guidance,
+    build_system_prompt,
+)
+from truecoder.planning import PlanStore
 
 if TYPE_CHECKING:
     from truecoder.agent.state import AgentState
@@ -99,6 +105,7 @@ class ContextBuilder:
         system_prompt: str,
         max_input_tokens: int,
         token_counter: TokenCounter,
+        plan_store: PlanStore | None = None,
     ) -> None:
         if not isinstance(system_prompt, str) or not system_prompt.strip():
             raise ValueError("The system prompt cannot be empty.")
@@ -112,15 +119,20 @@ class ContextBuilder:
         if token_counter is None:
             raise ValueError("A token counter is required.")
 
+        if plan_store is not None and not isinstance(plan_store, PlanStore):
+            raise TypeError("plan_store must be a PlanStore.")
+
         self.system_prompt = system_prompt.strip()
         self.max_input_tokens = max_input_tokens
         self.token_counter = token_counter
+        self.plan_store = plan_store
 
     @classmethod
     def from_environment(
         cls,
         *,
         project_instructions: str = "",
+        plan_store: PlanStore | None = None,
     ) -> "ContextBuilder":
         load_dotenv()
 
@@ -141,6 +153,7 @@ class ContextBuilder:
             system_prompt=build_system_prompt(project_instructions),
             max_input_tokens=max_input_tokens,
             token_counter=TiktokenTokenCounter(model.strip()),
+            plan_store=plan_store,
         )
 
     def build(self, state: "AgentState") -> list[ModelMessage]:
@@ -157,9 +170,12 @@ class ContextBuilder:
             raise RuntimeError("An active turn must contain pending messages.")
 
         system_message = create_system_message(self.system_prompt)
+        plan_message = self.plan_message()
+        plan_tail: list[ModelMessage] = [] if plan_message is None else [plan_message]
         required_messages: list[ModelMessage] = [
             system_message,
             *pending_messages,
+            *plan_tail,
         ]
         context_token_count = sum(
             self.token_counter.count_message(message)
@@ -194,8 +210,27 @@ class ContextBuilder:
                 system_message,
                 *selected_history,
                 *pending_messages,
+                *plan_tail,
             ]
         )
 
+    def plan_message(self) -> SystemMessage | None:
+        if self.plan_store is None:
+            return None
+
+        plan = self.plan_store.current
+        if plan is None:
+            return None
+
+        return create_system_message(plan.render())
+
+    def attach_plan_store(self, plan_store: PlanStore) -> None:
+        if not isinstance(plan_store, PlanStore):
+            raise TypeError("plan_store must be a PlanStore.")
+        self.plan_store = plan_store
+
     def enable_shell_tool(self) -> None:
         self.system_prompt = add_shell_tool_guidance(self.system_prompt)
+
+    def enable_plan_tool(self) -> None:
+        self.system_prompt = add_plan_tool_guidance(self.system_prompt)

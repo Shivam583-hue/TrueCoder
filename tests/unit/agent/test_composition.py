@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from truecoder.agent.agent import run
+from truecoder.planning import PlanStore
 from truecoder.tools.builtin import (
     EditFileTool,
     GlobTool,
@@ -94,6 +95,7 @@ class CompositionRootTests(unittest.TestCase):
         self.assertTrue(
             agent_type.call_args.kwargs["execution_bootstrap_config"].enabled
         )
+        self.assertIsInstance(agent_type.call_args.kwargs["plan_store"], PlanStore)
         state = agent_type.call_args.kwargs["state"]
         resolve_database.assert_called_once_with()
         store_type.assert_called_once_with(database_path)
