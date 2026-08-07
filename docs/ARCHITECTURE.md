@@ -139,6 +139,40 @@ The detailed turn lifecycle is:
 8. The complete pending message group is committed as one turn.
 9. Active-turn state is cleared.
 
+## Loop and stall detection
+
+An iteration limit is a circuit breaker, not detection. It notices nothing, and
+by the time it fires the model has been called `max_iterations` times, every
+repeated tool has run, and the turn ends with an error, so the user pays for the
+loop and receives nothing.
+
+Two existing mechanisms hide a loop rather than reveal it. Reused tool-call
+identifiers are rejected, but that is protocol hygiene against a misbehaving
+provider: two calls with different identifiers and identical arguments are
+indistinguishable to it. Approval grants are matched by fingerprint, so once the
+first repeat is approved for the session, every later repeat is approved
+silently. The mechanism that makes ordinary work pleasant is the one that makes
+a loop invisible.
+
+Detection compares what actually happened. Each iteration is reduced to a
+signature: the tool name and canonical arguments of every call, paired with a
+digest of every result. Canonical arguments ignore call identifiers, key order,
+and whitespace, so only a genuinely different request counts as different work.
+
+Identical calls returning identical results stall after three iterations,
+because a third identical result cannot tell the model anything the second did
+not. Identical calls returning changing results are tolerated for twice as long,
+since polling a build or a test run is legitimate work that happens to repeat.
+The detector errs toward letting real work continue: interrupting genuine
+progress is worse than paying for a few extra turns.
+
+The response is to withdraw the tools rather than abort. The next request is
+sent with no tool schema and a notice explaining what repeated, so the model
+cannot loop and must answer with what it has. A model that returns tool calls
+anyway is stopped rather than obeyed, because executing calls that were never
+offered is exactly the behaviour being contained. Either way the repeated calls
+stay in history, so the transcript still shows what happened.
+
 ## Sessions
 
 Sessions persist completed turns, not flattened messages or UI widgets.
@@ -1188,6 +1222,10 @@ Keep these invariants stable as the codebase grows:
 * a tool result is bounded against the conversation, not only against itself
 * shortening changes what is sent and never what is stored
 * a user's own words are never truncated to make room
+* repetition is detected by what was called and what came back, never by call id
+* a stalled turn withdraws tools instead of discarding the turn
+* tool calls that were never offered are never executed
+* legitimate repetition is given more room than identical repetition
 * evicted turns are summarised rather than silently forgotten
 * a failed summary loses no history
 * a summary is labelled as history and never as instruction

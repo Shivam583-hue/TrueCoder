@@ -45,6 +45,7 @@ Coming soon...
 - **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
 - **Twelve approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, and `get_diagnostics`, each with its own validated schema and security boundary.
 - **A context budget that is actually enforced** - a single shell or fetch result can exceed the whole token budget, so oversized tool results are shortened where the request is assembled, into a valid envelope that says how much was dropped. The stored turn, the session record, and the audit keep the complete result.
+- **Loop detection, not just a cap** - identical tool calls returning identical results are recognised as a stall, the tools are withdrawn so the model must answer with what it has, and a model that ignores the withdrawal is stopped rather than allowed to keep spending. A stuck agent that previously burned 25 model requests and then failed the turn now costs 4 and still answers.
 - **Rolling compaction instead of silent forgetting** - when history outgrows the budget, the oldest turns are summarised into a running summary rather than dropped, and the summary is labelled as history so it is never mistaken for instructions.
 - **Language-server code intelligence** - `find_symbol`, `goto_definition`, `find_references`, and `get_diagnostics` resolve names the way a compiler does instead of by text match, over a real LSP session with server discovery, stdio JSON-RPC framing, document synchronisation, and lifecycle management. This first version is strictly read-only.
 - **A task planner that survives context eviction** - `update_plan` keeps an ordered checklist with exactly one step in progress, and the current plan is reprojected into every model request instead of being left in history to roll off the token budget.
@@ -106,6 +107,7 @@ TrueCoder/
 │   │   ├── agent.py                   # Agent loop, tool invocation contexts, and app launch
 │   │   ├── context.py                 # Turn-based context selection and token budgeting
 │   │   ├── budget.py                  # Shortening oversized tool results to fit
+│   │   ├── progress.py                # Repeated-call and no-progress detection
 │   │   ├── compaction.py              # Rolling summary of evicted turns
 │   │   ├── state.py                   # Active turn and completed history
 │   │   ├── messages.py                # Durable model message types
@@ -277,6 +279,7 @@ TrueCoder/
 | Plan shape or invariants              | `src/truecoder/planning`                          | `builtin/plan.py`, `PlanCard`, plan projection in `context.py`         |
 | Code intelligence                     | `src/truecoder/lsp`                               | `builtin/code_intelligence.py` and the fake server in `tests/helpers`  |
 | Context budgeting                     | `src/truecoder/agent/budget.py`                   | `context.py` assembly and `compaction.py` for long histories           |
+| Loop and stall behaviour              | `src/truecoder/agent/progress.py`                 | `_agentic_loop` in `agent.py` and the loop-detection tests             |
 | Outbound network rules                | `src/truecoder/web/policy.py`                     | `fetch.py` redirect handling and the SSRF refusal tests                |
 | Diff rendering or bounds              | `src/truecoder/mutation`                          | `ToolCallCard` diff view, `styles.tcss`, preview tests                 |
 | Mutation evidence                     | `src/truecoder/tools/mutation_audit.py`           | `write_file.py`, `edit_file.py`, and the schema immutability triggers  |
@@ -301,11 +304,11 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **31,569** across 120 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,443 lines**, 62% of src | The execution control plane, audit store, and platform backends. Tools are 3,808 lines, the TUI is 2,974, the agent is 2,032, LSP is 1,270, web is 653, sessions are 518, the client is 440, mutation is 281, and planning is 146. |
-| Test lines                 |                      **30,161** across 149 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.96 to 1.                                       |
-| Automated scenarios        |                      **1,477**, locally clean   | 1,312 unit, 102 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,464 pass and 13 Windows-only scenarios skip.                                 |
-| Unit suite                 |                  **1,312 passing in 5.7 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **31,740** across 121 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,443 lines**, 62% of src | The execution control plane, audit store, and platform backends. Tools are 3,808 lines, the TUI is 2,974, the agent is 2,196, LSP is 1,270, web is 653, sessions are 518, the client is 440, mutation is 281, and planning is 146. |
+| Test lines                 |                      **30,516** across 151 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.96 to 1.                                       |
+| Automated scenarios        |                      **1,507**, locally clean   | 1,342 unit, 102 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,494 pass and 13 Windows-only scenarios skip.                                 |
+| Unit suite                 |                  **1,342 passing in 5.9 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
 | Lint                       |                          **ruff check clean** | ruff 0.16.0 over `src`, `tests`, and `container`.                                                                                                            |
@@ -722,6 +725,7 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **Mutation evidence is best effort, unlike execution evidence.** An execution withholds its result when audit finalization fails, but a file replacement is already durable by the time it could be recorded, so failing the call would report an outcome that did not happen. A recording failure therefore increments a counter instead of failing the tool.
 - **Code intelligence needs a language server installed.** `find_symbol` and friends refuse with `no_server` when nothing on `PATH` handles the file's language. TrueCoder discovers pyright, pylsp, jedi, typescript-language-server, rust-analyzer, gopls, and clangd; it never installs one for you.
 - **Code intelligence is read-only in this version.** Rename, code actions, formatting, and workspace edits are deliberately absent, so the language server can never change a file behind the mutation review path.
+- **Loop detection compares calls, not intent.** A model that varies its arguments trivially on every attempt keeps its tools until the `max_iterations` cap. The detector deliberately errs toward letting real work continue, because interrupting genuine progress is worse than paying for a few extra turns.
 - **Compaction is not persisted.** A rolling summary lives in memory for the running session. Resuming a stored session replays its turns and re-compacts from scratch rather than restoring the previous summary.
 - **`web_fetch` reaches only public addresses, on purpose.** Fetching `http://localhost:3000` from your own dev server is refused, because the same rule is what stops a redirect chain reaching cloud metadata. There is no opt-out; use `shell` with `curl` when you genuinely mean to reach a local service.
 - **Fetched pages are still model input.** The untrusted-content notice and prompt guidance reduce the risk that a page instructs the agent, they do not eliminate it. `web_fetch` requires approval for that reason, so you see the URL before it is read.
