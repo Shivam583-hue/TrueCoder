@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from truecoder.agent.agent import run
+from truecoder.checkpoint import CheckpointService
 from truecoder.planning import PlanStore
 from truecoder.tools.builtin import (
     EditFileTool,
@@ -106,6 +107,9 @@ class CompositionRootTests(unittest.TestCase):
             agent_type.call_args.kwargs["execution_bootstrap_config"].enabled
         )
         self.assertIsInstance(agent_type.call_args.kwargs["plan_store"], PlanStore)
+        checkpoints = agent_type.call_args.kwargs["checkpoints"]
+        self.assertIsInstance(checkpoints, CheckpointService)
+        self.assertEqual(checkpoints.root, project_root)
         self.assertIsInstance(write_file_tool.mutation_audit, MutationAudit)
         self.assertIs(edit_file_tool.mutation_audit, write_file_tool.mutation_audit)
         state = agent_type.call_args.kwargs["state"]

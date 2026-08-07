@@ -24,6 +24,7 @@ from truecoder.agent.project_instructions import (
     load_project_instructions,
 )
 from truecoder.agent.state import AgentState
+from truecoder.checkpoint import CheckpointService, GitWorkspace
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType, TokenUsage
 from truecoder.execution.bootstrap import (
@@ -98,6 +99,7 @@ class Agent:
         execution_bootstrap_config: ExecutionBootstrapConfig | None = None,
         plan_store: PlanStore | None = None,
         summarizer: TurnSummarizer | None = None,
+        checkpoints: CheckpointService | None = None,
     ) -> None:
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
@@ -130,6 +132,8 @@ class Agent:
             raise TypeError("plan_store must be a PlanStore.")
         if summarizer is not None and not isinstance(summarizer, TurnSummarizer):
             raise TypeError("summarizer must be a TurnSummarizer.")
+        if checkpoints is not None and not isinstance(checkpoints, CheckpointService):
+            raise TypeError("checkpoints must be a CheckpointService.")
 
         root = project_root or Path.cwd()
         try:
@@ -153,7 +157,9 @@ class Agent:
         self.max_iterations = max_iterations
         self.plan_store = plan_store
         self.summarizer = summarizer
+        self.checkpoints = checkpoints
         self.close_failures = 0
+        self.checkpoint_failures = 0
         if plan_store is not None:
             if "update_plan" not in self.tool_registry:
                 self.tool_registry.register(UpdatePlanTool(plan_store))
@@ -273,6 +279,7 @@ class Agent:
             yield AgentEvent.agent_error("The prompt cannot be empty.")
             return
         await self.initialize_execution()
+        await self._capture_checkpoint(prompt)
         await self._compact_if_needed()
         try:
             self.state.begin_turn(prompt)
@@ -458,6 +465,20 @@ class Agent:
                     content,
                 )
 
+    async def _capture_checkpoint(self, prompt: str) -> None:
+        if self.checkpoints is None:
+            return
+
+        try:
+            await self.checkpoints.capture(
+                prompt,
+                session_id=self._approval_identity().session_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a checkpoint never blocks a turn
+            self.checkpoint_failures += 1
+
     async def _compact_if_needed(self) -> None:
         if self.summarizer is None:
             return
@@ -564,6 +585,7 @@ def run() -> None:
         launch_directory=launch_directory,
     )
     plan_store = PlanStore()
+    checkpoints = CheckpointService(GitWorkspace(project_root))
     context_builder = ContextBuilder.from_environment(
         project_instructions=project_instructions,
     )
@@ -588,6 +610,7 @@ def run() -> None:
         project_root=project_root,
         execution_bootstrap_config=load_execution_config(),
         plan_store=plan_store,
+        checkpoints=checkpoints,
     )
     agent.summarizer = TurnSummarizer(agent.llm_client)
     session_store = SQLiteSessionStore(default_session_database_path())
