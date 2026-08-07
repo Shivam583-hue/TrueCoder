@@ -29,6 +29,15 @@ _REQUIREMENT_RANK: Final = {
     "enforced": 2,
 }
 
+CRITICAL_ISOLATION_REASON: Final = PolicyReason(
+    code="critical-requires-isolation",
+    message=(
+        "A critical command that policy still permits may not run against "
+        "the host, so an isolated backend is required."
+    ),
+    rule_id="policy.001.critical-requires-isolation",
+)
+
 _REQUIREMENT_FIELDS: Final = (
     "filesystem_isolation",
     "network_isolation",
@@ -248,6 +257,17 @@ def evaluate_policy(
     )
     denied = any(finding.deny for finding in findings)
     reasons = _unique_reasons(findings)
+
+    if not denied and risk is RiskLevel.CRITICAL:
+        requirements = merge_requirements(
+            requirements,
+            CapabilityRequirements(
+                filesystem_isolation=config.minimum_isolation,
+                network_isolation=config.minimum_isolation,
+            ),
+        )
+        reasons = (*reasons, CRITICAL_ISOLATION_REASON)
+
     return PolicyDecision(
         allowed=not denied,
         risk=risk,
