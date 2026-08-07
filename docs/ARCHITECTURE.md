@@ -19,6 +19,8 @@ Agent
      │   ├─ Mutation preview
      │   └─ Mutation audit store
      ├─ Plan adapter
+     ├─ Web fetch adapter
+     │   └─ URL policy, pinned client, extraction
      └─ Shell adapter
 
 Shell adapter
@@ -208,6 +210,47 @@ are skipped during a recursive search. Its pattern is a Python regular
 expression, so callers can use anchors, groups, and inline flags such as
 `(?i)`. `glob` is for path-name patterns instead: `*` stays within one directory
 level, while `**` may cross levels.
+
+## Outbound web access
+
+`web_fetch` is the sanctioned network egress path. It matters that it exists
+separately from `shell`: the certified sandbox denies network entirely, so a
+command cannot reach the internet from there, and smuggling requests through the
+shell would put egress outside every control described here.
+
+The address rule is an allowlist, not a blocklist. Only publicly routable
+addresses are permitted, which is the same posture as everywhere else in this
+system: unknown is refused rather than assumed safe. A blocklist of the usual
+private ranges misses carrier-grade NAT, which Python classifies as neither
+private nor global, and it misses IPv4 addresses smuggled inside IPv6 through
+mapped and 6to4 forms. Requiring `is_global`, unwrapping embedded IPv4, and
+naming the classic ranges explicitly covers all three, and the explicit list
+keeps the boundary stable when the standard library reclassifies a range.
+
+A URL is refused before any connection when it is not http or https, carries
+credentials, or has no host. The host is then resolved and **every** returned
+record is validated, not just the one that will be used, so a name that answers
+with one public and one private address is refused outright. The connection is
+then pinned to a validated address with the original host in the `Host` header
+and in TLS SNI, so a name that resolves differently a moment later cannot
+redirect the request into the internal network.
+
+Redirects are followed manually rather than by the HTTP client, because each hop
+is a fresh target that has to clear the same checks. A public page redirecting
+to cloud metadata is the standard way this boundary is defeated, and it fails
+here at the second hop rather than the first.
+
+Responses are bounded twice: once on the wire, where reading stops at the byte
+limit rather than trusting `Content-Length`, and once on the extracted text.
+Only text-like content types are accepted, so the model is never handed a
+decoded binary. Preformatted blocks keep their whitespace, because collapsing it
+would destroy the code samples that make documentation worth fetching.
+
+Retrieved text is untrusted third-party input. It is returned with an explicit
+notice and the prompt guidance says to treat it as data and never as
+instructions. That is mitigation, not a guarantee: a model can still be
+influenced by what it reads, which is the reason `web_fetch` requires approval
+and the reason its content is fenced rather than blended into the transcript.
 
 ## Reviewable file mutations
 
@@ -1091,6 +1134,12 @@ Keep these invariants stable as the codebase grows:
 * the plan is scratch: it never persists across a session switch or restart
 * transcript order follows the agent event stream, not a queued message
 * tool calls always have matching results
+* only publicly routable addresses are reachable, by allowlist not blocklist
+* every resolved address is validated, not only the one that gets used
+* a connection is pinned to an address that was validated
+* every redirect hop clears the same checks as the original URL
+* fetched bytes and extracted text are bounded independently
+* retrieved content is returned as data and never as instructions
 * a file change is reviewed as a diff, never as raw serialized arguments
 * a mutation preview is read-only and never blocks or alters approval
 * the approval fingerprint covers the effect, never the rendered preview

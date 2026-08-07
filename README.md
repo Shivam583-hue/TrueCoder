@@ -9,7 +9,7 @@
 [![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](#testing)
 
 TrueCoder is a Python agent runtime that reads, searches, edits, and runs code inside one project.
-It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, seven approval-gated tools, a task planner, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
+It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, eight approval-gated tools, a task planner, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
 Shell execution passes through policy evaluation, capability-based backend selection, an approval fingerprint, a durable audit admission, a resource launch gate, arbitrated terminal outcomes, and one immutable terminal audit record.
 The certified sandbox profile runs commands in a digest-pinned, non-root, read-only, network-denied, capability-dropped Docker container that is proven against real Docker rather than assumed safe.
 
@@ -43,8 +43,10 @@ Coming soon...
 - **Terminal-native agent** - a Textual TUI with streaming responses, live tool cards, inline approvals, cancellation, and token accounting.
 - **Turn-based conversation model** - only complete, valid turns enter history, so a tool call never survives without its result.
 - **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
-- **Seven approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, and `shell`, each with its own validated schema and security boundary.
+- **Eight approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, and `web_fetch`, each with its own validated schema and security boundary.
 - **A task planner that survives context eviction** - `update_plan` keeps an ordered checklist with exactly one step in progress, and the current plan is reprojected into every model request instead of being left in history to roll off the token budget.
+- **SSRF-resistant web access** - `web_fetch` allows only publicly routable addresses rather than blocking a list of bad ones, validates every DNS record before connecting, pins the connection to a validated address, and re-validates each redirect hop, so loopback, private ranges, and cloud metadata are refused by construction.
+- **Fetched text is data, never instructions** - a page arrives with an explicit untrusted-content notice and prompt guidance that forbids following instructions found inside it.
 - **Reviewable file mutations** - `write_file` and `edit_file` render a real unified diff in the approval card, with hunk headers, line numbers, and colored gutters, so a code change is reviewed as a diff rather than as escaped JSON arguments.
 - **Durable mutation evidence** - every applied write and edit is recorded in its own immutable SQLite store with SHA-256 digests of the file before and after, byte counts, line deltas, and the originating call, turn, session, and workspace.
 - **Atomic filesystem edits** - `write_file` and `edit_file` write beside the destination and install with `os.replace()`, so a reader sees the old complete file or the new complete file and never a partial one.
@@ -111,6 +113,11 @@ TrueCoder/
 │   │   ├── models.py                  # Plan and step invariants, bounds, and rendering
 │   │   └── store.py                   # The single in-memory plan for the active task
 │   │
+│   ├── web/                           # Outbound network boundary
+│   │   ├── policy.py                  # Scheme, host, and public-address rules
+│   │   ├── fetch.py                   # Pinned, redirect-checked, bounded client
+│   │   └── extract.py                 # Markup to readable text, pre-blocks kept
+│   │
 │   ├── mutation/                      # Dependency-free file-change domain
 │   │   ├── models.py                  # Hunks, lines, and bounded diff limits
 │   │   └── diff.py                    # Pure unified diff with context and truncation
@@ -135,6 +142,7 @@ TrueCoder/
 │   │       ├── glob.py                # Rooted * and recursive ** path patterns
 │   │       ├── grep.py                # Regex search with 200 matches and 20,000 scanned
 │   │       ├── plan.py                # Whole-list plan replacement, no approval needed
+│   │       ├── web_fetch.py           # One public page as bounded readable text
 │   │       └── shell.py               # Model boundary for execution, not an executor
 │   │
 │   ├── execution/                     # Execution control plane
@@ -219,6 +227,7 @@ TrueCoder/
     │   ├── context/                   # Turn selection, token budgeting, plan projection
     │   ├── planning/                  # Plan and step invariants
     │   ├── mutation/                  # Diff hunks, bounds, and truncation
+    │   ├── web/                       # URL policy, SSRF refusals, extraction
     │   ├── session/                   # Durable turn codec
     │   ├── tools/                     # Base, executor, registry, and every builtin tool
     │   ├── tui/                       # Presentation mapping, cards, and audit summaries
@@ -251,6 +260,7 @@ TrueCoder/
 | Provider behavior                     | `src/truecoder/client`                            | `response.py` event translation and client unit tests                  |
 | A new tool                            | `src/truecoder/tools/builtin`                     | `builtin/__init__.py`, registration in `agent.py`, and tool tests      |
 | Plan shape or invariants              | `src/truecoder/planning`                          | `builtin/plan.py`, `PlanCard`, plan projection in `context.py`         |
+| Outbound network rules                | `src/truecoder/web/policy.py`                     | `fetch.py` redirect handling and the SSRF refusal tests                |
 | Diff rendering or bounds              | `src/truecoder/mutation`                          | `ToolCallCard` diff view, `styles.tcss`, preview tests                 |
 | Mutation evidence                     | `src/truecoder/tools/mutation_audit.py`           | `write_file.py`, `edit_file.py`, and the schema immutability triggers  |
 | Filesystem safety rules               | `src/truecoder/tools/builtin/filesystem.py`       | Every filesystem tool and its sensitive-path tests                     |
@@ -274,11 +284,11 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **28,795** across 105 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,443 lines**, 68% of src | The execution control plane, audit store, and platform backends. Tools are 3,355 lines, the TUI is 2,979, the agent is 1,644, sessions are 518, the client is 440, mutation is 266, and planning is 146. |
-| Test lines                 |                      **27,116** across 133 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.94 to 1.                                       |
-| Automated scenarios        |                      **1,186**, locally clean   | 1,021 unit, 102 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,173 pass and 13 Windows-only scenarios skip.                                 |
-| Unit suite                 |                  **1,021 passing in 4.9 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **29,589** across 110 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,443 lines**, 66% of src | The execution control plane, audit store, and platform backends. Tools are 3,463 lines, the TUI is 2,974, the agent is 1,667, web is 653, sessions are 518, the client is 440, mutation is 281, and planning is 146. |
+| Test lines                 |                      **28,080** across 138 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.95 to 1.                                       |
+| Automated scenarios        |                      **1,289**, locally clean   | 1,124 unit, 102 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,276 pass and 13 Windows-only scenarios skip.                                 |
+| Unit suite                 |                  **1,124 passing in 4.2 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
 | Lint                       |                          **ruff check clean** | ruff 0.16.0 over `src`, `tests`, and `container`.                                                                                                            |
@@ -693,6 +703,9 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **Approval grants are in-memory only.** Session and workspace grants live in the running application and do not survive a restart. Rejections are never remembered.
 - **A reused approval grant shows no diff.** Session and workspace grants for `write_file` and `edit_file` skip the approval interaction entirely, so a later call under the same grant applies without a rendered review. The fingerprint still covers the canonical arguments, so an identical fingerprint means an identical change; approve once when you want to see each diff.
 - **Mutation evidence is best effort, unlike execution evidence.** An execution withholds its result when audit finalization fails, but a file replacement is already durable by the time it could be recorded, so failing the call would report an outcome that did not happen. A recording failure therefore increments a counter instead of failing the tool.
+- **`web_fetch` reaches only public addresses, on purpose.** Fetching `http://localhost:3000` from your own dev server is refused, because the same rule is what stops a redirect chain reaching cloud metadata. There is no opt-out; use `shell` with `curl` when you genuinely mean to reach a local service.
+- **Fetched pages are still model input.** The untrusted-content notice and prompt guidance reduce the risk that a page instructs the agent, they do not eliminate it. `web_fetch` requires approval for that reason, so you see the URL before it is read.
+- **`web_fetch` renders no JavaScript.** It returns the server's HTML as text, so single-page applications that assemble their content in the browser come back nearly empty.
 - **`edit_file` matches line endings literally.** `old_text` containing a newline will not match a CRLF file, which mostly affects Windows checkouts. This is existing behavior rather than a diff-rendering problem: the tool reports `text_not_found` instead of editing the wrong thing, and single-line replacements are unaffected.
 - **Mutation evidence has no retention policy yet.** The execution audit compacts expired terminal evidence on startup; the mutation store only grows. Records are small, but nothing prunes them.
 - **The task plan is scratch, not a record.** The plan lives in memory for the active task and is cleared by a new chat or a session switch. Restoring a session brings back its turns but not its plan, and historical `update_plan` calls are deliberately not redrawn as tool cards so the transcript never implies a plan the model no longer has.
