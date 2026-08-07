@@ -12,9 +12,10 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button
-from textual.worker import Worker, WorkerCancelled
+from textual.worker import Worker, WorkerCancelled, WorkerFailed
 
 from truecoder.agent.agent import Agent
 from truecoder.agent.approval import (
@@ -273,7 +274,12 @@ class TrueCoderApp(App[None]):
         worker.cancel()
         try:
             await asyncio.wait_for(worker.wait(), timeout=SHUTDOWN_DRAIN_SECONDS)
-        except (TimeoutError, WorkerCancelled, asyncio.CancelledError):
+        except (
+            TimeoutError,
+            WorkerCancelled,
+            WorkerFailed,
+            asyncio.CancelledError,
+        ):
             return
 
     def _execution_service(self):
@@ -773,7 +779,10 @@ class TrueCoderApp(App[None]):
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
-        self.query_one(Composer).set_busy(busy)
+        try:
+            self.query_one(Composer).set_busy(busy)
+        except NoMatches:
+            return
 
     async def action_new_chat(self) -> None:
         active_worker = self._active_worker
