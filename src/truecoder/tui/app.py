@@ -33,6 +33,10 @@ from truecoder.session import SessionError, SessionManager
 from truecoder.session.models import SessionRecord
 from truecoder.tools.builtin import UpdatePlanTool
 from truecoder.tui.audit_view import AuditViewerScreen, audit_row_from
+from truecoder.tui.checkpoints import (
+    CheckpointBrowserScreen,
+    RestoreCheckpointScreen,
+)
 from truecoder.tui.execution_health import (
     ExecutionHealthScreen,
     health_failure_message,
@@ -145,6 +149,7 @@ class TrueCoderApp(App[None]):
         Binding("ctrl+p", "manage_sessions", "Sessions", show=False, priority=True),
         Binding("ctrl+a", "manage_audit", "Audit", show=False, priority=True),
         Binding("ctrl+e", "execution_health", "Execution", show=False, priority=True),
+        Binding("ctrl+r", "manage_checkpoints", "Checkpoints", show=False, priority=True),
         Binding("escape", "cancel_response", "Stop", show=False),
     ]
 
@@ -848,6 +853,58 @@ class TrueCoderApp(App[None]):
                 )
             )
         )
+
+    async def action_manage_checkpoints(self) -> None:
+        service = self.agent.checkpoints
+        if service is None:
+            self.notify("Checkpoints are not configured.", severity="warning")
+            return
+        if self._busy:
+            self.notify(
+                "Stop the current response before restoring a checkpoint.",
+                severity="warning",
+            )
+            return
+
+        reason = await service.unavailable_reason()
+        checkpoints = () if reason is not None else await service.list()
+        self.push_screen(
+            CheckpointBrowserScreen(checkpoints, unavailable_reason=reason),
+            self._handle_checkpoint_choice,
+        )
+
+    async def _handle_checkpoint_choice(self, checkpoint_id: str | None) -> None:
+        service = self.agent.checkpoints
+        if checkpoint_id is None or service is None:
+            return
+
+        checkpoint = await service.find(checkpoint_id)
+        if checkpoint is None:
+            self.notify("That checkpoint no longer exists.", severity="warning")
+            return
+
+        removals = await service.preview(checkpoint)
+        self.push_screen(
+            RestoreCheckpointScreen(checkpoint, removals),
+            lambda confirmed: self._finish_restore(checkpoint_id, confirmed),
+        )
+
+    def _finish_restore(self, checkpoint_id: str, confirmed: bool | None) -> None:
+        if confirmed:
+            self.run_worker(self._restore_checkpoint(checkpoint_id))
+
+    async def _restore_checkpoint(self, checkpoint_id: str) -> None:
+        service = self.agent.checkpoints
+        if service is None:
+            return
+
+        try:
+            outcome = await service.restore(checkpoint_id)
+        except Exception as error:  # noqa: BLE001 - report a failed restore
+            self.notify(f"Restore failed: {error}", severity="error", timeout=10)
+            return
+
+        self.notify(outcome.summary, timeout=10)
 
     def action_execution_health(self) -> None:
         runtime = self.agent.execution_runtime

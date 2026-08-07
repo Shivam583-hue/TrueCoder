@@ -19,6 +19,8 @@ Screen {
     color: $tc-text;
 }
 
+CheckpointBrowserScreen,
+RestoreCheckpointScreen,
 SessionManagerScreen,
 RenameSessionScreen,
 DeleteSessionScreen,
@@ -759,6 +761,49 @@ ToolCallCard.state-awaiting-approval.has-diff .tool-diff {
 Screen.-narrow .tool-diff {
     max-height: 14;
     padding: 0;
+}
+
+#checkpoint-dialog {
+    width: 74;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $tc-surface;
+    border: solid $tc-border-strong;
+}
+
+#checkpoint-list {
+    height: auto;
+    max-height: 18;
+    margin-top: 1;
+    background: transparent;
+}
+
+#checkpoint-list ListItem {
+    padding: 0 1;
+    background: transparent;
+    color: $tc-text-secondary;
+}
+
+#checkpoint-list ListItem.-highlight {
+    background: $tc-surface-hover;
+    color: $tc-text;
+}
+
+#checkpoint-empty,
+#checkpoint-unavailable {
+    margin-top: 1;
+    color: $tc-text-muted;
+}
+
+#checkpoint-removals {
+    margin-top: 1;
+    color: $tc-red;
+}
+
+#checkpoint-safety {
+    margin-top: 1;
+    color: $tc-text-muted;
 }
 
 /* Task plan */
