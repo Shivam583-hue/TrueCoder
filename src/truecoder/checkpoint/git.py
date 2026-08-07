@@ -11,6 +11,12 @@ from typing import Final
 
 GIT_TIMEOUT: Final = 30.0
 CHECKPOINT_REF_PREFIX: Final = "refs/truecoder/checkpoints"
+VERBATIM_CONTENT: Final = (
+    "-c",
+    "core.autocrlf=false",
+    "-c",
+    "core.eol=lf",
+)
 
 
 class GitUnavailableError(RuntimeError):
@@ -187,7 +193,13 @@ class GitWorkspace:
             environment["GIT_INDEX_FILE"] = index
 
         return await self._execute(
-            (self._executable, "-C", str(self._root), *arguments),
+            (
+                self._executable,
+                *VERBATIM_CONTENT,
+                "-C",
+                str(self._root),
+                *arguments,
+            ),
             environment,
         )
 

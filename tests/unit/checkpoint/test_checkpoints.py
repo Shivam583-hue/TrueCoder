@@ -147,6 +147,28 @@ class GitWorkspaceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("app.py", await workspace.paths_in_tree(tree))
 
+    async def test_a_round_trip_is_byte_exact_under_autocrlf(self):
+        workspace = self._repository()
+        _git(self.root, "config", "core.autocrlf", "true")
+        (self.root / "app.py").write_bytes(b"one\ntwo\n")
+        tree = await workspace.snapshot_tree()
+        (self.root / "app.py").write_bytes(b"the agent changed this\n")
+
+        await workspace.restore_tree(tree)
+
+        self.assertEqual((self.root / "app.py").read_bytes(), b"one\ntwo\n")
+
+    async def test_crlf_content_survives_a_round_trip(self):
+        workspace = self._repository()
+        _git(self.root, "config", "core.autocrlf", "true")
+        (self.root / "app.py").write_bytes(b"one\r\ntwo\r\n")
+        tree = await workspace.snapshot_tree()
+        (self.root / "app.py").write_bytes(b"changed\n")
+
+        await workspace.restore_tree(tree)
+
+        self.assertEqual((self.root / "app.py").read_bytes(), b"one\r\ntwo\r\n")
+
     async def test_restoring_a_tree_returns_the_content(self):
         workspace = self._repository()
         tree = await workspace.snapshot_tree()
