@@ -306,6 +306,15 @@ position relative to the text and tool cards around it.
 
 Approval is an awaited request-response interaction.
 
+A card is moved into its approval state by the approval handler alone, and the
+pending decision is registered before that happens. The agent emits an
+approval-requested event immediately before awaiting the handler, so acting on
+that event as well would arm the buttons while nothing was yet listening, and
+`_resolve_pending_approval` discards a decision that arrives with no pending
+request. The gap is normally sub-millisecond, which is precisely why it should
+not be left to timing: a loaded machine widens it, and the lost click leaves the
+turn waiting on an approval that can never arrive.
+
 The approval service owns reusable grants. The UI is only an injected
 request-response handler: it presents the exact request, returns the selected
 decision and scope, and does not decide whether an earlier grant matches.
@@ -1142,6 +1151,7 @@ Keep these invariants stable as the codebase grows:
 * retained interface output stays bounded as produced output grows
 * the interface can disappear at any lifecycle point without leaking a process
 * an awaited approval is always resolved, including during shutdown
+* approval controls are armed only once the decision has somewhere to go
 * cancellation from the interface addresses one execution id, not the turn
 * a platform reports what it cannot enforce instead of implying a weaker version
 * macOS never applies a per-user process rlimit as a process-tree limit
