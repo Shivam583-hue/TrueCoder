@@ -43,7 +43,7 @@ Coming soon...
 - **Terminal-native agent** - a Textual TUI with streaming responses, live tool cards, inline approvals, cancellation, and token accounting.
 - **Turn-based conversation model** - only complete, valid turns enter history, so a tool call never survives without its result.
 - **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
-- **Fourteen approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, `get_diagnostics`, `remember`, and `forget`, each with its own validated schema and security boundary.
+- **Fourteen approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, `get_diagnostics`, `remember`, and `forget`, each with its own validated schema and security boundary. A tool call the model gets wrong comes back as an error it can read and retry, so a bad argument costs one call rather than the turn.
 - **A context budget that is actually enforced** - a single shell or fetch result can exceed the whole token budget, so oversized tool results are shortened where the request is assembled, into a valid envelope that says how much was dropped. The stored turn, the session record, and the audit keep the complete result.
 - **Memory you can read and delete** - `remember` records a durable fact about the project and `forget` drops one, both approval-gated because they change behaviour in future sessions. Notes are scoped to one workspace, projected into every request, and `ctrl+n` shows exactly what the model is being told.
 - **Hooks that run inside the execution plane** - a versioned `hooks.json` can run your formatter or linter at turn start or after a turn that changed files. Because you wrote the config, a hook is pre-authorised rather than prompting, but it is still bounded, policy-checked, and written to the same durable audit as any other command.
@@ -169,7 +169,7 @@ TrueCoder/
 │   │   ├── mutation_audit.py          # Immutable evidence for every applied change
 │   │   └── builtin/
 │   │       ├── filesystem.py          # Shared sensitive-path and containment policy
-│   │       ├── read_file.py           # Bounded UTF-8 line ranges
+│   │       ├── read_file.py           # Bounded UTF-8 line ranges, 500-line default window
 │   │       ├── write_file.py          # Atomic replacement, 32 KiB cap, diff preview
 │   │       ├── edit_file.py           # Exact-text edits with concurrent-change detection
 │   │       ├── list_dir.py            # Immediate children, 500 results, 5,000 scanned

@@ -354,6 +354,25 @@ The TUI reconstructs transcript widgets from durable model messages. Focus,
 scroll position, expanded tool details, elapsed timing, token usage, and other
 presentation-only state are intentionally not persisted.
 
+## Rendering untrusted text
+
+Textual treats square brackets in widget content as markup tags, so text the
+application did not author cannot be rendered with markup enabled.
+A session title, a tool argument, a regular expression, and a validation error
+all routinely contain brackets, and a single unbalanced one raises `MarkupError`
+from inside `compose`, which takes down the screen rather than showing bad text.
+
+Every widget that renders computed text therefore passes `markup=False`.
+Because that is easy to forget on the next widget, a unit test parses each
+module under `tui/` and fails on any `Static` or `Label` whose first argument is
+not a literal and which does not set `markup`.
+The rule is checked structurally rather than by escaping at each call site, so a
+new widget cannot quietly reintroduce the crash.
+
+An invalid tool call is treated the same way: arguments that fail validation
+become an error result the model reads and retries, so a schema mistake costs a
+tool call rather than the turn.
+
 ## Tools
 
 Tool definitions, calls, arguments, and results are typed values.
@@ -371,7 +390,9 @@ The shipped filesystem tools share one sensitive-path policy and are rooted at
 the canonical project root:
 
 * `read_file` returns bounded UTF-8 line ranges and never exposes paths outside
-  the project or known credential locations
+  the project or known credential locations.
+  The range is optional: a bare path reads from line one up to the 500-line cap,
+  and `has_more` tells the model when to ask for the next window
 * `write_file` creates or completely replaces one UTF-8 text file, requires an
   existing parent directory, rejects symlinks and sensitive paths, and limits
   content to 32 KiB
@@ -1405,6 +1426,8 @@ Keep these invariants stable as the codebase grows:
 * an invalid plan update leaves the previous plan intact
 * the plan is scratch: it never persists across a session switch or restart
 * transcript order follows the agent event stream, not a queued message
+* text the user or the model produced is rendered as text, never as markup
+* a tool call the model gets wrong is reported to it, never raised at the user
 * tool calls always have matching results
 * only publicly routable addresses are reachable, by allowlist not blocklist
 * every resolved address is validated, not only the one that gets used
