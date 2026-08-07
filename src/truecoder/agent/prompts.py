@@ -11,13 +11,29 @@ Repository instructions follow. They are ordered from broadest to most specific.
 When instructions conflict, later instructions take precedence.
 """
 
+_ENVIRONMENT_PREAMBLE = """\
+These are facts about the machine you are running on, gathered at startup. Rely
+on them instead of probing for the same information, and never contradict them.
+"""
+
 SHELL_TOOL_GUIDANCE = """\
 The shell tool executes commands through TrueCoder's bounded execution service.
 Prefer mode="exec" with an argv list for ordinary commands. Use mode="shell" only
 when pipes, redirects, chaining, expansion, or other shell syntax is necessary.
-Use workspace-relative working directories. Request only the capabilities and
-limits the command needs. Treat a nonzero exit status as command output to inspect,
-not as proof that the shell tool itself failed.
+Use workspace-relative working directories. Treat a nonzero exit status as command
+output to inspect, not as proof that the shell tool itself failed.
+
+Commands run on this machine by default, with the toolchain, virtual environments,
+and caches already installed on it. Read the environment block above before
+guessing how to invoke anything: when it names a workspace virtual environment,
+run project code and test suites through that interpreter, because the system
+interpreter will not have the project's dependencies installed.
+
+The container backend is an empty sandbox holding the workspace and a bare
+interpreter, with no project dependencies and no package index. Ask for it only
+when a command must be isolated from this machine, and expect to install nothing
+inside it. Requesting filesystem_mode other than "host", or network_access=false,
+also requires that sandbox, so leave both at their defaults for ordinary work.
 """
 
 
@@ -67,22 +83,30 @@ recording the same thing twice.
 """
 
 
-def build_system_prompt(project_instructions: str = "") -> str:
-    """Combine the base prompt with project instructions loaded at startup."""
+def build_system_prompt(
+    project_instructions: str = "",
+    environment: str = "",
+) -> str:
+    """Combine the base prompt with startup facts and project instructions."""
     if not isinstance(project_instructions, str):
         raise TypeError("project_instructions must be a string")
+    if not isinstance(environment, str):
+        raise TypeError("environment must be a string")
 
     instructions = project_instructions.strip()
-    base_prompt = DEFAULT_SYSTEM_PROMPT.strip()
+    sections = [DEFAULT_SYSTEM_PROMPT.strip()]
 
-    if not instructions:
-        return base_prompt
+    described = environment.strip()
+    if described:
+        sections.append(f"{_ENVIRONMENT_PREAMBLE.strip()}\n\n{described}")
 
-    return (
-        f"{base_prompt}\n\n"
-        f"{_PROJECT_INSTRUCTIONS_PREAMBLE.strip()}\n\n"
-        f"<project_instructions>\n{instructions}\n</project_instructions>"
-    )
+    if instructions:
+        sections.append(
+            f"{_PROJECT_INSTRUCTIONS_PREAMBLE.strip()}\n\n"
+            f"<project_instructions>\n{instructions}\n</project_instructions>"
+        )
+
+    return "\n\n".join(sections)
 
 
 def _append_guidance(system_prompt: str, guidance: str) -> str:

@@ -80,8 +80,14 @@ class CompositionRootTests(unittest.TestCase):
             project_root=project_root,
             launch_directory=launch_directory,
         )
-        build_context.assert_called_once_with(
-            project_instructions="Repository guidance",
+        build_context.assert_called_once()
+        self.assertEqual(
+            build_context.call_args.kwargs["project_instructions"],
+            "Repository guidance",
+        )
+        self.assertIn(
+            str(project_root),
+            build_context.call_args.kwargs["environment"],
         )
         self.assertIsInstance(edit_file_tool, EditFileTool)
         self.assertEqual(edit_file_tool.workspace_root, project_root)

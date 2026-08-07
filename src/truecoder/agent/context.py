@@ -154,6 +154,7 @@ class ContextBuilder:
         cls,
         *,
         project_instructions: str = "",
+        environment: str = "",
         plan_store: PlanStore | None = None,
     ) -> "ContextBuilder":
         load_dotenv()
@@ -172,7 +173,7 @@ class ContextBuilder:
             ) from error
 
         return cls(
-            system_prompt=build_system_prompt(project_instructions),
+            system_prompt=build_system_prompt(project_instructions, environment),
             max_input_tokens=max_input_tokens,
             token_counter=TiktokenTokenCounter(model.strip()),
             plan_store=plan_store,

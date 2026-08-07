@@ -17,6 +17,7 @@ from truecoder.agent.approval import (
 )
 from truecoder.agent.compaction import TurnSummarizer, turns_to_compact
 from truecoder.agent.context import ContextBuilder
+from truecoder.agent.environment import collect_environment, describe_environment
 from truecoder.agent.events import AgentEvent, AgentEventType
 from truecoder.agent.messages import ModelMessage, create_system_message
 from truecoder.agent.progress import ProgressMonitor
@@ -684,6 +685,7 @@ def run() -> None:
     )
     context_builder = ContextBuilder.from_environment(
         project_instructions=project_instructions,
+        environment=describe_environment(collect_environment(project_root)),
     )
     state = AgentState()
 
