@@ -102,7 +102,17 @@ Each model request includes:
 
 History is selected as one contiguous recent block. Older turns are removed whole. Selection stops when the next turn does not fit.
 
-The system prompt carries an environment block gathered once at startup: working
+The system prompt is operating guidance, not a description of the assistant. It
+tells the agent to learn how a repository builds and tests itself from the
+repository, naming continuous integration first because that is the command the
+project actually keeps working; it forbids installing anything to make a command
+succeed, because changing the user's environment is the user's decision; it says
+plainly that a shortened result means read a narrower range next and never the
+same range again; and it states that every action waits on a human approval, so a
+speculative call spends someone's attention.
+Each rule is there because its absence was observed costing a turn.
+
+The prompt also carries an environment block gathered once at startup: working
 directory, operating system, the interpreter TrueCoder is running, and the
 workspace virtual environment when one exists.
 A model that is told none of this has to discover it by running commands, and it
@@ -122,6 +132,14 @@ practice advisory. Tool results are therefore shortened where the request is
 assembled: a result over its share of the budget is replaced by a valid envelope
 carrying as much of the payload as fits, the original status, the number of
 characters dropped, and an instruction to request a narrower range.
+
+That envelope is an instruction to read again, so the budget it is measured
+against decides how often the agent re-reads instead of remembering. A budget
+small enough that one ordinary file exceeds it turns every large read into a
+shortened result and every shortened result into another read. The default is
+therefore sized so that a full default `read_file` window of dense source fits
+under one result's share, and the ceiling on a single command is sized for a real
+test suite rather than a single command.
 
 That shortening applies to the projection only. `AgentState`, the stored
 session, and the mutation audit keep the complete result, which is the same
@@ -1526,6 +1544,8 @@ Keep these invariants stable as the codebase grows:
 * a permitted critical command is refused on the host, never run unprotected
 * policy raises a requirement and never rewrites the request to meet it
 * a tool call that never started still shows what it tried to run
+* a budget too small to hold one ordinary file makes the agent re-read forever
+* the system prompt teaches the agent to work, it does not describe the agent
 * an explicit backend or shell preference is never silently downgraded
 * execution cannot start before its pending audit evidence is durable
 * every admitted execution ends in one immutable terminal audit state
