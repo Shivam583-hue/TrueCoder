@@ -42,6 +42,7 @@ from truecoder.execution.context import ExecutionContextFactory, workspace_id_fo
 from truecoder.execution.events import ExecutionEventSink
 from truecoder.execution.runner import PreviewSink
 from truecoder.lsp.manager import LspManager
+from truecoder.memory import MemoryStore, default_memory_database_path
 from truecoder.mutation import FileDiff
 from truecoder.planning import PlanStore
 from truecoder.session import (
@@ -73,6 +74,7 @@ from truecoder.tools.builtin import (
     WebFetchTool,
     WriteFileTool,
     code_intelligence_tools,
+    memory_tools,
 )
 from truecoder.tools.mutation_audit import (
     MutationAudit,
@@ -105,6 +107,7 @@ class Agent:
         plan_store: PlanStore | None = None,
         summarizer: TurnSummarizer | None = None,
         checkpoints: CheckpointService | None = None,
+        memory_store: MemoryStore | None = None,
     ) -> None:
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
@@ -139,6 +142,8 @@ class Agent:
             raise TypeError("summarizer must be a TurnSummarizer.")
         if checkpoints is not None and not isinstance(checkpoints, CheckpointService):
             raise TypeError("checkpoints must be a CheckpointService.")
+        if memory_store is not None and not isinstance(memory_store, MemoryStore):
+            raise TypeError("memory_store must be a MemoryStore.")
 
         root = project_root or Path.cwd()
         try:
@@ -163,6 +168,7 @@ class Agent:
         self.plan_store = plan_store
         self.summarizer = summarizer
         self.checkpoints = checkpoints
+        self.memory_store = memory_store
         self.turn_checkpoint: Checkpoint | None = None
         self.close_failures = 0
         self.checkpoint_failures = 0
@@ -171,6 +177,12 @@ class Agent:
                 self.tool_registry.register(UpdatePlanTool(plan_store))
             self.context_builder.attach_plan_store(plan_store)
             self.context_builder.enable_plan_tool()
+        if memory_store is not None:
+            for tool in memory_tools(memory_store):
+                if tool.name not in self.tool_registry:
+                    self.tool_registry.register(tool)
+            self.context_builder.attach_memory_store(memory_store)
+            self.context_builder.enable_memory_tool()
         if "web_fetch" in self.tool_registry:
             self.context_builder.enable_web_fetch_tool()
         if "find_symbol" in self.tool_registry:
@@ -604,6 +616,10 @@ def run() -> None:
     )
     plan_store = PlanStore()
     checkpoints = CheckpointService(GitWorkspace(project_root))
+    memory_store = MemoryStore(
+        default_memory_database_path(),
+        workspace_id_for(project_root),
+    )
     context_builder = ContextBuilder.from_environment(
         project_instructions=project_instructions,
     )
@@ -629,6 +645,7 @@ def run() -> None:
         execution_bootstrap_config=load_execution_config(),
         plan_store=plan_store,
         checkpoints=checkpoints,
+        memory_store=memory_store,
     )
     agent.summarizer = TurnSummarizer(agent.llm_client)
     session_store = SQLiteSessionStore(default_session_database_path())

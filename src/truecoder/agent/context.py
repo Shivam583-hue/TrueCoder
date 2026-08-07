@@ -14,11 +14,13 @@ from truecoder.agent.messages import (
 )
 from truecoder.agent.prompts import (
     add_code_intelligence_guidance,
+    add_memory_tool_guidance,
     add_plan_tool_guidance,
     add_shell_tool_guidance,
     add_web_fetch_tool_guidance,
     build_system_prompt,
 )
+from truecoder.memory import MemoryStore
 from truecoder.planning import PlanStore
 
 if TYPE_CHECKING:
@@ -110,6 +112,7 @@ class ContextBuilder:
         token_counter: TokenCounter,
         plan_store: PlanStore | None = None,
         max_tool_result_tokens: int | None = None,
+        memory_store: MemoryStore | None = None,
     ) -> None:
         if not isinstance(system_prompt, str) or not system_prompt.strip():
             raise ValueError("The system prompt cannot be empty.")
@@ -125,6 +128,8 @@ class ContextBuilder:
 
         if plan_store is not None and not isinstance(plan_store, PlanStore):
             raise TypeError("plan_store must be a PlanStore.")
+        if memory_store is not None and not isinstance(memory_store, MemoryStore):
+            raise TypeError("memory_store must be a MemoryStore.")
 
         if max_tool_result_tokens is not None and (
             isinstance(max_tool_result_tokens, bool)
@@ -137,6 +142,7 @@ class ContextBuilder:
         self.max_input_tokens = max_input_tokens
         self.token_counter = token_counter
         self.plan_store = plan_store
+        self.memory_store = memory_store
         self.max_tool_result_tokens = (
             tool_result_ceiling(max_input_tokens)
             if max_tool_result_tokens is None
@@ -191,10 +197,15 @@ class ContextBuilder:
         summary_head: list[ModelMessage] = (
             [] if summary is None else [create_system_message(summary.render())]
         )
+        memory_message = self.memory_message()
+        memory_head: list[ModelMessage] = (
+            [] if memory_message is None else [memory_message]
+        )
         plan_message = self.plan_message()
         plan_tail: list[ModelMessage] = [] if plan_message is None else [plan_message]
         required_messages: list[ModelMessage] = [
             system_message,
+            *memory_head,
             *summary_head,
             *pending_messages,
             *plan_tail,
@@ -231,6 +242,7 @@ class ContextBuilder:
         return copy_messages(
             [
                 system_message,
+                *memory_head,
                 *summary_head,
                 *selected_history,
                 *pending_messages,
@@ -244,6 +256,27 @@ class ContextBuilder:
             self.token_counter,
             self.max_tool_result_tokens,
         )
+
+    def memory_message(self) -> SystemMessage | None:
+        if self.memory_store is None:
+            return None
+
+        try:
+            memory = self.memory_store.load()
+        except Exception:  # noqa: BLE001 - memory never blocks a request
+            return None
+
+        if memory.is_empty:
+            return None
+        return create_system_message(memory.render())
+
+    def attach_memory_store(self, memory_store: MemoryStore) -> None:
+        if not isinstance(memory_store, MemoryStore):
+            raise TypeError("memory_store must be a MemoryStore.")
+        self.memory_store = memory_store
+
+    def enable_memory_tool(self) -> None:
+        self.system_prompt = add_memory_tool_guidance(self.system_prompt)
 
     def plan_message(self) -> SystemMessage | None:
         if self.plan_store is None:

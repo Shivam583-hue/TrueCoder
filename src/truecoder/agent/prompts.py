@@ -55,6 +55,18 @@ These tools read only; they never change a file.
 """
 
 
+MEMORY_TOOL_GUIDANCE = """\
+The remember tool records one durable fact about this project for later
+sessions, and forget drops one that has stopped being true. Record only what
+stays true and is not already written down: where a subsystem lives, a
+convention the user asked for, a decision and the reason behind it. Never record
+secrets, credentials, transient state, or anything the repository already says,
+because AGENTS.md is the right home for instructions the user maintains. Your
+notes are shown back to you before every reply, so read them rather than
+recording the same thing twice.
+"""
+
+
 def build_system_prompt(project_instructions: str = "") -> str:
     """Combine the base prompt with project instructions loaded at startup."""
     if not isinstance(project_instructions, str):
@@ -99,3 +111,7 @@ def add_web_fetch_tool_guidance(system_prompt: str) -> str:
 
 def add_code_intelligence_guidance(system_prompt: str) -> str:
     return _append_guidance(system_prompt, CODE_INTELLIGENCE_GUIDANCE)
+
+
+def add_memory_tool_guidance(system_prompt: str) -> str:
+    return _append_guidance(system_prompt, MEMORY_TOOL_GUIDANCE)

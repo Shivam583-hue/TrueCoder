@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 from truecoder.agent.agent import run
 from truecoder.checkpoint import CheckpointService
+from truecoder.memory import MemoryStore
 from truecoder.planning import PlanStore
 from truecoder.tools.builtin import (
     EditFileTool,
@@ -110,6 +111,9 @@ class CompositionRootTests(unittest.TestCase):
         checkpoints = agent_type.call_args.kwargs["checkpoints"]
         self.assertIsInstance(checkpoints, CheckpointService)
         self.assertEqual(checkpoints.root, project_root)
+        memory_store = agent_type.call_args.kwargs["memory_store"]
+        self.assertIsInstance(memory_store, MemoryStore)
+        self.assertTrue(memory_store.workspace_id)
         self.assertIsInstance(write_file_tool.mutation_audit, MutationAudit)
         self.assertIs(edit_file_tool.mutation_audit, write_file_tool.mutation_audit)
         state = agent_type.call_args.kwargs["state"]
