@@ -308,14 +308,14 @@ Tools never depend on the agent, client, or UI, and the UI never contains agent 
 
 ## Engineering scorecard
 
-Local figures below were measured on 6 August 2026 from this working tree, on Linux with Python 3.14.3 and Docker 29.3.0.
+Local figures below were measured on 7 August 2026 from this working tree, on Linux with Python 3.14.3 and Docker 29.3.0.
 Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macOS, and Windows.
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **32,483** across 126 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,443 lines**, 60% of src | The execution control plane, audit store, and platform backends. Tools are 3,808 lines, the TUI is 3,195, the agent is 2,219, LSP is 1,270, web is 653, sessions are 518, checkpoints are 506, the client is 440, mutation is 281, and planning is 146. |
-| Test lines                 |                      **31,143** across 155 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.96 to 1.                                       |
+| Physical source lines      |                      **32,495** across 126 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,443 lines**, 60% of src | The execution control plane, audit store, and platform backends. Tools are 3,808 lines, the TUI is 3,195, the agent is 2,219, LSP is 1,270, web is 653, sessions are 518, checkpoints are 518, the client is 440, mutation is 281, and planning is 146. |
+| Test lines                 |                      **31,165** across 155 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.96 to 1.                                       |
 | Automated scenarios        |                      **1,557**, locally clean   | 1,381 unit, 113 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,544 pass and 13 Windows-only scenarios skip.                                 |
 | Unit suite                 |                  **1,381 passing in 8.9 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
@@ -353,7 +353,7 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 ## Architecture overview and diagram
 
 TrueCoder separates an **agent plane** that decides what to do from an **execution plane** that decides whether and how it may happen.
-The agent plane owns the loop, context, tools, and presentation.
+The agent plane owns the loop, context, tools, checkpoints, and presentation.
 The execution plane owns policy, approval, evidence, isolation, and process ownership.
 The shell tool is the only bridge between them, and it is a thin adapter that converts arguments and formats results.
 
@@ -363,12 +363,16 @@ flowchart TB
 
     subgraph AgentPlane[Agent plane]
         TUI[Textual TUI<br/>transcript, tool cards, approvals]
-        Agent[Agent loop<br/>turns, state, cancellation]
-        Ctx[Context builder<br/>system prompt + recent turns]
+        Agent[Agent loop<br/>turns, state, cancellation, stall detection]
+        Ctx[Context builder<br/>prompt + summary + turns + plan, bounded]
         LLM[LLM client<br/>OpenAI-compatible streaming]
         Sessions[(Session store<br/>SQLite, project-scoped)]
+        Checkpoints[(Checkpoints<br/>git snapshots per turn)]
         Tools[Tool registry + executor<br/>validate, prepare, approve]
         FS[Filesystem tools<br/>read, write, edit, list, glob, grep]
+        Plan[Plan tool<br/>ordered checklist]
+        Web[Web fetch<br/>public addresses only]
+        Code[Code intelligence<br/>symbols, definitions, diagnostics]
         Shell[Shell tool<br/>model boundary only]
     end
 
@@ -393,7 +397,11 @@ flowchart TB
     Agent --> Ctx --> LLM --> Provider
     Agent <--> Sessions
     Agent --> Tools
+    Agent <--> Checkpoints
     Tools --> FS
+    Tools --> Plan
+    Tools --> Web
+    Tools --> Code
     Tools --> Shell
     Shell -->|one ExecutionRequest| Service
     Discovery --> Service
@@ -404,6 +412,8 @@ flowchart TB
     Runner -->|gated start| Posix
     Runner -->|gated start| Container
     Runner -->|gated start| Win
+    Web -->|pinned request| Internet[Public internet]
+    Code -->|stdio JSON-RPC| Servers[Language servers]
     Posix --> Project[Project process group]
     Container --> Sandboxed[Sandboxed process]
     Win --> WindowsTree[Project Job Object]
@@ -413,11 +423,15 @@ flowchart TB
 
 ```text
 user message
+→ capture a workspace checkpoint
+→ compact the oldest turns if history outgrew the budget
 → start active turn
-→ build context: system prompt + recent complete turns + full active turn
+→ build context: system prompt + rolling summary + recent complete turns
+  + full active turn + current plan, with oversized tool results shortened
 → call model
 → collect text and tool calls
 → prepare each call once, approve, execute, record results in order
+→ stop and answer if the same calls keep returning the same results
 → call model again after every tool batch resolves
 → commit the complete pending group as one turn
 → append to the session store
@@ -450,6 +464,9 @@ No route escapes audit.
 | Terminal interface  | Textual 8.2                                 | Transcript, streaming output, tool cards, approvals, and session browser |
 | Agent runtime       | Python 3.10+, asyncio                       | Turn lifecycle, tool orchestration, and cancellation                   |
 | Model access        | openai 2.46 async client                    | Any OpenAI-compatible endpoint, streaming and non-streaming            |
+| Outbound web        | httpx 0.27+                                 | Address-pinned, bounded fetching of public pages                       |
+| Code intelligence   | Language Server Protocol over stdio         | Symbols, definitions, references, and diagnostics from installed servers |
+| Checkpoints         | git plumbing                                | Workspace snapshots and restore, kept out of branches and history      |
 | Context budgeting   | tiktoken                                    | Token counting for turn-based context selection                        |
 | Schemas             | Pydantic 2                                  | Tool arguments, strict validation, and model-facing JSON schemas       |
 | Persistence         | SQLite via the standard library             | Sessions and the separate execution audit store, both WAL-journaled    |
@@ -463,9 +480,10 @@ No route escapes audit.
 ## Prerequisites
 
 - **Python 3.10 or newer.** The current development environment uses 3.14.3.
-- **Git.** Project root discovery walks up to the nearest ancestor containing `.git`, and that root scopes both sessions and every filesystem tool.
+- **Git.** Project root discovery walks up to the nearest ancestor containing `.git`, and that root scopes both sessions and every filesystem tool. Git is also what backs workspace checkpoints; without it, checkpoints report themselves unavailable and everything else still works.
 - **An OpenAI-compatible LLM endpoint** with a base URL, API key, and model name.
 - **Linux, macOS, or Windows** for local shell execution. POSIX hosts use process groups and sessions; Windows uses a Job Object backend.
+- **A language server on `PATH`** only if you want code intelligence. TrueCoder discovers pyright, pylsp, jedi, typescript-language-server, rust-analyzer, gopls, and clangd; it installs none of them, and the tools refuse with `no_server` when none matches a file.
 - **Docker** only if you want the container sandbox or intend to run the sandbox test suite. Docker 29.3.0 is the version currently verified.
 - **cgroup v2 with a writable delegated subtree** only if you want hard memory and PID enforcement on Linux. Without it those limits degrade to explicit best effort rather than silently pretending to be enforced.
 
@@ -520,6 +538,7 @@ See [Container sandbox image](#container-sandbox-image) for verification and the
 | `ctrl+p` | Open the session browser                          |
 | `ctrl+a` | Open the workspace execution audit                |
 | `ctrl+e` | Show execution and backend health                 |
+| `ctrl+r` | Browse and restore workspace checkpoints          |
 | `escape` | Cancel the in-flight response or running execution |
 
 ## Environment variables
@@ -653,18 +672,18 @@ The suite is written in plain `unittest` with `IsolatedAsyncioTestCase`, so no t
 python -m unittest discover -s tests -t .
 ```
 
-Current inventory: **1,002 scenarios**.
-In the local Linux verification, 989 pass and 13 Windows-only scenarios skip;
+Current inventory: **1,557 scenarios**.
+In the local Linux verification, 1,544 pass and 13 Windows-only scenarios skip;
 the Windows job runs those native contract and integration cases on
 `windows-latest`.
 
 The four suites prove different classes of guarantee, and they are kept separate on purpose.
 
-### Unit, 850 scenarios
+### Unit, 1,381 scenarios
 
 Mostly pure logic behind injected boundaries, plus narrowly scoped platform fixtures for filesystem and native-boundary behavior.
 `DiscoveryIO` is modeled rather than measured, so these scenarios describe Linux, macOS, Windows, and unknown hosts without depending on the machine running them.
-Coverage includes policy classification and limit tightening, environment allowlists and secret removal, bounded output with property-style chunk-boundary and Unicode-split variation, capability matching, lifecycle transitions, terminal claim arbitration, result conversion, audit models, codecs, permissions, recovery, every filesystem tool's security boundary, the shell adapter's argument contract, agent state, turn selection, and startup composition.
+Coverage includes policy classification and limit tightening, environment allowlists and secret removal, bounded output with property-style chunk-boundary and Unicode-split variation, capability matching, lifecycle transitions, terminal claim arbitration, result conversion, audit models, codecs, permissions, recovery, every filesystem tool's security boundary, the shell adapter's argument contract, agent state, turn selection, and startup composition. Newer areas are covered the same way: unified diff generation and its bounds, URL and public-address policy with the SSRF refusals, JSON-RPC framing and the language-server client against a real child process, checkpoint capture and restore against real repositories, tool-result shortening, rolling compaction, and loop detection.
 
 ### Contract, 41 scenarios
 
@@ -673,13 +692,13 @@ It encodes the invariants that make backend ownership safe, including exact reso
 A backend must pass this suite before the execution service can register it.
 Host-specific adapters skip only when their operating-system boundary is unavailable; the CI matrix runs POSIX on Linux and macOS and the native Job Object contract on Windows.
 
-### Integration, 89 scenarios
+### Integration, 113 scenarios
 
 Real processes, real SQLite, and the real Textual application.
 This suite covers the POSIX supervisor's gate and lifetime pipe, termination escalation and first-reason preservation, environment filtering observed from inside a child, recovery against a live exact resource, audit routes for every terminal outcome, host discovery on the actual machine, the session store and manager, the TUI, and the shell tool driven through the agent boundary including outer cancellation.
 On Windows it also exercises real Job Object descendant cleanup and process
 limits, plus a full timeout through the execution service and durable audit.
-It also asserts the interface lifecycle gate: a card evolves only from typed stages, stop cancels one execution by id rather than the turn, a second stop does not cancel twice, a rapid completion never leaves a card running, and shutdown resolves an awaited approval and cancels every active execution.
+It also covers the reviewable-mutation diff in an approval card, the evolving plan card, and the checkpoint browser and its restore confirmation. It also asserts the interface lifecycle gate: a card evolves only from typed stages, stop cancels one execution by id rather than the turn, a second stop does not cancel twice, a rapid completion never leaves a card running, and shutdown resolves an awaited approval and cancels every active execution.
 
 ### Sandbox, 22 scenarios
 
@@ -694,7 +713,8 @@ This suite requires Docker and the locally built image whose digest matches `con
 
 ## Runtime data and storage
 
-TrueCoder never writes its state into your repository.
+TrueCoder keeps its state out of your repository, with one deliberate exception.
+Checkpoints are git objects and refs, so they live inside `.git` where the content they snapshot already is; they never appear on a branch, in your history, or in a push.
 
 | Store               | Location                                                    | Contents                                                           |
 | ------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------ |
