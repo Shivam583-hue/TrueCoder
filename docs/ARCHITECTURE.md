@@ -373,6 +373,22 @@ An invalid tool call is treated the same way: arguments that fail validation
 become an error result the model reads and retries, so a schema mistake costs a
 tool call rather than the turn.
 
+The interface is sized for a terminal that can be any width, so anything that
+cannot fit is dropped at a boundary the reader can see rather than cut wherever
+the edge happens to fall.
+The footer measures the space its shortcut hints actually have and emits whole
+hints until they run out, because a hint chopped to `ctrl` is worse than a hint
+that is absent.
+Widths that must hold a fixed label are sized to that label: a Textual button
+reserves two columns beyond its own padding, so a nine-column button silently
+renders `Details` as `Detai`.
+
+Shutdown may land at any point in a turn.
+The composer can already be gone when the turn settles, so setting the busy
+state tolerates a missing widget, and draining the turn worker treats a failed
+worker the same as a cancelled one.
+Closing the window mid-turn is an ordinary event, not an error.
+
 ## Tools
 
 Tool definitions, calls, arguments, and results are typed values.
@@ -1428,6 +1444,8 @@ Keep these invariants stable as the codebase grows:
 * transcript order follows the agent event stream, not a queued message
 * text the user or the model produced is rendered as text, never as markup
 * a tool call the model gets wrong is reported to it, never raised at the user
+* what will not fit is dropped whole, never cut wherever the edge falls
+* a widget that may already be unmounted is updated without raising
 * tool calls always have matching results
 * only publicly routable addresses are reachable, by allowlist not blocklist
 * every resolved address is validated, not only the one that gets used
