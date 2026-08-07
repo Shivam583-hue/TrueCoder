@@ -19,6 +19,8 @@ Agent
      │   ├─ Mutation preview
      │   └─ Mutation audit store
      ├─ Plan adapter
+     ├─ Memory adapters
+     │   └─ Workspace-scoped note store
      ├─ Web fetch adapter
      │   └─ URL policy, pinned client, extraction
      ├─ Code intelligence adapters
@@ -43,6 +45,11 @@ UI
 Session manager
  ├─ Agent state
  └─ SQLite session store
+
+Agent
+ ↓
+Hook runner
+ └─ Execution service, pre-authorised
 
 Agent
  ↓
@@ -89,6 +96,7 @@ Each model request includes:
 * the system prompt
 * recent completed turns
 * the complete active turn
+* durable notes recorded for this workspace, when any exist
 * the current task plan, when one exists
 * a summary of turns that no longer fit, when one exists
 
@@ -145,6 +153,66 @@ The detailed turn lifecycle is:
 7. A final assistant response completes the pending turn.
 8. The complete pending message group is committed as one turn.
 9. Active-turn state is cleared.
+
+## Memory
+
+Memory is what the agent knows about a project after the conversation ends.
+
+The risk it introduces is not storage, it is invisibility: a note recorded weeks
+ago changes behaviour today with no obvious cause. Three decisions answer that
+directly. Both tools require approval, because a durable change to future
+behaviour deserves the same gate as a durable change to a file. Every note is
+projected into the request verbatim, so what the model is told is exactly what
+the user can read. And `ctrl+n` lists every note with the ability to delete any
+of them, which makes the store inspectable rather than merely bounded.
+
+Notes are scoped by canonical workspace identity, so one repository can never
+read another's, exactly as sessions and audit evidence are scoped. They live in
+the user data directory rather than the repository, because `AGENTS.md` is the
+right home for instructions a user maintains and reviews in version control.
+Memory is for what the agent worked out; the repository is for what the user
+decided. The prompt guidance says so explicitly, and says not to record secrets
+or anything the repository already states.
+
+Storage is bounded: a note is a single normalised line, notes are unique per
+workspace so repetition cannot accumulate, and the oldest are pruned past a
+fixed count. A store that cannot be read never blocks a request, because losing
+memory is a degraded reply while failing the turn is no reply at all.
+
+## Hooks
+
+A hook runs a command the user configured, around a turn.
+
+The tempting implementation is to spawn it directly, which would be simple and
+wrong: it would create a second path for running commands that skips policy,
+bounds, and the audit, next to a shell tool that has all three. The whole
+premise of the execution plane is that there is one such path.
+
+Running a hook through the execution service raises the opposite problem. That
+path asks for approval, and prompting for a formatter forty times a session is
+unusable. The resolution is that these are different kinds of authorisation.
+Model-directed execution is approved per call because the model chose it. A hook
+was chosen by the user, in a file they wrote, before the session began, so it is
+pre-authorised by configuration and needs no per-call prompt.
+
+The agent registers the hook's exact call identifier before running it and
+releases it immediately afterwards, in a `finally`, so the window is exactly the
+one execution. Pre-authorisation is by identity rather than by pattern, so
+nothing else can be mistaken for a hook, and a hook that fails cannot leave a
+standing grant behind.
+
+Everything else the execution plane provides still applies: policy
+classification, a timeout, an output ceiling, and one immutable audit record.
+What a hook does not get is isolation. A hook exists to run the user's own
+toolchain, and a formatter is not installed in a digest-pinned distroless
+sandbox, so hooks use the local backend with host access. That is the same trust
+level as a git hook, with bounds and evidence a git hook does not have, and it
+is stated plainly rather than implied.
+
+Configuration is strict and fail-closed like the execution policy: an unknown
+field or an invalid value disables every hook and reports why. A hook failure is
+reported to the user and never blocks the turn, because a formatter that exits
+nonzero is information, not a reason to discard the agent's work.
 
 ## Checkpoints
 
@@ -1308,6 +1376,14 @@ Keep these invariants stable as the codebase grows:
 * restoring captures the current state first, so a restore can be undone
 * a restore names what it will remove before it removes it
 * a checkpoint round trip is byte exact, never normalised on the way through
+* memory is scoped by workspace and never crosses between repositories
+* what memory tells the model is exactly what the user can read and delete
+* a durable change to future behaviour is approved, like a durable file change
+* unreadable memory degrades a reply rather than failing a turn
+* there is one path for running a command, and hooks use it
+* a hook is authorised by configuration, never by a per-call prompt
+* pre-authorisation names one execution and is released even on failure
+* a hook that fails is reported and never blocks the turn
 * a turn diff compares tree against tree, never a tree against the index
 * a turn diff is anchored to the state before this turn, or to nothing
 * a file the user left untracked is never reported as something a turn did
