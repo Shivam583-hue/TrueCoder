@@ -18,6 +18,7 @@ class AgentEventType(str, Enum):
     APPROVAL_REQUESTED = "approval_requested"
     TOOL_REJECTED = "tool_rejected"
     TOOL_RESULT = "tool_result"
+    PROGRESS_STALLED = "progress_stalled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +129,13 @@ class AgentEvent:
                 "tool_name": tool_name,
                 "content": content,
             },
+        )
+
+    @classmethod
+    def progress_stalled(cls, notice: str, repeats: int) -> AgentEvent:
+        return cls(
+            type=AgentEventType.PROGRESS_STALLED,
+            data={"notice": notice, "repeats": repeats},
         )
 
     @classmethod

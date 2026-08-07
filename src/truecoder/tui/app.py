@@ -467,6 +467,13 @@ class TrueCoderApp(App[None]):
                         )
                     else:
                         self._reject_tool_call(call_id=call_id, content=content)
+                elif event.type == AgentEventType.PROGRESS_STALLED:
+                    self.notify(
+                        "The agent was repeating itself and was asked to answer "
+                        "with what it had.",
+                        severity="warning",
+                        timeout=8,
+                    )
                 elif event.type == AgentEventType.AGENT_END:
                     usage_data = event.data.get("usage")
                     usage = (

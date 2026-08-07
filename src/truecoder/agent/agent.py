@@ -16,8 +16,9 @@ from truecoder.agent.approval import (
 )
 from truecoder.agent.compaction import TurnSummarizer, turns_to_compact
 from truecoder.agent.context import ContextBuilder
-from truecoder.agent.events import AgentEvent
-from truecoder.agent.messages import ModelMessage
+from truecoder.agent.events import AgentEvent, AgentEventType
+from truecoder.agent.messages import ModelMessage, create_system_message
+from truecoder.agent.progress import ProgressMonitor
 from truecoder.agent.project_instructions import (
     find_project_root,
     load_project_instructions,
@@ -299,9 +300,13 @@ class Agent:
 
     async def _agentic_loop(self) -> AsyncGenerator[AgentEvent, None]:
         total_usage: TokenUsage | None = None
+        monitor = ProgressMonitor()
+        stall_notice: str | None = None
 
         for _ in range(self.max_iterations):
             request_messages = self.context_builder.build(self.state)
+            if stall_notice is not None:
+                request_messages.append(create_system_message(stall_notice))
 
             response_parts: list[str] = []
             usage: TokenUsage | None = None
@@ -312,7 +317,9 @@ class Agent:
             async for event in self.llm_client.chat_completion(
                 request_messages,
                 stream=True,
-                tools=self.tool_registry.definitions() or None,
+                tools=None
+                if stall_notice is not None
+                else (self.tool_registry.definitions() or None),
             ):
                 if event.type == EventType.TEXT_DELTA and event.text_delta is not None:
                     response_parts.append(event.text_delta.content)
@@ -342,10 +349,35 @@ class Agent:
 
             response = "".join(response_parts)
 
+            if tool_calls and stall_notice is not None:
+                if response:
+                    self.state.complete_turn(response)
+                    yield AgentEvent.text_complete(response)
+                    yield AgentEvent.agent_end(response, total_usage, finish_reason)
+                    return
+                yield AgentEvent.agent_error(
+                    "The agent stopped after repeating the same tool calls "
+                    "without making progress."
+                )
+                return
+
             if tool_calls:
                 self.state.record_tool_calls(tool_calls, content=response or None)
+                results: list[str] = []
                 async for event in self._execute_tool_calls(tool_calls):
+                    if event.type in (
+                        AgentEventType.TOOL_RESULT,
+                        AgentEventType.TOOL_REJECTED,
+                    ):
+                        results.append(str(event.data.get("content", "")))
                     yield event
+
+                stall_notice = monitor.record(tool_calls, results)
+                if stall_notice is not None:
+                    yield AgentEvent.progress_stalled(
+                        stall_notice,
+                        monitor.call_repeats,
+                    )
                 continue
 
             if not response:
