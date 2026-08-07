@@ -121,7 +121,29 @@ _RISKY_TOOL_TERMS = frozenset(
     }
 )
 
-_TARGET_KEYS = ("path", "file_path", "target", "command", "query", "url")
+_TARGET_KEYS = (
+    "path",
+    "file_path",
+    "target",
+    "command",
+    "argv",
+    "script",
+    "query",
+    "url",
+)
+
+MAX_TARGET_CHARACTERS = 60
+
+
+def _display_target(value: object) -> str:
+    if isinstance(value, (list, tuple)):
+        text = " ".join(str(item) for item in value)
+    else:
+        text = str(value)
+    text = " ".join(text.split())
+    if len(text) > MAX_TARGET_CHARACTERS:
+        return f"{text[: MAX_TARGET_CHARACTERS - 1]}…"
+    return text
 _APPROVAL_SCOPES = frozenset({"once", "session", "workspace"})
 
 
@@ -380,7 +402,7 @@ class ToolCallCard(Vertical):
         for key in _TARGET_KEYS:
             value = self.arguments.get(key)
             if value is not None:
-                return str(value)
+                return _display_target(value)
         return ""
 
     @property
