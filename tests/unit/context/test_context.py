@@ -315,7 +315,7 @@ class ContextBuilderTests(unittest.TestCase):
         ):
             builder = ContextBuilder.from_environment()
 
-        self.assertEqual(builder.max_input_tokens, 12000)
+        self.assertEqual(builder.max_input_tokens, 64000)
 
     def test_from_environment_rejects_missing_model(self):
         with (

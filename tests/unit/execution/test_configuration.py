@@ -30,7 +30,7 @@ class ExecutionConfigurationTests(unittest.TestCase):
         config = load_execution_config(self.root / "missing.json")
 
         self.assertTrue(config.enabled)
-        self.assertEqual(config.policy_config.limit_ceiling.timeout_seconds, 120)
+        self.assertEqual(config.policy_config.limit_ceiling.timeout_seconds, 600)
         self.assertIsNone(config.container_isolated_network)
 
     def test_every_advanced_section_maps_into_bootstrap_configuration(self):

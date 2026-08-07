@@ -163,7 +163,7 @@ class ContextBuilder:
         if model is None or not model.strip():
             raise ValueError("The MODEL environment variable is required.")
 
-        raw_max_tokens = os.getenv("MAX_INPUT_TOKENS", "12000")
+        raw_max_tokens = os.getenv("MAX_INPUT_TOKENS", "64000")
 
         try:
             max_input_tokens = int(raw_max_tokens)
