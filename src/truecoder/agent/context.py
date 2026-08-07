@@ -186,10 +186,15 @@ class ContextBuilder:
         pending_messages = self.project(state.pending_messages)
 
         system_message = create_system_message(self.system_prompt)
+        summary = state.compaction
+        summary_head: list[ModelMessage] = (
+            [] if summary is None else [create_system_message(summary.render())]
+        )
         plan_message = self.plan_message()
         plan_tail: list[ModelMessage] = [] if plan_message is None else [plan_message]
         required_messages: list[ModelMessage] = [
             system_message,
+            *summary_head,
             *pending_messages,
             *plan_tail,
         ]
@@ -203,7 +208,7 @@ class ContextBuilder:
 
         selected_turns: list[list[ModelMessage]] = []
 
-        for turn in reversed(state.completed_turns):
+        for turn in reversed(state.uncompacted_turns):
             projected = self.project(turn)
             turn_token_count = sum(
                 self.token_counter.count_message(message)
@@ -225,6 +230,7 @@ class ContextBuilder:
         return copy_messages(
             [
                 system_message,
+                *summary_head,
                 *selected_history,
                 *pending_messages,
                 *plan_tail,

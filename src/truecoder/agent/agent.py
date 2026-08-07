@@ -14,6 +14,7 @@ from truecoder.agent.approval import (
     ApprovalService,
     reject_all_tool_calls,
 )
+from truecoder.agent.compaction import TurnSummarizer, turns_to_compact
 from truecoder.agent.context import ContextBuilder
 from truecoder.agent.events import AgentEvent
 from truecoder.agent.messages import ModelMessage
@@ -93,6 +94,7 @@ class Agent:
         execution_context_factory: ExecutionContextFactory | None = None,
         execution_bootstrap_config: ExecutionBootstrapConfig | None = None,
         plan_store: PlanStore | None = None,
+        summarizer: TurnSummarizer | None = None,
     ) -> None:
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
@@ -123,6 +125,8 @@ class Agent:
             )
         if plan_store is not None and not isinstance(plan_store, PlanStore):
             raise TypeError("plan_store must be a PlanStore.")
+        if summarizer is not None and not isinstance(summarizer, TurnSummarizer):
+            raise TypeError("summarizer must be a TurnSummarizer.")
 
         root = project_root or Path.cwd()
         try:
@@ -145,6 +149,7 @@ class Agent:
         self.tool_executor = ToolExecutor(self.tool_registry)
         self.max_iterations = max_iterations
         self.plan_store = plan_store
+        self.summarizer = summarizer
         if plan_store is not None:
             if "update_plan" not in self.tool_registry:
                 self.tool_registry.register(UpdatePlanTool(plan_store))
@@ -262,6 +267,7 @@ class Agent:
             yield AgentEvent.agent_error("The prompt cannot be empty.")
             return
         await self.initialize_execution()
+        await self._compact_if_needed()
         try:
             self.state.begin_turn(prompt)
         except (ValueError, RuntimeError) as error:
@@ -415,6 +421,32 @@ class Agent:
                     content,
                 )
 
+    async def _compact_if_needed(self) -> None:
+        if self.summarizer is None:
+            return
+
+        turns = self.state.uncompacted_turns
+        count = turns_to_compact(
+            turns,
+            self.context_builder.token_counter,
+            self.context_builder.max_input_tokens,
+        )
+        if count < 1:
+            return
+
+        try:
+            compaction = await self.summarizer.summarize(
+                turns[:count],
+                self.state.compaction,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a failed summary must not lose a turn
+            return
+
+        if compaction is not None:
+            self.state.apply_compaction(compaction)
+
     @staticmethod
     async def _preview_mutation(prepared: PreparedToolCall) -> FileDiff | None:
         tool = prepared.tool
@@ -509,6 +541,7 @@ def run() -> None:
         execution_bootstrap_config=load_execution_config(),
         plan_store=plan_store,
     )
+    agent.summarizer = TurnSummarizer(agent.llm_client)
     session_store = SQLiteSessionStore(default_session_database_path())
     session_manager = SessionManager(session_store, state, project_root)
 

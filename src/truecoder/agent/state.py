@@ -1,6 +1,7 @@
 import uuid
 from collections.abc import Sequence
 
+from truecoder.agent.compaction import Compaction
 from truecoder.agent.messages import (
     ModelMessage,
     copy_messages,
@@ -21,6 +22,7 @@ class AgentState:
         self.__outstanding_tool_call_ids: list[str] = []
         self.__seen_tool_call_ids: set[str] = set()
         self.__pending_turn_id: str | None = None
+        self.__compaction: Compaction | None = None
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -35,6 +37,23 @@ class AgentState:
         """Return completed turns while preserving their boundaries."""
 
         return [copy_messages(turn) for turn in self.__completed_turns]
+
+    @property
+    def compaction(self) -> Compaction | None:
+        return self.__compaction
+
+    @property
+    def uncompacted_turns(self) -> list[list[ModelMessage]]:
+        covered = 0 if self.__compaction is None else self.__compaction.turn_count
+        return [copy_messages(turn) for turn in self.__completed_turns[covered:]]
+
+    def apply_compaction(self, compaction: Compaction) -> None:
+        if not isinstance(compaction, Compaction):
+            raise TypeError("compaction must be a Compaction.")
+        if compaction.turn_count > len(self.__completed_turns):
+            raise ValueError("A compaction cannot cover turns that do not exist.")
+
+        self.__compaction = compaction
 
     @property
     def pending_messages(self) -> list[ModelMessage]:
@@ -173,6 +192,7 @@ class AgentState:
 
     def reset(self) -> None:
         self.__completed_turns.clear()
+        self.__compaction = None
         self.__clear_pending_state()
 
     def replace_completed_turns(
@@ -261,6 +281,7 @@ class AgentState:
                 raise ValueError("A completed turn must end with assistant text.")
 
         self.__completed_turns = replacement.completed_turns
+        self.__compaction = None
         self.__clear_pending_state()
 
     def __clear_pending_state(self) -> None:
