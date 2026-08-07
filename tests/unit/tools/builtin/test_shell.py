@@ -10,7 +10,10 @@ from pydantic import ValidationError
 from tests.helpers.platforms import requires_symlinks
 from truecoder.execution.cancellation import CancellationSource
 from truecoder.execution.context import ExecutionContextFactory
-from truecoder.execution.errors import AuditUnavailableError
+from truecoder.execution.errors import (
+    AuditUnavailableError,
+    NoCompatibleBackendError,
+)
 from truecoder.execution.models import ExecutionLimits, ExecutionResult
 from truecoder.tools import (
     ToolCall,
@@ -26,6 +29,10 @@ from truecoder.tools.builtin.shell import (
     ShellTool,
     build_shell_request,
     format_shell_result,
+)
+
+POSIX_REJECTION = (
+    "Backend 'posix' does not support filesystem mode 'workspace-read'."
 )
 
 
@@ -311,6 +318,26 @@ class ShellToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(caught.exception.code, "shell_infrastructure_error")
         self.assertNotIn("private", caught.exception.message)
+
+    async def test_an_unsatisfiable_request_tells_the_model_why(self):
+        service = RecordingService(
+            error=NoCompatibleBackendError(
+                failures=(
+                    ("posix", (POSIX_REJECTION,)),
+                ),
+            )
+        )
+        tool = ShellTool(self.root, service)
+
+        with self.assertRaises(ToolExecutionError) as caught:
+            await tool.run(
+                ShellArguments(argv=("python", "-V"), filesystem_mode="workspace-read"),
+                self.invocation,
+            )
+
+        self.assertEqual(caught.exception.code, "no_compatible_backend")
+        self.assertIn("workspace-read", caught.exception.message)
+        self.assertIn("posix", caught.exception.message)
 
     async def test_missing_invocation_never_calls_the_service(self):
         service = RecordingService(execution_result())

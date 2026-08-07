@@ -153,12 +153,28 @@ class NoCompatibleBackendError(BackendSelectionError):
             raise ValueError(f"unknown backend preference: {preference!r}")
 
         super().__init__(
-            message,
+            describe_backend_failures(message, failures),
             execution_id=execution_id,
             operation="select_backend",
         )
         self.failures = failures
         self.preference = preference
+
+
+def describe_backend_failures(
+    message: str,
+    failures: BackendCompatibilityFailures,
+) -> str:
+    if not failures:
+        return message
+
+    described = "; ".join(
+        f"{name} was rejected because {' and '.join(reasons)}"
+        if reasons
+        else f"{name} was rejected"
+        for name, reasons in failures
+    )
+    return f"{message}: {described}"
 
 
 class BackendStartError(BackendError):

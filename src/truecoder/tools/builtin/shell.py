@@ -8,7 +8,10 @@ from pydantic import Field, model_validator
 
 from truecoder.execution.cancellation import CancellationSource
 from truecoder.execution.defaults import DEFAULT_EXECUTION_LIMITS
-from truecoder.execution.errors import ExecutionInfrastructureError
+from truecoder.execution.errors import (
+    ExecutionInfrastructureError,
+    NoCompatibleBackendError,
+)
 from truecoder.execution.models import (
     ExecutionContext,
     ExecutionLimits,
@@ -197,6 +200,11 @@ class ShellTool(BaseTool[ShellArguments]):
                 invocation.execution,
                 cancellation_source=invocation.cancellation_source,
             )
+        except NoCompatibleBackendError as error:
+            raise ToolExecutionError(
+                f"No available backend can run this request. {error}",
+                code="no_compatible_backend",
+            ) from error
         except ExecutionInfrastructureError as error:
             raise ToolExecutionError(
                 "Shell execution infrastructure could not complete safely.",
