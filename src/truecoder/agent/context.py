@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import tiktoken
 from dotenv import load_dotenv
 
+from truecoder.agent.budget import fit_tool_messages, tool_result_ceiling
 from truecoder.agent.messages import (
     ModelMessage,
     SystemMessage,
@@ -107,6 +108,7 @@ class ContextBuilder:
         max_input_tokens: int,
         token_counter: TokenCounter,
         plan_store: PlanStore | None = None,
+        max_tool_result_tokens: int | None = None,
     ) -> None:
         if not isinstance(system_prompt, str) or not system_prompt.strip():
             raise ValueError("The system prompt cannot be empty.")
@@ -123,10 +125,22 @@ class ContextBuilder:
         if plan_store is not None and not isinstance(plan_store, PlanStore):
             raise TypeError("plan_store must be a PlanStore.")
 
+        if max_tool_result_tokens is not None and (
+            isinstance(max_tool_result_tokens, bool)
+            or not isinstance(max_tool_result_tokens, int)
+            or max_tool_result_tokens < 1
+        ):
+            raise ValueError("max_tool_result_tokens must be a positive integer.")
+
         self.system_prompt = system_prompt.strip()
         self.max_input_tokens = max_input_tokens
         self.token_counter = token_counter
         self.plan_store = plan_store
+        self.max_tool_result_tokens = (
+            tool_result_ceiling(max_input_tokens)
+            if max_tool_result_tokens is None
+            else max_tool_result_tokens
+        )
 
     @classmethod
     def from_environment(
@@ -166,9 +180,10 @@ class ContextBuilder:
                 "Cannot build context while tool calls remain unresolved."
             )
 
-        pending_messages = state.pending_messages
-        if not pending_messages:
+        if not state.pending_messages:
             raise RuntimeError("An active turn must contain pending messages.")
+
+        pending_messages = self.project(state.pending_messages)
 
         system_message = create_system_message(self.system_prompt)
         plan_message = self.plan_message()
@@ -189,15 +204,16 @@ class ContextBuilder:
         selected_turns: list[list[ModelMessage]] = []
 
         for turn in reversed(state.completed_turns):
+            projected = self.project(turn)
             turn_token_count = sum(
                 self.token_counter.count_message(message)
-                for message in turn
+                for message in projected
             )
 
             if context_token_count + turn_token_count > self.max_input_tokens:
                 break
 
-            selected_turns.append(turn)
+            selected_turns.append(projected)
             context_token_count += turn_token_count
 
         selected_history = [
@@ -213,6 +229,13 @@ class ContextBuilder:
                 *pending_messages,
                 *plan_tail,
             ]
+        )
+
+    def project(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        return fit_tool_messages(
+            messages,
+            self.token_counter,
+            self.max_tool_result_tokens,
         )
 
     def plan_message(self) -> SystemMessage | None:
