@@ -9,7 +9,7 @@
 [![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](#testing)
 
 TrueCoder is a Python agent runtime that reads, searches, edits, and runs code inside one project.
-It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, twelve approval-gated tools, a task planner, language-server code intelligence, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
+It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, twelve approval-gated tools, a task planner, language-server code intelligence, workspace checkpoints, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
 Shell execution passes through policy evaluation, capability-based backend selection, an approval fingerprint, a durable audit admission, a resource launch gate, arbitrated terminal outcomes, and one immutable terminal audit record.
 The certified sandbox profile runs commands in a digest-pinned, non-root, read-only, network-denied, capability-dropped Docker container that is proven against real Docker rather than assumed safe.
 
@@ -45,6 +45,7 @@ Coming soon...
 - **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
 - **Twelve approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, and `get_diagnostics`, each with its own validated schema and security boundary.
 - **A context budget that is actually enforced** - a single shell or fetch result can exceed the whole token budget, so oversized tool results are shortened where the request is assembled, into a valid envelope that says how much was dropped. The stored turn, the session record, and the audit keep the complete result.
+- **Undoable turns** - a checkpoint of the whole workspace is captured before every turn using git plumbing, so a turn can be reversed even when the agent changed files through `shell` rather than through the reviewed edit tools. Restoring first captures the current state, so a restore is itself undoable.
 - **Loop detection, not just a cap** - identical tool calls returning identical results are recognised as a stall, the tools are withdrawn so the model must answer with what it has, and a model that ignores the withdrawal is stopped rather than allowed to keep spending. A stuck agent that previously burned 25 model requests and then failed the turn now costs 4 and still answers.
 - **Rolling compaction instead of silent forgetting** - when history outgrows the budget, the oldest turns are summarised into a running summary rather than dropped, and the summary is labelled as history so it is never mistaken for instructions.
 - **Language-server code intelligence** - `find_symbol`, `goto_definition`, `find_references`, and `get_diagnostics` resolve names the way a compiler does instead of by text match, over a real LSP session with server discovery, stdio JSON-RPC framing, document synchronisation, and lifecycle management. This first version is strictly read-only.
@@ -119,6 +120,11 @@ TrueCoder/
 │   ├── planning/                      # Dependency-free task plan domain
 │   │   ├── models.py                  # Plan and step invariants, bounds, and rendering
 │   │   └── store.py                   # The single in-memory plan for the active task
+│   │
+│   ├── checkpoint/                    # Workspace snapshots and restore
+│   │   ├── git.py                     # Snapshots through a temporary index
+│   │   ├── models.py                  # Checkpoint identity and restore outcome
+│   │   └── service.py                 # Capture, list, prune, restore
 │   │
 │   ├── lsp/                           # Language server integration
 │   │   ├── protocol.py                # JSON-RPC framing over a byte stream
@@ -234,6 +240,7 @@ TrueCoder/
 │       ├── execution_health.py        # Audit, recovery, and backend status screen
 │       ├── widgets.py                 # Transcript, tool cards, plan card, and approvals
 │       ├── sessions.py                # Session browser
+│       ├── checkpoints.py             # Checkpoint browser and restore prompt
 │       └── styles.tcss                # Terminal stylesheet
 │
 └── tests/
@@ -245,6 +252,7 @@ TrueCoder/
     │   ├── mutation/                  # Diff hunks, bounds, and truncation
     │   ├── web/                       # URL policy, SSRF refusals, extraction
     │   ├── lsp/                       # Framing, transport, client, discovery
+    │   ├── checkpoint/                # Snapshot, restore, prune, agent capture
     │   ├── session/                   # Durable turn codec
     │   ├── tools/                     # Base, executor, registry, and every builtin tool
     │   ├── tui/                       # Presentation mapping, cards, and audit summaries
@@ -280,6 +288,7 @@ TrueCoder/
 | Code intelligence                     | `src/truecoder/lsp`                               | `builtin/code_intelligence.py` and the fake server in `tests/helpers`  |
 | Context budgeting                     | `src/truecoder/agent/budget.py`                   | `context.py` assembly and `compaction.py` for long histories           |
 | Loop and stall behaviour              | `src/truecoder/agent/progress.py`                 | `_agentic_loop` in `agent.py` and the loop-detection tests             |
+| Checkpoints and restore               | `src/truecoder/checkpoint`                        | `tui/checkpoints.py` and capture in `agent.py`                         |
 | Outbound network rules                | `src/truecoder/web/policy.py`                     | `fetch.py` redirect handling and the SSRF refusal tests                |
 | Diff rendering or bounds              | `src/truecoder/mutation`                          | `ToolCallCard` diff view, `styles.tcss`, preview tests                 |
 | Mutation evidence                     | `src/truecoder/tools/mutation_audit.py`           | `write_file.py`, `edit_file.py`, and the schema immutability triggers  |
@@ -304,11 +313,11 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **31,740** across 121 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,443 lines**, 62% of src | The execution control plane, audit store, and platform backends. Tools are 3,808 lines, the TUI is 2,974, the agent is 2,196, LSP is 1,270, web is 653, sessions are 518, the client is 440, mutation is 281, and planning is 146. |
-| Test lines                 |                      **30,516** across 151 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.96 to 1.                                       |
-| Automated scenarios        |                      **1,507**, locally clean   | 1,342 unit, 102 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,494 pass and 13 Windows-only scenarios skip.                                 |
-| Unit suite                 |                  **1,342 passing in 5.9 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **32,483** across 126 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,443 lines**, 60% of src | The execution control plane, audit store, and platform backends. Tools are 3,808 lines, the TUI is 3,195, the agent is 2,219, LSP is 1,270, web is 653, sessions are 518, checkpoints are 506, the client is 440, mutation is 281, and planning is 146. |
+| Test lines                 |                      **31,143** across 155 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.96 to 1.                                       |
+| Automated scenarios        |                      **1,555**, locally clean   | 1,379 unit, 113 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,542 pass and 13 Windows-only scenarios skip.                                 |
+| Unit suite                 |                  **1,379 passing in 7.6 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
 | Lint                       |                          **ruff check clean** | ruff 0.16.0 over `src`, `tests`, and `container`.                                                                                                            |
@@ -692,6 +701,7 @@ TrueCoder never writes its state into your repository.
 | Sessions            | `<user data dir>/truecoder/sessions.sqlite3`                | Completed turns, scoped by canonical project root                  |
 | Execution audit     | `<user data dir>/truecoder/audit.sqlite3`                   | Runs, immutable event log, resource identities, terminal outcomes  |
 | Mutation audit      | `<user data dir>/truecoder/mutations.sqlite3`               | One immutable record per applied write or edit, with both digests  |
+| Checkpoints         | `refs/truecoder/checkpoints/*` inside the repository        | Workspace snapshots as git objects, pruned to the newest 25        |
 | Execution policy    | `<user config dir>/truecoder/execution.json`                | Optional operator ceilings and backend settings                    |
 | Trusted rules       | `<user config dir>/truecoder/trusted-commands.json`         | Optional executable-specific restrictions                          |
 | Project instructions | `AGENTS.md` and `AGENTS.override.md` in the repository      | Read only, never written                                           |
@@ -725,6 +735,9 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **Mutation evidence is best effort, unlike execution evidence.** An execution withholds its result when audit finalization fails, but a file replacement is already durable by the time it could be recorded, so failing the call would report an outcome that did not happen. A recording failure therefore increments a counter instead of failing the tool.
 - **Code intelligence needs a language server installed.** `find_symbol` and friends refuse with `no_server` when nothing on `PATH` handles the file's language. TrueCoder discovers pyright, pylsp, jedi, typescript-language-server, rust-analyzer, gopls, and clangd; it never installs one for you.
 - **Code intelligence is read-only in this version.** Rename, code actions, formatting, and workspace edits are deliberately absent, so the language server can never change a file behind the mutation review path.
+- **Checkpoints require a git repository.** A workspace that is not a git repository, or a machine without git, reports checkpoints as unavailable rather than falling back to something weaker that looks the same.
+- **Restore covers tracked content only.** Files the agent created without staging them survive a restore, because removing untracked files would risk deleting your own scratch work. Anything ignored by `.gitignore` is neither captured nor restored.
+- **Restore rewinds staging too.** A restore returns the index to the checkpoint, so work you staged after the checkpoint is reverted with everything else. The safety checkpoint taken immediately beforehand is how you get it back.
 - **Loop detection compares calls, not intent.** A model that varies its arguments trivially on every attempt keeps its tools until the `max_iterations` cap. The detector deliberately errs toward letting real work continue, because interrupting genuine progress is worse than paying for a few extra turns.
 - **Compaction is not persisted.** A rolling summary lives in memory for the running session. Resuming a stored session replays its turns and re-compacts from scratch rather than restoring the previous summary.
 - **`web_fetch` reaches only public addresses, on purpose.** Fetching `http://localhost:3000` from your own dev server is refused, because the same rule is what stops a redirect chain reaching cloud metadata. There is no opt-out; use `shell` with `curl` when you genuinely mean to reach a local service.

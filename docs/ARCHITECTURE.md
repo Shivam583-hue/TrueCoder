@@ -43,6 +43,12 @@ UI
 Session manager
  ├─ Agent state
  └─ SQLite session store
+
+Agent
+ ↓
+Checkpoint service
+ ├─ Temporary-index snapshot
+ └─ Snapshot refs inside the repository
 ```
 
 The UI handles presentation and user input.
@@ -138,6 +144,43 @@ The detailed turn lifecycle is:
 7. A final assistant response completes the pending turn.
 8. The complete pending message group is committed as one turn.
 9. Active-turn state is cleared.
+
+## Checkpoints
+
+Every turn is preceded by a snapshot of the whole workspace, so a turn can be
+reversed.
+
+It has to be the whole workspace rather than the recorded mutations. The
+mutation audit stores digests for `write_file` and `edit_file`, but `shell`
+records nothing there, and a command can write, delete, or reformat anything it
+likes. A checkpoint rebuilt from mutation records would restore the reviewed
+edits and silently miss everything a command did, which is a worse outcome than
+having no checkpoint at all, because it would be believed.
+
+Snapshots are built with git plumbing against a temporary index, so the user's
+index, working tree, branch, HEAD, and reflog are never touched. Each snapshot
+is a tree plus a commit that no branch points at, kept alive by a ref under
+`refs/truecoder/checkpoints`. Metadata travels in the commit message, so git is
+the single source of truth and there is no second database to fall out of sync
+with the objects it describes. Capture is skipped when the tree is unchanged, so
+an idle turn costs nothing, and the newest twenty-five are kept.
+
+Restoring is itself a change, and the destructive part is easy to miss:
+restoring to a tree removes files that are tracked now and absent from that
+tree, including work staged after the checkpoint was taken. A restore therefore
+captures the current state first, reports exactly which paths it removed, and
+leaves that safety checkpoint in the list. Undoing a restore is restoring its
+safety checkpoint.
+
+Files the agent created without staging them survive a restore, because git
+manages tracked content and removing untracked files would risk deleting the
+user's own scratch work. The confirmation names what will be removed before
+anything happens.
+
+Where git is missing or the workspace is not a repository, checkpoints report
+themselves unavailable. There is no weaker fallback, because a fallback that
+looked like a checkpoint and covered less would be the same false guarantee this
+design exists to avoid.
 
 ## Loop and stall detection
 
@@ -1222,6 +1265,11 @@ Keep these invariants stable as the codebase grows:
 * a tool result is bounded against the conversation, not only against itself
 * shortening changes what is sent and never what is stored
 * a user's own words are never truncated to make room
+* a checkpoint covers the workspace, never only the mutations that were recorded
+* a snapshot never touches the user's index, branch, or working tree
+* restoring captures the current state first, so a restore can be undone
+* a restore names what it will remove before it removes it
+* checkpoints are unavailable rather than approximated when git cannot back them
 * repetition is detected by what was called and what came back, never by call id
 * a stalled turn withdraws tools instead of discarding the turn
 * tool calls that were never offered are never executed
