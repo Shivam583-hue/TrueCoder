@@ -11,6 +11,7 @@ from truecoder.agent.approval import (
     ApprovalIdentity,
     ApprovalRequest,
     ApprovalResponse,
+    ApprovalScope,
     ApprovalService,
     reject_all_tool_calls,
 )
@@ -41,6 +42,8 @@ from truecoder.execution.cancellation import CancellationSource
 from truecoder.execution.context import ExecutionContextFactory, workspace_id_for
 from truecoder.execution.events import ExecutionEventSink
 from truecoder.execution.runner import PreviewSink
+from truecoder.hooks import HookOutcome, HookSuite, load_hooks
+from truecoder.hooks.runner import HookRunner
 from truecoder.lsp.manager import LspManager
 from truecoder.memory import MemoryStore, default_memory_database_path
 from truecoder.mutation import FileDiff
@@ -108,6 +111,7 @@ class Agent:
         summarizer: TurnSummarizer | None = None,
         checkpoints: CheckpointService | None = None,
         memory_store: MemoryStore | None = None,
+        hooks: HookSuite | None = None,
     ) -> None:
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
@@ -144,6 +148,8 @@ class Agent:
             raise TypeError("checkpoints must be a CheckpointService.")
         if memory_store is not None and not isinstance(memory_store, MemoryStore):
             raise TypeError("memory_store must be a MemoryStore.")
+        if hooks is not None and not isinstance(hooks, HookSuite):
+            raise TypeError("hooks must be a HookSuite.")
 
         root = project_root or Path.cwd()
         try:
@@ -169,6 +175,9 @@ class Agent:
         self.summarizer = summarizer
         self.checkpoints = checkpoints
         self.memory_store = memory_store
+        self.hooks = hooks if hooks is not None else HookSuite()
+        self.hook_outcomes: tuple[HookOutcome, ...] = ()
+        self._pre_authorised_calls: set[str] = set()
         self.turn_checkpoint: Checkpoint | None = None
         self.close_failures = 0
         self.checkpoint_failures = 0
@@ -299,6 +308,7 @@ class Agent:
         await self.initialize_execution()
         await self._capture_checkpoint(prompt)
         await self._compact_if_needed()
+        await self._run_hooks("turn_start")
         try:
             self.state.begin_turn(prompt)
         except (ValueError, RuntimeError) as error:
@@ -322,6 +332,7 @@ class Agent:
             )
         finally:
             self.state.abort_turn()
+            await self._run_hooks("turn_end")
 
     async def _agentic_loop(self) -> AsyncGenerator[AgentEvent, None]:
         total_usage: TokenUsage | None = None
@@ -501,6 +512,42 @@ class Agent:
 
         self.turn_checkpoint = captured
 
+    async def _run_hooks(self, event) -> None:
+        self.hook_outcomes = ()
+        runtime = self._execution_runtime
+        if runtime is None or runtime.service is None:
+            return
+
+        files_changed = False
+        if event == "turn_end":
+            try:
+                changes = await self.turn_changes()
+            except Exception:  # noqa: BLE001 - a hook never breaks a turn
+                changes = None
+            files_changed = changes is not None and not changes.is_empty
+
+        selected = self.hooks.for_event(event, files_changed=files_changed)
+        if not selected:
+            return
+
+        turn_id = self.state.pending_turn_id or f"turn_{uuid.uuid4().hex}"
+        runner = HookRunner(
+            runtime.service,
+            self._project_root,
+            context_factory=self._execution_context_factory,
+            pre_authorise=self.pre_authorise,
+        )
+        try:
+            self.hook_outcomes = await runner.run(
+                selected,
+                session_id=self._approval_identity().session_id,
+                turn_id=turn_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a hook never breaks a turn
+            self.hook_outcomes = ()
+
     async def turn_changes(self) -> WorkspaceChanges | None:
         if self.checkpoints is None:
             return None
@@ -574,10 +621,20 @@ class Agent:
             cancellation_source=CancellationSource(),
         )
 
+    def pre_authorise(self, call_id: str):
+        self._pre_authorised_calls.add(call_id)
+
+        def release() -> None:
+            self._pre_authorised_calls.discard(call_id)
+
+        return release
+
     async def _invoke_approval_handler(
         self,
         request: ApprovalRequest,
     ) -> ApprovalResponse:
+        if request.call_id in self._pre_authorised_calls:
+            return ApprovalResponse.approve(ApprovalScope.ONCE)
         response = await self._approval_handler(request)
         if isinstance(response, ApprovalResponse):
             return response
@@ -651,6 +708,7 @@ def run() -> None:
         plan_store=plan_store,
         checkpoints=checkpoints,
         memory_store=memory_store,
+        hooks=load_hooks(),
     )
     agent.summarizer = TurnSummarizer(agent.llm_client)
     session_store = SQLiteSessionStore(default_session_database_path())

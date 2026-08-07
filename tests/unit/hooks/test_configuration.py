@@ -105,7 +105,8 @@ class HookModelTests(unittest.TestCase):
         hook = self._hook()
 
         self.assertTrue(HookOutcome(hook, "completed", 0).ok)
-        self.assertIn("exited 1", HookOutcome(hook, "completed", 1).summary)
+        self.assertFalse(HookOutcome(hook, "failed", 1).ok)
+        self.assertIn("exited 1", HookOutcome(hook, "failed", 1).summary)
         self.assertIn("timed_out", HookOutcome(hook, "timed_out").summary)
 
 

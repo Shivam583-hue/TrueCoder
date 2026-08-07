@@ -497,6 +497,7 @@ class TrueCoderApp(App[None]):
                         else None
                     )
                     completed = True
+                    self._announce_hooks()
                     await self._announce_changes()
                     if self.session_manager is not None:
                         try:
@@ -883,6 +884,16 @@ class TrueCoderApp(App[None]):
         self.push_screen(
             WorkspaceChangesScreen(changes, unavailable_reason=reason)
         )
+
+    def _announce_hooks(self) -> None:
+        failures = [
+            outcome for outcome in self.agent.hook_outcomes if not outcome.ok
+        ]
+        if not failures:
+            return
+
+        described = ", ".join(outcome.summary for outcome in failures)
+        self.notify(f"Hook: {described}", severity="warning", timeout=10)
 
     async def _announce_changes(self) -> None:
         service = self.agent.checkpoints

@@ -114,7 +114,7 @@ class HookOutcome:
 
     @property
     def ok(self) -> bool:
-        return self.status == "completed" and self.exit_code == 0
+        return self.status == "completed"
 
     @property
     def summary(self) -> str:
