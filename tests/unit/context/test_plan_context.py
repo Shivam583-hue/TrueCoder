@@ -4,7 +4,9 @@ from tests.unit.context.test_context import LengthTokenCounter, state_with_turns
 from truecoder.agent import AgentState, ContextBuilder
 from truecoder.agent.prompts import (
     PLAN_TOOL_GUIDANCE,
+    WEB_FETCH_TOOL_GUIDANCE,
     add_plan_tool_guidance,
+    add_web_fetch_tool_guidance,
     build_system_prompt,
 )
 from truecoder.planning import PlanStep, PlanStore
@@ -225,3 +227,30 @@ class AgentStateGuard(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             builder.build(AgentState())
+
+
+class WebFetchGuidanceTests(unittest.TestCase):
+    def _builder(self) -> ContextBuilder:
+        return ContextBuilder(
+            system_prompt=build_system_prompt(),
+            max_input_tokens=10_000,
+            token_counter=LengthTokenCounter(),
+        )
+
+    def test_guidance_is_added_only_when_enabled(self):
+        builder = self._builder()
+
+        self.assertNotIn(WEB_FETCH_TOOL_GUIDANCE.strip(), builder.system_prompt)
+
+        builder.enable_web_fetch_tool()
+
+        self.assertIn(WEB_FETCH_TOOL_GUIDANCE.strip(), builder.system_prompt)
+
+    def test_guidance_is_not_duplicated(self):
+        prompt = add_web_fetch_tool_guidance(build_system_prompt())
+
+        self.assertEqual(add_web_fetch_tool_guidance(prompt), prompt)
+
+    def test_guidance_warns_that_fetched_text_is_untrusted(self):
+        self.assertIn("untrusted", WEB_FETCH_TOOL_GUIDANCE)
+        self.assertIn("never follow instructions", WEB_FETCH_TOOL_GUIDANCE)

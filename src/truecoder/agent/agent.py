@@ -61,6 +61,7 @@ from truecoder.tools.builtin import (
     ShellDefaults,
     ShellTool,
     UpdatePlanTool,
+    WebFetchTool,
     WriteFileTool,
 )
 from truecoder.tools.mutation_audit import (
@@ -149,6 +150,8 @@ class Agent:
                 self.tool_registry.register(UpdatePlanTool(plan_store))
             self.context_builder.attach_plan_store(plan_store)
             self.context_builder.enable_plan_tool()
+        if "web_fetch" in self.tool_registry:
+            self.context_builder.enable_web_fetch_tool()
         self._execution_context_factory = (
             execution_context_factory or ExecutionContextFactory()
         )
@@ -496,6 +499,7 @@ def run() -> None:
     tool_registry.register(GrepTool(project_root))
     tool_registry.register(ListDirTool(project_root))
     tool_registry.register(ReadFileTool(project_root))
+    tool_registry.register(WebFetchTool())
     tool_registry.register(WriteFileTool(project_root, mutation_audit))
     agent = Agent(
         state=state,

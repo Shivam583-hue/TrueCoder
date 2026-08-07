@@ -11,6 +11,7 @@ from truecoder.tools.builtin import (
     GrepTool,
     ListDirTool,
     ReadFileTool,
+    WebFetchTool,
     WriteFileTool,
 )
 from truecoder.tools.mutation_audit import MutationAudit
@@ -67,6 +68,7 @@ class CompositionRootTests(unittest.TestCase):
         grep_tool = tool_registry.get("grep")
         list_dir_tool = tool_registry.get("list_dir")
         read_file_tool = tool_registry.get("read_file")
+        web_fetch_tool = tool_registry.get("web_fetch")
         write_file_tool = tool_registry.get("write_file")
 
         find_root.assert_called_once_with(launch_directory)
@@ -87,6 +89,7 @@ class CompositionRootTests(unittest.TestCase):
         self.assertEqual(list_dir_tool.workspace_root, project_root)
         self.assertIsInstance(read_file_tool, ReadFileTool)
         self.assertEqual(read_file_tool.workspace_root, project_root)
+        self.assertIsInstance(web_fetch_tool, WebFetchTool)
         self.assertIsInstance(write_file_tool, WriteFileTool)
         self.assertEqual(write_file_tool.workspace_root, project_root)
         self.assertIs(

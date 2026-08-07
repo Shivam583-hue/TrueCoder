@@ -14,6 +14,7 @@ from truecoder.agent.messages import (
 from truecoder.agent.prompts import (
     add_plan_tool_guidance,
     add_shell_tool_guidance,
+    add_web_fetch_tool_guidance,
     build_system_prompt,
 )
 from truecoder.planning import PlanStore
@@ -234,3 +235,6 @@ class ContextBuilder:
 
     def enable_plan_tool(self) -> None:
         self.system_prompt = add_plan_tool_guidance(self.system_prompt)
+
+    def enable_web_fetch_tool(self) -> None:
+        self.system_prompt = add_web_fetch_tool_guidance(self.system_prompt)

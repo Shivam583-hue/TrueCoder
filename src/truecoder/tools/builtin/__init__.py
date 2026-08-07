@@ -46,6 +46,12 @@ from truecoder.tools.builtin.shell import (
     build_shell_request,
     format_shell_result,
 )
+from truecoder.tools.builtin.web_fetch import (
+    UNTRUSTED_NOTICE,
+    WebFetchArguments,
+    WebFetchOutput,
+    WebFetchTool,
+)
 from truecoder.tools.builtin.write_file import (
     MAX_WRITE_BYTES,
     WriteFileArguments,
@@ -62,6 +68,7 @@ __all__ = [
     "MAX_GREP_MATCHES",
     "MAX_LINE_COUNT",
     "MAX_WRITE_BYTES",
+    "UNTRUSTED_NOTICE",
     "EditFileArguments",
     "EditFileOutput",
     "EditFileTool",
@@ -87,6 +94,9 @@ __all__ = [
     "UpdatePlanArguments",
     "UpdatePlanOutput",
     "UpdatePlanTool",
+    "WebFetchArguments",
+    "WebFetchOutput",
+    "WebFetchTool",
     "WriteFileArguments",
     "WriteFileOutput",
     "WriteFileTool",
