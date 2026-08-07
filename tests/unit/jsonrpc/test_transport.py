@@ -5,7 +5,8 @@ import sys
 import unittest
 from pathlib import Path
 
-from truecoder.lsp.transport import StdioTransport, TransportError
+from truecoder.jsonrpc.transport import StdioTransport, TransportError
+from truecoder.lsp.protocol import HeaderFraming
 
 SERVER = Path(__file__).resolve().parents[2] / "helpers" / "lsp_server.py"
 
@@ -25,6 +26,7 @@ class StdioTransportTests(unittest.IsolatedAsyncioTestCase):
     async def _transport(self, mode: str | None = None, **kwargs) -> StdioTransport:
         transport = StdioTransport(
             _command(),
+            framing=HeaderFraming(),
             cwd=Path.cwd(),
             env=_environment(mode),
             **kwargs,
@@ -146,6 +148,7 @@ class StdioTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_server_that_cannot_start_reports_its_stderr(self):
         transport = StdioTransport(
             _command(),
+            framing=HeaderFraming(),
             cwd=Path.cwd(),
             env=_environment("crash_on_start"),
         )
@@ -158,6 +161,7 @@ class StdioTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_missing_executable_is_reported(self):
         transport = StdioTransport(
             ["truecoder-no-such-language-server"],
+            framing=HeaderFraming(),
             cwd=Path.cwd(),
         )
 
@@ -170,11 +174,11 @@ class StdioTransportTests(unittest.IsolatedAsyncioTestCase):
 class TransportConstructionTests(unittest.TestCase):
     def test_an_empty_command_is_rejected(self):
         with self.assertRaises(ValueError):
-            StdioTransport([], cwd=Path.cwd())
+            StdioTransport([], framing=HeaderFraming(), cwd=Path.cwd())
 
     def test_an_invalid_timeout_is_rejected(self):
         with self.assertRaises(ValueError):
-            StdioTransport(["x"], cwd=Path.cwd(), request_timeout=0)
+            StdioTransport(["x"], framing=HeaderFraming(), cwd=Path.cwd(), request_timeout=0)
 
 
 if __name__ == "__main__":

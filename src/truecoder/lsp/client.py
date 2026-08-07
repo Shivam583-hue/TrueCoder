@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, Final
 
+from truecoder.jsonrpc.transport import StdioTransport, TransportError
 from truecoder.lsp.models import (
     Diagnostic,
     Location,
@@ -16,7 +17,6 @@ from truecoder.lsp.models import (
     parse_symbols,
     path_to_uri,
 )
-from truecoder.lsp.transport import StdioTransport, TransportError
 
 MAX_OPEN_DOCUMENTS: Final = 64
 SHUTDOWN_TIMEOUT: Final = 3.0

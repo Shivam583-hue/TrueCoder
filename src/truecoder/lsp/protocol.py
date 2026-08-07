@@ -1,65 +1,48 @@
 from __future__ import annotations
 
-import json
 from typing import Any, Final
 
-JSONRPC_VERSION: Final = "2.0"
+from truecoder.jsonrpc.framing import (
+    JSONRPC_VERSION,
+    MAX_MESSAGE_BYTES,
+    ProtocolError,
+    decode_body,
+    encode_body,
+    notification_message,
+    request_message,
+    response_error,
+)
+
 HEADER_TERMINATOR: Final = b"\r\n\r\n"
-MAX_MESSAGE_BYTES: Final = 8 * 1024 * 1024
 MAX_HEADER_BYTES: Final = 8 * 1024
 
-
-class ProtocolError(ValueError):
-    def __init__(self, message: str, code: str) -> None:
-        self.message = message
-        self.code = code
-        super().__init__(message)
+__all__ = [
+    "HEADER_TERMINATOR",
+    "JSONRPC_VERSION",
+    "MAX_HEADER_BYTES",
+    "MAX_MESSAGE_BYTES",
+    "HeaderFraming",
+    "MessageBuffer",
+    "ProtocolError",
+    "encode_message",
+    "notification_message",
+    "request_message",
+    "response_error",
+]
 
 
 def encode_message(payload: dict[str, Any]) -> bytes:
-    if not isinstance(payload, dict):
-        raise ProtocolError("A message payload must be an object.", code="invalid_payload")
-
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    if len(body) > MAX_MESSAGE_BYTES:
-        raise ProtocolError("The message is too large to send.", code="message_too_large")
-
+    body = encode_body(payload)
     header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
     return header + body
 
 
-def request_message(
-    request_id: int | str,
-    method: str,
-    params: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "jsonrpc": JSONRPC_VERSION,
-        "id": request_id,
-        "method": method,
-    }
-    if params is not None:
-        payload["params"] = params
-    return payload
+class HeaderFraming:
+    def encode(self, payload: dict[str, Any]) -> bytes:
+        return encode_message(payload)
 
-
-def notification_message(
-    method: str,
-    params: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {"jsonrpc": JSONRPC_VERSION, "method": method}
-    if params is not None:
-        payload["params"] = params
-    return payload
-
-
-def response_error(payload: dict[str, Any]) -> str | None:
-    error = payload.get("error")
-    if not isinstance(error, dict):
-        return None
-    message = error.get("message")
-    code = error.get("code")
-    return f"{message or 'request failed'} (code {code})"
+    def reader(self) -> MessageBuffer:
+        return MessageBuffer()
 
 
 class MessageBuffer:
@@ -101,20 +84,7 @@ class MessageBuffer:
         body = bytes(self._buffer[body_start:body_end])
         del self._buffer[:body_end]
 
-        try:
-            payload = json.loads(body.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError) as error:
-            raise ProtocolError(
-                "The message body is not valid JSON.",
-                code="invalid_body",
-            ) from error
-
-        if not isinstance(payload, dict):
-            raise ProtocolError(
-                "The message body must be an object.",
-                code="invalid_body",
-            )
-        return payload
+        return decode_body(body)
 
     def _content_length(self, header_block: bytes) -> int:
         try:

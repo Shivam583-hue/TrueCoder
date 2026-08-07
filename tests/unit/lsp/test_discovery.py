@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from truecoder.jsonrpc.transport import StdioTransport
 from truecoder.lsp.discovery import (
     KNOWN_SERVERS,
     DiscoveredServer,
@@ -16,7 +17,7 @@ from truecoder.lsp.discovery import (
     supported_languages,
 )
 from truecoder.lsp.manager import LspManager, LspUnavailableError
-from truecoder.lsp.transport import StdioTransport
+from truecoder.lsp.protocol import HeaderFraming
 
 SERVER = Path(__file__).resolve().parents[2] / "helpers" / "lsp_server.py"
 
@@ -119,6 +120,7 @@ class LspManagerTests(unittest.IsolatedAsyncioTestCase):
             del server
             return StdioTransport(
                 executable or [sys.executable, str(SERVER)],
+                framing=HeaderFraming(),
                 cwd=root,
                 env=env,
                 request_timeout=5.0,

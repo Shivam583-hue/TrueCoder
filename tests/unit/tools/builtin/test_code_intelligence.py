@@ -7,9 +7,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from truecoder.jsonrpc.transport import StdioTransport
 from truecoder.lsp.discovery import DiscoveredServer, ServerDefinition
 from truecoder.lsp.manager import LspManager
-from truecoder.lsp.transport import StdioTransport
+from truecoder.lsp.protocol import HeaderFraming
 from truecoder.tools.base import (
     ToolApproval,
     ToolArgumentError,
@@ -54,6 +55,7 @@ class CodeIntelligenceTests(unittest.IsolatedAsyncioTestCase):
             del server
             return StdioTransport(
                 [sys.executable, str(SERVER)],
+                framing=HeaderFraming(),
                 cwd=root,
                 env=env,
                 request_timeout=5.0,

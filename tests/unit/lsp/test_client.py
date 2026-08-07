@@ -6,8 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from truecoder.jsonrpc.transport import StdioTransport, TransportError
 from truecoder.lsp.client import LspClient
-from truecoder.lsp.transport import StdioTransport, TransportError
+from truecoder.lsp.protocol import HeaderFraming
 
 SERVER = Path(__file__).resolve().parents[2] / "helpers" / "lsp_server.py"
 
@@ -26,6 +27,7 @@ class LspClientTests(unittest.IsolatedAsyncioTestCase):
             env["FAKE_LSP_MODE"] = mode
         transport = StdioTransport(
             [sys.executable, str(SERVER)],
+            framing=HeaderFraming(),
             cwd=self.root,
             env=env,
             **kwargs,
@@ -180,6 +182,7 @@ class ServerRequestTests(unittest.IsolatedAsyncioTestCase):
     def _client(self) -> LspClient:
         transport = StdioTransport(
             [sys.executable, str(SERVER)],
+            framing=HeaderFraming(),
             cwd=self.root,
         )
         return LspClient(transport, self.root)

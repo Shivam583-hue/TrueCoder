@@ -6,10 +6,10 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
-from truecoder.lsp.protocol import (
-    MessageBuffer,
+from truecoder.jsonrpc.framing import (
+    Framing,
+    MessageReader,
     ProtocolError,
-    encode_message,
     notification_message,
     request_message,
     response_error,
@@ -36,16 +36,20 @@ class StdioTransport:
         self,
         command: Sequence[str],
         *,
+        framing: Framing,
         cwd: Path,
         env: Mapping[str, str] | None = None,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
     ) -> None:
         if not command:
             raise ValueError("A transport requires a command")
+        if not isinstance(framing, Framing):
+            raise TypeError("framing must implement the Framing protocol")
         if request_timeout <= 0:
             raise ValueError("request_timeout must be positive")
 
         self._command = tuple(command)
+        self._framing = framing
         self._cwd = cwd
         self._env = dict(env) if env is not None else None
         self._request_timeout = request_timeout
@@ -53,7 +57,7 @@ class StdioTransport:
         self._reader: asyncio.Task[None] | None = None
         self._stderr_reader: asyncio.Task[None] | None = None
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
-        self._buffer = MessageBuffer()
+        self._buffer: MessageReader = framing.reader()
         self._next_id = 1
         self._handler: NotificationHandler | None = None
         self._request_handler: RequestHandler | None = None
@@ -88,11 +92,11 @@ class StdioTransport:
             )
         except (OSError, ValueError) as error:
             raise TransportError(
-                f"The language server could not be started: {error}",
+                f"The server could not be started: {error}",
                 code="start_failed",
             ) from error
 
-        self._buffer = MessageBuffer()
+        self._buffer: MessageReader = self._framing.reader()
         self._stderr = ""
         self._reader = asyncio.create_task(self._read_stdout())
         self._stderr_reader = asyncio.create_task(self._read_stderr())
@@ -110,7 +114,7 @@ class StdioTransport:
         )
         self._reader = None
         self._stderr_reader = None
-        self._fail_pending("The language server was stopped.", code="stopped")
+        self._fail_pending("The server was stopped.", code="stopped")
 
         if process is None or process.returncode is not None:
             return
@@ -145,7 +149,7 @@ class StdioTransport:
     ) -> Any:
         if not self.running:
             raise TransportError(
-                "The language server is not running.",
+                "The server is not running.",
                 code="not_running",
             )
 
@@ -164,7 +168,7 @@ class StdioTransport:
             )
         except (TimeoutError, asyncio.TimeoutError) as error:
             raise TransportError(
-                f"The language server did not answer {method} in time.",
+                f"The server did not answer {method} in time.",
                 code="request_timeout",
             ) from error
         finally:
@@ -182,16 +186,16 @@ class StdioTransport:
         process = self._process
         if process is None or process.stdin is None or process.returncode is not None:
             raise TransportError(
-                "The language server is not running.",
+                "The server is not running.",
                 code="not_running",
             )
 
         try:
-            process.stdin.write(encode_message(payload))
+            process.stdin.write(self._framing.encode(payload))
             await process.stdin.drain()
         except (BrokenPipeError, ConnectionResetError, RuntimeError) as error:
             raise TransportError(
-                "The language server closed its input.",
+                "The server closed its input.",
                 code="write_failed",
             ) from error
 
@@ -205,7 +209,7 @@ class StdioTransport:
                 chunk = await process.stdout.read(READ_CHUNK_BYTES)
                 if not chunk:
                     self._fail_pending(
-                        "The language server exited.",
+                        "The server exited.",
                         code="server_exited",
                     )
                     return
@@ -217,7 +221,7 @@ class StdioTransport:
             self._fail_pending(error.message, code=error.code)
         except Exception:  # noqa: BLE001 - a reader failure must not escape the task
             self._fail_pending(
-                "The language server connection failed.",
+                "The server connection failed.",
                 code="read_failed",
             )
 

@@ -5,9 +5,9 @@ from typing import Any, TypedDict
 
 from pydantic import Field
 
+from truecoder.jsonrpc.transport import TransportError
 from truecoder.lsp.manager import LspManager, LspUnavailableError
 from truecoder.lsp.models import Diagnostic, Location, SymbolInfo
-from truecoder.lsp.transport import TransportError
 from truecoder.tools.base import (
     BaseTool,
     ToolApproval,

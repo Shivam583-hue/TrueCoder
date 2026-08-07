@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from truecoder.jsonrpc.transport import StdioTransport, TransportError
 from truecoder.lsp.client import LspClient
 from truecoder.lsp.discovery import (
     DiscoveredServer,
@@ -12,7 +13,7 @@ from truecoder.lsp.discovery import (
     supported_languages,
 )
 from truecoder.lsp.models import language_id_for
-from truecoder.lsp.transport import StdioTransport, TransportError
+from truecoder.lsp.protocol import HeaderFraming
 
 TransportFactory = Callable[[DiscoveredServer, Path], StdioTransport]
 
@@ -21,7 +22,7 @@ def default_transport_factory(
     server: DiscoveredServer,
     root: Path,
 ) -> StdioTransport:
-    return StdioTransport(server.command, cwd=root)
+    return StdioTransport(server.command, framing=HeaderFraming(), cwd=root)
 
 
 class LspUnavailableError(RuntimeError):
