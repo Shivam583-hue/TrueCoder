@@ -173,6 +173,13 @@ class ShellRequestTests(unittest.TestCase):
         self.assertEqual(request.limits.max_processes, 8)
         self.assertEqual(request.limits.termination_grace_seconds, 1)
 
+    def test_defaults_reach_this_machine_rather_than_the_container(self):
+        request = self.request()
+
+        self.assertEqual(request.filesystem_mode, "host")
+        self.assertTrue(request.network_access)
+        self.assertEqual(request.backend, "auto")
+
     def test_requested_limits_can_only_tighten_defaults(self):
         request = self.request(
             timeout_seconds=600,

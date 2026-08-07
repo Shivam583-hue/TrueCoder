@@ -57,13 +57,35 @@ class ShellArguments(ToolArguments):
         min_length=1,
         description="Existing workspace-relative directory.",
     )
-    backend: Literal["auto", "local", "container"] = "auto"
+    backend: Literal["auto", "local", "container"] = Field(
+        default="auto",
+        description=(
+            "Where the command runs. 'auto' and 'local' use this machine, with "
+            "its installed toolchain, virtual environments, and caches. "
+            "'container' is an empty sandbox holding only the workspace and a "
+            "bare interpreter, so project dependencies are absent there."
+        ),
+    )
     filesystem_mode: Literal[
         "host",
         "workspace-read",
         "workspace-write",
-    ] = "workspace-read"
-    network_access: bool = False
+    ] = Field(
+        default="host",
+        description=(
+            "'host' sees the real filesystem and is the only mode this "
+            "machine can run. The workspace-read and workspace-write modes "
+            "require the container backend."
+        ),
+    )
+    network_access: bool = Field(
+        default=True,
+        description=(
+            "Whether the command may reach the network. Setting this to false "
+            "requires enforced isolation, which only the container backend "
+            "provides."
+        ),
+    )
     shell_kind: Literal["auto", "posix", "powershell"] = "auto"
     timeout_seconds: float | None = Field(default=None, gt=0)
     max_output_bytes: int | None = Field(default=None, gt=0)
