@@ -200,9 +200,13 @@ class CheckpointServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(await self.service.list()), 1)
 
     async def test_an_unchanged_workspace_is_not_captured_twice(self):
-        await self.service.capture("first")
+        first = await self.service.capture("first")
+        assert first is not None
 
-        self.assertIsNone(await self.service.capture("second"))
+        second = await self.service.capture("second")
+
+        assert second is not None
+        self.assertEqual(second.checkpoint_id, first.checkpoint_id)
         self.assertEqual(len(await self.service.list()), 1)
 
     async def test_a_changed_workspace_is_captured_again(self):

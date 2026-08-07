@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 from typing import Final
 
+from truecoder.checkpoint.changes import WorkspaceChanges, compute_changes
 from truecoder.checkpoint.git import (
     CHECKPOINT_REF_PREFIX,
     GitUnavailableError,
@@ -58,7 +59,7 @@ class CheckpointService:
         existing = await self.list()
 
         if skip_unchanged and existing and existing[0].tree == tree:
-            return None
+            return existing[0]
 
         checkpoint_id = f"{now_utc().replace(':', '').replace('.', '')}-{uuid.uuid4().hex[:8]}"
         created_at = now_utc()
@@ -118,6 +119,16 @@ class CheckpointService:
         tracked = await self._workspace.tracked_paths()
         restored = await self._workspace.paths_in_tree(checkpoint.tree)
         return tuple(sorted(tracked - restored))
+
+    async def changes_since(self, checkpoint: Checkpoint) -> WorkspaceChanges:
+        await self._workspace.require()
+        return await compute_changes(self._workspace, checkpoint)
+
+    async def latest_changes(self) -> WorkspaceChanges | None:
+        existing = await self.list()
+        if not existing:
+            return None
+        return await self.changes_since(existing[0])
 
     async def restore(self, checkpoint_id: str) -> RestoreOutcome:
         await self._workspace.require()

@@ -33,6 +33,7 @@ from truecoder.session import SessionError, SessionManager
 from truecoder.session.models import SessionRecord
 from truecoder.tools.builtin import UpdatePlanTool
 from truecoder.tui.audit_view import AuditViewerScreen, audit_row_from
+from truecoder.tui.changes import WorkspaceChangesScreen
 from truecoder.tui.checkpoints import (
     CheckpointBrowserScreen,
     RestoreCheckpointScreen,
@@ -150,6 +151,7 @@ class TrueCoderApp(App[None]):
         Binding("ctrl+a", "manage_audit", "Audit", show=False, priority=True),
         Binding("ctrl+e", "execution_health", "Execution", show=False, priority=True),
         Binding("ctrl+r", "manage_checkpoints", "Checkpoints", show=False, priority=True),
+        Binding("ctrl+d", "review_changes", "Changes", show=False, priority=True),
         Binding("escape", "cancel_response", "Stop", show=False),
     ]
 
@@ -493,6 +495,7 @@ class TrueCoderApp(App[None]):
                         else None
                     )
                     completed = True
+                    await self._announce_changes()
                     if self.session_manager is not None:
                         try:
                             self.session_manager.save_completed_turns()
@@ -854,6 +857,49 @@ class TrueCoderApp(App[None]):
             )
         )
 
+    async def action_review_changes(self) -> None:
+        service = self.agent.checkpoints
+        if service is None:
+            self.notify("Checkpoints are not configured.", severity="warning")
+            return
+        if isinstance(self.screen, WorkspaceChangesScreen):
+            return
+        if self._busy:
+            self.notify(
+                "Stop the current response before reviewing changes.",
+                severity="warning",
+            )
+            return
+
+        try:
+            reason = await service.unavailable_reason()
+            changes = None if reason is not None else await self.agent.turn_changes()
+        except Exception as error:  # noqa: BLE001 - report a failed comparison
+            self.notify(f"Changes could not be read: {error}", severity="error")
+            return
+
+        self.push_screen(
+            WorkspaceChangesScreen(changes, unavailable_reason=reason)
+        )
+
+    async def _announce_changes(self) -> None:
+        service = self.agent.checkpoints
+        if service is None:
+            return
+
+        try:
+            changes = await self.agent.turn_changes()
+        except Exception:  # noqa: BLE001 - a summary never disturbs a finished turn
+            return
+
+        if changes is None or changes.is_empty:
+            return
+
+        self.notify(
+            f"{changes.summary}. Press ctrl+d to review.",
+            timeout=8,
+        )
+
     async def action_manage_checkpoints(self) -> None:
         service = self.agent.checkpoints
         if service is None:
@@ -904,6 +950,7 @@ class TrueCoderApp(App[None]):
             self.notify(f"Restore failed: {error}", severity="error", timeout=10)
             return
 
+        self.agent.turn_checkpoint = None
         self.notify(outcome.summary, timeout=10)
 
     def action_execution_health(self) -> None:
@@ -995,6 +1042,7 @@ class TrueCoderApp(App[None]):
         await self._render_session(record)
 
     async def _render_session(self, record: SessionRecord) -> None:
+        self.agent.turn_checkpoint = None
         await self.query(".chat-message").remove()
         await self.query(".tool-call-card").remove()
         await self.query(".execution-card").remove()

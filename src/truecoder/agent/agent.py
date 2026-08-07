@@ -24,7 +24,12 @@ from truecoder.agent.project_instructions import (
     load_project_instructions,
 )
 from truecoder.agent.state import AgentState
-from truecoder.checkpoint import CheckpointService, GitWorkspace
+from truecoder.checkpoint import (
+    Checkpoint,
+    CheckpointService,
+    GitWorkspace,
+    WorkspaceChanges,
+)
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType, TokenUsage
 from truecoder.execution.bootstrap import (
@@ -158,6 +163,7 @@ class Agent:
         self.plan_store = plan_store
         self.summarizer = summarizer
         self.checkpoints = checkpoints
+        self.turn_checkpoint: Checkpoint | None = None
         self.close_failures = 0
         self.checkpoint_failures = 0
         if plan_store is not None:
@@ -470,14 +476,25 @@ class Agent:
             return
 
         try:
-            await self.checkpoints.capture(
+            captured = await self.checkpoints.capture(
                 prompt,
                 session_id=self._approval_identity().session_id,
             )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - a checkpoint never blocks a turn
+            self.turn_checkpoint = None
             self.checkpoint_failures += 1
+            return
+
+        self.turn_checkpoint = captured
+
+    async def turn_changes(self) -> WorkspaceChanges | None:
+        if self.checkpoints is None:
+            return None
+        if self.turn_checkpoint is not None:
+            return await self.checkpoints.changes_since(self.turn_checkpoint)
+        return await self.checkpoints.latest_changes()
 
     async def _compact_if_needed(self) -> None:
         if self.summarizer is None:
@@ -559,6 +576,7 @@ class Agent:
         return response  # type: ignore[return-value]
 
     def reset(self) -> None:
+        self.turn_checkpoint = None
         self.state.reset()
 
     async def close(self) -> None:

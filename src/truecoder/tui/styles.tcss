@@ -19,6 +19,7 @@ Screen {
     color: $tc-text;
 }
 
+WorkspaceChangesScreen,
 CheckpointBrowserScreen,
 RestoreCheckpointScreen,
 SessionManagerScreen,
@@ -761,6 +762,38 @@ ToolCallCard.state-awaiting-approval.has-diff .tool-diff {
 Screen.-narrow .tool-diff {
     max-height: 14;
     padding: 0;
+}
+
+#changes-dialog {
+    width: 92%;
+    height: 84%;
+    padding: 1 2;
+    background: $tc-surface;
+    border: solid $tc-border-strong;
+}
+
+#changes-summary {
+    height: 2;
+    color: $tc-text;
+    text-style: bold;
+}
+
+#changes-body {
+    height: 1fr;
+    margin-bottom: 1;
+    overflow-x: auto;
+    scrollbar-size: 1 1;
+}
+
+#changes-content {
+    width: auto;
+    height: auto;
+}
+
+#changes-empty,
+#changes-unavailable {
+    margin-top: 1;
+    color: $tc-text-muted;
 }
 
 #checkpoint-dialog {

@@ -29,12 +29,16 @@ class GitUnavailableError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class GitResult:
     status: int
-    stdout: str
+    stdout_bytes: bytes
     stderr: str
 
     @property
     def ok(self) -> bool:
         return self.status == 0
+
+    @property
+    def stdout(self) -> str:
+        return self.stdout_bytes.decode("utf-8", errors="replace")
 
 
 class GitWorkspace:
@@ -172,6 +176,42 @@ class GitWorkspace:
             return frozenset()
         return frozenset(line for line in result.stdout.splitlines() if line)
 
+    async def changed_paths(
+        self,
+        tree: str,
+        current: str,
+    ) -> tuple[tuple[str, str], ...]:
+        result = await self._run(
+            "diff-tree",
+            "-r",
+            "--name-status",
+            "--no-renames",
+            "-z",
+            tree,
+            current,
+        )
+        if not result.ok:
+            return ()
+
+        fields = [field for field in result.stdout.split("\0") if field]
+        return tuple(
+            (fields[index], fields[index + 1])
+            for index in range(0, len(fields) - 1, 2)
+        )
+
+    async def blob_size(self, tree: str, path: str) -> int | None:
+        result = await self._run("cat-file", "-s", f"{tree}:{path}")
+        if not result.ok:
+            return None
+        try:
+            return int(result.stdout.strip())
+        except ValueError:
+            return None
+
+    async def blob_at(self, tree: str, path: str) -> bytes | None:
+        result = await self._run("show", f"{tree}:{path}")
+        return result.stdout_bytes if result.ok else None
+
     async def restore_tree(self, tree: str) -> None:
         result = await self._run("read-tree", "-u", "--reset", tree)
         if not result.ok:
@@ -237,6 +277,6 @@ class GitWorkspace:
 
         return GitResult(
             status=process.returncode or 0,
-            stdout=stdout.decode("utf-8", errors="replace"),
+            stdout_bytes=stdout,
             stderr=stderr.decode("utf-8", errors="replace"),
         )

@@ -295,6 +295,35 @@ _DIFF_LINE_STYLES: dict[DiffLineKind, str] = {
 }
 
 
+def render_diff(diff: FileDiff) -> Text:
+    text = Text()
+
+    for hunk_index, hunk in enumerate(diff.hunks):
+        if hunk_index:
+            text.append("\n")
+        text.append(f"{hunk.header}\n", style=_DIFF_HEADER_STYLE)
+        for line in hunk.lines:
+            number = (
+                line.before_number if line.kind == "removed" else line.after_number
+            )
+            label = "    " if number is None else f"{number:>4}"
+            text.append(
+                f"{DIFF_LINE_PREFIXES[line.kind]} {label}  {line.text}\n",
+                style=_DIFF_LINE_STYLES[line.kind],
+            )
+
+    if diff.newline_changed:
+        text.append("\\ trailing newline changed\n", style=_DIFF_HEADER_STYLE)
+    if diff.line_endings_changed:
+        text.append("\\ line endings changed\n", style=_DIFF_TRUNCATION_STYLE)
+    if diff.truncated:
+        text.append(
+            f"… diff truncated, {diff.summary}\n",
+            style=_DIFF_TRUNCATION_STYLE,
+        )
+    return text
+
+
 class ToolCallCard(Vertical):
     """Persistent tool activity with approval controls and expandable details."""
 
@@ -510,43 +539,7 @@ class ToolCallCard(Vertical):
             return
 
     def _diff_text(self) -> Text:
-        text = Text()
-        diff = self.mutation
-        if diff is None:
-            return text
-
-        for hunk_index, hunk in enumerate(diff.hunks):
-            if hunk_index:
-                text.append("\n")
-            text.append(f"{hunk.header}\n", style=_DIFF_HEADER_STYLE)
-            for line in hunk.lines:
-                number = (
-                    line.before_number
-                    if line.kind == "removed"
-                    else line.after_number
-                )
-                label = "    " if number is None else f"{number:>4}"
-                text.append(
-                    f"{DIFF_LINE_PREFIXES[line.kind]} {label}  {line.text}\n",
-                    style=_DIFF_LINE_STYLES[line.kind],
-                )
-
-        if diff.newline_changed:
-            text.append(
-                "\\ trailing newline changed\n",
-                style=_DIFF_HEADER_STYLE,
-            )
-        if diff.line_endings_changed:
-            text.append(
-                "\\ line endings changed\n",
-                style=_DIFF_TRUNCATION_STYLE,
-            )
-        if diff.truncated:
-            text.append(
-                f"… diff truncated, {diff.summary}\n",
-                style=_DIFF_TRUNCATION_STYLE,
-            )
-        return text
+        return Text() if self.mutation is None else render_diff(self.mutation)
 
     def _refresh_summary(self) -> None:
         if not self.is_mounted:

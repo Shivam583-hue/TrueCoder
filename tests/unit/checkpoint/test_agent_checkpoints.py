@@ -109,6 +109,56 @@ class AgentCheckpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.checkpoint_failures, 0)
         self.assertEqual(events[-1].data.get("response"), "done")
 
+    async def test_a_failed_capture_clears_the_turn_checkpoint(self):
+        self._initialise()
+        service = CheckpointService(GitWorkspace(self.root))
+        agent = self._agent(service, replies=2)
+        [event async for event in agent.run("first")]
+        self.assertIsNotNone(agent.turn_checkpoint)
+
+        async def explode(*arguments, **keywords):
+            raise RuntimeError("index.lock")
+
+        service.capture = explode  # type: ignore[method-assign]
+        [event async for event in agent.run("second")]
+
+        self.assertIsNone(agent.turn_checkpoint)
+        self.assertEqual(agent.checkpoint_failures, 1)
+
+    async def test_an_unchanged_workspace_still_anchors_the_turn(self):
+        self._initialise()
+        service = CheckpointService(GitWorkspace(self.root))
+        agent = self._agent(service, replies=2)
+
+        [event async for event in agent.run("first")]
+        first = agent.turn_checkpoint
+        [event async for event in agent.run("second")]
+
+        assert first is not None and agent.turn_checkpoint is not None
+        self.assertEqual(agent.turn_checkpoint.checkpoint_id, first.checkpoint_id)
+
+    async def test_a_new_chat_forgets_the_turn_checkpoint(self):
+        self._initialise()
+        service = CheckpointService(GitWorkspace(self.root))
+        agent = self._agent(service)
+        [event async for event in agent.run("first")]
+
+        agent.reset()
+
+        self.assertIsNone(agent.turn_checkpoint)
+
+    async def test_changes_are_measured_against_the_pre_turn_state(self):
+        self._initialise()
+        service = CheckpointService(GitWorkspace(self.root))
+        agent = self._agent(service)
+
+        [event async for event in agent.run("change it")]
+        (self.root / "app.py").write_bytes(b"the agent changed this\n")
+        changes = await agent.turn_changes()
+
+        assert changes is not None
+        self.assertEqual([c.path for c in changes.changes], ["app.py"])
+
     async def test_a_non_service_is_rejected(self):
         with self.assertRaises(TypeError):
             self._agent(object())  # type: ignore[arg-type]
