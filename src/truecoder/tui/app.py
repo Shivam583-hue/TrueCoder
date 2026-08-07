@@ -47,6 +47,7 @@ from truecoder.tui.execution_view import (
     full_approval_rows,
     is_terminal_stage,
 )
+from truecoder.tui.memory import MemoryAction, MemoryBrowserScreen
 from truecoder.tui.sessions import (
     DeleteSessionScreen,
     RenameSessionScreen,
@@ -152,6 +153,7 @@ class TrueCoderApp(App[None]):
         Binding("ctrl+e", "execution_health", "Execution", show=False, priority=True),
         Binding("ctrl+r", "manage_checkpoints", "Checkpoints", show=False, priority=True),
         Binding("ctrl+d", "review_changes", "Changes", show=False, priority=True),
+        Binding("ctrl+n", "manage_memory", "Memory", show=False, priority=True),
         Binding("escape", "cancel_response", "Stop", show=False),
     ]
 
@@ -899,6 +901,38 @@ class TrueCoderApp(App[None]):
             f"{changes.summary}. Press ctrl+d to review.",
             timeout=8,
         )
+
+    def action_manage_memory(self) -> None:
+        store = self.agent.memory_store
+        if store is None:
+            self.notify("Memory is not configured.", severity="warning")
+            return
+
+        try:
+            entries = store.entries()
+        except Exception as error:  # noqa: BLE001 - report an unreadable store
+            self.notify(f"Memory could not be read: {error}", severity="error")
+            return
+
+        self.push_screen(
+            MemoryBrowserScreen(entries),
+            self._handle_memory_action,
+        )
+
+    def _handle_memory_action(self, action: MemoryAction | None) -> None:
+        store = self.agent.memory_store
+        if action is None or store is None:
+            return
+
+        try:
+            if action.kind == "clear":
+                removed = store.clear()
+                self.notify(f"Forgot {removed} note(s).")
+                return
+            if action.entry_id is not None and store.forget(action.entry_id):
+                self.notify("Forgot that note.")
+        except Exception as error:  # noqa: BLE001 - report a failed write
+            self.notify(f"Memory could not be changed: {error}", severity="error")
 
     async def action_manage_checkpoints(self) -> None:
         service = self.agent.checkpoints

@@ -600,6 +600,11 @@ class Agent:
                 await closer()
             except Exception:  # noqa: BLE001 - one bad tool cannot block shutdown
                 self.close_failures += 1
+        if self.memory_store is not None:
+            try:
+                self.memory_store.close()
+            except Exception:  # noqa: BLE001 - shutdown continues past a bad store
+                self.close_failures += 1
         await self.llm_client.close()
 
 

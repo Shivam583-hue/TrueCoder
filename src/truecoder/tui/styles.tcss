@@ -19,6 +19,7 @@ Screen {
     color: $tc-text;
 }
 
+MemoryBrowserScreen,
 WorkspaceChangesScreen,
 CheckpointBrowserScreen,
 RestoreCheckpointScreen,
@@ -762,6 +763,42 @@ ToolCallCard.state-awaiting-approval.has-diff .tool-diff {
 Screen.-narrow .tool-diff {
     max-height: 14;
     padding: 0;
+}
+
+#memory-dialog {
+    width: 78;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $tc-surface;
+    border: solid $tc-border-strong;
+}
+
+#memory-summary {
+    height: 2;
+    color: $tc-text-muted;
+}
+
+#memory-list {
+    height: auto;
+    max-height: 20;
+    background: transparent;
+}
+
+#memory-list ListItem {
+    padding: 0 1;
+    background: transparent;
+    color: $tc-text-secondary;
+}
+
+#memory-list ListItem.-highlight {
+    background: $tc-surface-hover;
+    color: $tc-text;
+}
+
+#memory-empty {
+    margin-top: 1;
+    color: $tc-text-muted;
 }
 
 #changes-dialog {
