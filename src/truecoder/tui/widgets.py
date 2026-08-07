@@ -458,7 +458,11 @@ class ToolCallCard(Vertical):
             yield Static(self._diff_text(), classes="tool-diff-content", markup=False)
 
         with VerticalScroll(classes="tool-details"):
-            yield Static(self._details_text(), classes="tool-details-content")
+            yield Static(
+                self._details_text(),
+                classes="tool-details-content",
+                markup=False,
+            )
 
     def set_awaiting_approval(
         self,

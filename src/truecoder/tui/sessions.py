@@ -168,6 +168,7 @@ class DeleteSessionScreen(ModalScreen[bool]):
             yield Static(
                 f'"{self.session_title}" will be permanently deleted.',
                 classes="session-delete-copy",
+                markup=False,
             )
             with Horizontal(classes="session-dialog-actions"):
                 yield Button("Cancel", id="session-delete-cancel")
