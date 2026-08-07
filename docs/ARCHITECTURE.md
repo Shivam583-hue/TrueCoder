@@ -177,6 +177,14 @@ manages tracked content and removing untracked files would risk deleting the
 user's own scratch work. The confirmation names what will be removed before
 anything happens.
 
+Content is captured and restored verbatim. Git's line-ending conversion is
+active by default on Windows, and left alone it would apply on the way into a
+snapshot and again on the way out, so restoring could rewrite the endings of
+every text file in the workspace and bury the reverted change in a diff that had
+nothing to do with the agent. The plumbing therefore runs with that conversion
+disabled, which makes a checkpoint a byte-for-byte record rather than a
+normalised one.
+
 Where git is missing or the workspace is not a repository, checkpoints report
 themselves unavailable. There is no weaker fallback, because a fallback that
 looked like a checkpoint and covered less would be the same false guarantee this
@@ -1269,6 +1277,7 @@ Keep these invariants stable as the codebase grows:
 * a snapshot never touches the user's index, branch, or working tree
 * restoring captures the current state first, so a restore can be undone
 * a restore names what it will remove before it removes it
+* a checkpoint round trip is byte exact, never normalised on the way through
 * checkpoints are unavailable rather than approximated when git cannot back them
 * repetition is detected by what was called and what came back, never by call id
 * a stalled turn withdraws tools instead of discarding the turn
