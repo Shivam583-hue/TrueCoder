@@ -48,7 +48,8 @@ Agent
  ↓
 Checkpoint service
  ├─ Temporary-index snapshot
- └─ Snapshot refs inside the repository
+ ├─ Snapshot refs inside the repository
+ └─ Tree-against-tree turn comparison
 ```
 
 The UI handles presentation and user input.
@@ -184,6 +185,35 @@ every text file in the workspace and bury the reverted change in a diff that had
 nothing to do with the agent. The plumbing therefore runs with that conversion
 disabled, which makes a checkpoint a byte-for-byte record rather than a
 normalised one.
+
+The same snapshot answers a different question: what did this turn actually
+change. Three records already describe intent and activity, and none of them
+describes outcome. The diff preview shows what a reviewed edit meant to do, the
+mutation audit records what `write_file` and `edit_file` did, and the execution
+audit records that a command ran. Nothing records what a command did to the
+files, because `shell` writes nothing to the mutation store, so a formatter, a
+`sed`, or a code generator changed the workspace invisibly.
+
+Comparing the working tree against the checkpoint closes that gap, and the
+comparison has to be tree against tree. A checkpoint tree is built by staging
+everything into a temporary index, so it contains files that are untracked in
+the real one. Diffing that tree against the real index therefore reports every
+pre-existing untracked file as deleted, with its whole content shown as removed,
+because the index has no entry for it. Snapshotting the current worktree the
+same way and diffing the two trees compares like with like: a file the user left
+lying around before the turn is correctly absent from the result, and a file the
+turn created without staging is correctly an addition with real content.
+
+The comparison is anchored to the checkpoint taken before this turn, which the
+agent holds, rather than to the newest checkpoint, which is that same one and
+would compare the workspace against itself. That anchor is cleared whenever it
+would become misleading: a failed capture, a new chat, a session switch, and a
+restore.
+
+Sizes are checked before content is read, on both sides, because a diff of a
+large file is not shown anyway and reading it first would cost the memory for
+nothing. File counts, rendered lines, and line widths all stay bounded, so one
+enormous turn cannot stall the interface.
 
 Where git is missing or the workspace is not a repository, checkpoints report
 themselves unavailable. There is no weaker fallback, because a fallback that
@@ -1278,6 +1308,10 @@ Keep these invariants stable as the codebase grows:
 * restoring captures the current state first, so a restore can be undone
 * a restore names what it will remove before it removes it
 * a checkpoint round trip is byte exact, never normalised on the way through
+* a turn diff compares tree against tree, never a tree against the index
+* a turn diff is anchored to the state before this turn, or to nothing
+* a file the user left untracked is never reported as something a turn did
+* file size is checked before content is read
 * checkpoints are unavailable rather than approximated when git cannot back them
 * repetition is detected by what was called and what came back, never by call id
 * a stalled turn withdraws tools instead of discarding the turn

@@ -45,6 +45,7 @@ Coming soon...
 - **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
 - **Twelve approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, and `get_diagnostics`, each with its own validated schema and security boundary.
 - **A context budget that is actually enforced** - a single shell or fetch result can exceed the whole token budget, so oversized tool results are shortened where the request is assembled, into a valid envelope that says how much was dropped. The stored turn, the session record, and the audit keep the complete result.
+- **See what a turn actually changed** - `ctrl+d` diffs the workspace against the pre-turn checkpoint, so a turn's real effect on disk is visible even when files were changed by a shell command rather than by the reviewed edit tools. The mutation audit records what `write_file` and `edit_file` did; this records what happened.
 - **Undoable turns** - a checkpoint of the whole workspace is captured before every turn using git plumbing, so a turn can be reversed even when the agent changed files through `shell` rather than through the reviewed edit tools. Restoring first captures the current state, so a restore is itself undoable.
 - **Loop detection, not just a cap** - identical tool calls returning identical results are recognised as a stall, the tools are withdrawn so the model must answer with what it has, and a model that ignores the withdrawal is stopped rather than allowed to keep spending. A stuck agent that previously burned 25 model requests and then failed the turn now costs 4 and still answers.
 - **Rolling compaction instead of silent forgetting** - when history outgrows the budget, the oldest turns are summarised into a running summary rather than dropped, and the summary is labelled as history so it is never mistaken for instructions.
@@ -124,7 +125,8 @@ TrueCoder/
 │   ├── checkpoint/                    # Workspace snapshots and restore
 │   │   ├── git.py                     # Snapshots through a temporary index
 │   │   ├── models.py                  # Checkpoint identity and restore outcome
-│   │   └── service.py                 # Capture, list, prune, restore
+│   │   ├── changes.py                 # Working tree against a checkpoint tree
+│   │   └── service.py                 # Capture, list, prune, restore, compare
 │   │
 │   ├── lsp/                           # Language server integration
 │   │   ├── protocol.py                # JSON-RPC framing over a byte stream
@@ -241,6 +243,7 @@ TrueCoder/
 │       ├── widgets.py                 # Transcript, tool cards, plan card, and approvals
 │       ├── sessions.py                # Session browser
 │       ├── checkpoints.py             # Checkpoint browser and restore prompt
+│       ├── changes.py                 # What this turn changed on disk
 │       └── styles.tcss                # Terminal stylesheet
 │
 └── tests/
@@ -289,6 +292,7 @@ TrueCoder/
 | Context budgeting                     | `src/truecoder/agent/budget.py`                   | `context.py` assembly and `compaction.py` for long histories           |
 | Loop and stall behaviour              | `src/truecoder/agent/progress.py`                 | `_agentic_loop` in `agent.py` and the loop-detection tests             |
 | Checkpoints and restore               | `src/truecoder/checkpoint`                        | `tui/checkpoints.py` and capture in `agent.py`                         |
+| What a turn changed                   | `src/truecoder/checkpoint/changes.py`             | `tui/changes.py` and `turn_changes` in `agent.py`                      |
 | Outbound network rules                | `src/truecoder/web/policy.py`                     | `fetch.py` redirect handling and the SSRF refusal tests                |
 | Diff rendering or bounds              | `src/truecoder/mutation`                          | `ToolCallCard` diff view, `styles.tcss`, preview tests                 |
 | Mutation evidence                     | `src/truecoder/tools/mutation_audit.py`           | `write_file.py`, `edit_file.py`, and the schema immutability triggers  |
@@ -313,11 +317,11 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **32,495** across 126 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,443 lines**, 60% of src | The execution control plane, audit store, and platform backends. Tools are 3,808 lines, the TUI is 3,195, the agent is 2,219, LSP is 1,270, web is 653, sessions are 518, checkpoints are 518, the client is 440, mutation is 281, and planning is 146. |
-| Test lines                 |                      **31,165** across 155 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.96 to 1.                                       |
-| Automated scenarios        |                      **1,557**, locally clean   | 1,381 unit, 113 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,544 pass and 13 Windows-only scenarios skip.                                 |
-| Unit suite                 |                  **1,381 passing in 8.9 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **32,878** across 128 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,443 lines**, 60% of src | The execution control plane, audit store, and platform backends. Tools are 3,808 lines, the TUI is 3,346, the agent is 2,237, LSP is 1,270, web is 653, sessions are 518, checkpoints are 732, the client is 440, mutation is 281, and planning is 146. |
+| Test lines                 |                      **31,689** across 157 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.96 to 1.                                       |
+| Automated scenarios        |                      **1,591**, locally clean   | 1,403 unit, 125 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,578 pass and 13 Windows-only scenarios skip.                                 |
+| Unit suite                 |                  **1,403 passing in 8.5 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
 | Lint                       |                          **ruff check clean** | ruff 0.16.0 over `src`, `tests`, and `container`.                                                                                                            |
@@ -539,6 +543,7 @@ See [Container sandbox image](#container-sandbox-image) for verification and the
 | `ctrl+a` | Open the workspace execution audit                |
 | `ctrl+e` | Show execution and backend health                 |
 | `ctrl+r` | Browse and restore workspace checkpoints          |
+| `ctrl+d` | Review what this turn changed on disk             |
 | `escape` | Cancel the in-flight response or running execution |
 
 ## Environment variables
@@ -672,14 +677,14 @@ The suite is written in plain `unittest` with `IsolatedAsyncioTestCase`, so no t
 python -m unittest discover -s tests -t .
 ```
 
-Current inventory: **1,557 scenarios**.
-In the local Linux verification, 1,544 pass and 13 Windows-only scenarios skip;
+Current inventory: **1,591 scenarios**.
+In the local Linux verification, 1,578 pass and 13 Windows-only scenarios skip;
 the Windows job runs those native contract and integration cases on
 `windows-latest`.
 
 The four suites prove different classes of guarantee, and they are kept separate on purpose.
 
-### Unit, 1,381 scenarios
+### Unit, 1,403 scenarios
 
 Mostly pure logic behind injected boundaries, plus narrowly scoped platform fixtures for filesystem and native-boundary behavior.
 `DiscoveryIO` is modeled rather than measured, so these scenarios describe Linux, macOS, Windows, and unknown hosts without depending on the machine running them.
@@ -692,7 +697,7 @@ It encodes the invariants that make backend ownership safe, including exact reso
 A backend must pass this suite before the execution service can register it.
 Host-specific adapters skip only when their operating-system boundary is unavailable; the CI matrix runs POSIX on Linux and macOS and the native Job Object contract on Windows.
 
-### Integration, 113 scenarios
+### Integration, 125 scenarios
 
 Real processes, real SQLite, and the real Textual application.
 This suite covers the POSIX supervisor's gate and lifetime pipe, termination escalation and first-reason preservation, environment filtering observed from inside a child, recovery against a live exact resource, audit routes for every terminal outcome, host discovery on the actual machine, the session store and manager, the TUI, and the shell tool driven through the agent boundary including outer cancellation.
@@ -757,6 +762,7 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **Code intelligence is read-only in this version.** Rename, code actions, formatting, and workspace edits are deliberately absent, so the language server can never change a file behind the mutation review path.
 - **Checkpoints require a git repository.** A workspace that is not a git repository, or a machine without git, reports checkpoints as unavailable rather than falling back to something weaker that looks the same.
 - **Checkpoints are byte exact.** Snapshot and restore run with git's line-ending conversion disabled, so a restore returns the exact bytes that were there rather than the platform-normalised version of them.
+- **A turn diff shows text, not everything.** Binary files and files over 1 MiB are named with their change kind but not diffed, at most 50 changed files are listed, and rendering is capped so one enormous turn cannot stall the interface. Paths ignored by `.gitignore` are neither checkpointed nor compared.
 - **Restore covers tracked content only.** Files the agent created without staging them survive a restore, because removing untracked files would risk deleting your own scratch work. Anything ignored by `.gitignore` is neither captured nor restored.
 - **Restore rewinds staging too.** A restore returns the index to the checkpoint, so work you staged after the checkpoint is reverted with everything else. The safety checkpoint taken immediately beforehand is how you get it back.
 - **Loop detection compares calls, not intent.** A model that varies its arguments trivially on every attempt keeps its tools until the `max_iterations` cap. The detector deliberately errs toward letting real work continue, because interrupting genuine progress is worse than paying for a few extra turns.
