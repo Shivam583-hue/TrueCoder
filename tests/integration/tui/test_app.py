@@ -262,13 +262,12 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("xhigh", footer)
             self.assertFalse(app.query_one("#launcher-shortcuts").display)
             self.assertFalse(app.query_one("#launcher-tip").display)
-            self.assertIn(
-                "ctrl+p sessions",
-                str(app.query_one("#footer-status").content),
-            )
-            self.assertIn(
-                "ctrl+q quit",
-                str(app.query_one("#footer-status").content),
+            footer_status = str(app.query_one("#footer-status").content)
+            self.assertIn("ctrl+p sessions", footer_status)
+            self.assertIn("ctrl+a audit", footer_status)
+            self.assertLessEqual(
+                len(footer_status),
+                app.query_one("#footer-status").region.width,
             )
 
     async def test_successful_turn_is_saved_to_the_active_session(self):

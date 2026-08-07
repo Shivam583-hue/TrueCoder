@@ -274,6 +274,10 @@ ChatMessage.cancelled {
 }
 
 .message-body MarkdownParagraph {
+    margin-bottom: 1;
+}
+
+.message-body MarkdownBlock:last-child {
     margin-bottom: 0;
 }
 
@@ -471,8 +475,8 @@ ToolCallCard.state-failed .tool-summary {
 
 .tool-details-toggle {
     display: none;
-    width: 9;
-    min-width: 9;
+    width: 11;
+    min-width: 11;
     height: 1;
     margin-left: 2;
     padding: 0 1;
@@ -1013,8 +1017,8 @@ ExecutionCard.state-terminating .execution-cancel {
 }
 
 .execution-details-toggle {
-    width: 9;
-    min-width: 9;
+    width: 11;
+    min-width: 11;
     height: 1;
     margin-left: 2;
     padding: 0 1;

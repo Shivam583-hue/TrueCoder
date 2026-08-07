@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from time import monotonic
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Final
 
 from rich.text import Text
 from textual import on
@@ -953,6 +953,18 @@ class PlanCard(Vertical):
 ApprovalCard = ToolCallCard
 
 
+_FOOTER_HINTS: Final = (
+    ("ctrl+p", "sessions"),
+    ("ctrl+a", "audit"),
+    ("ctrl+e", "execution"),
+    ("ctrl+q", "quit"),
+)
+
+_HINT_GAP: Final = "    "
+
+_WORKSPACE_MAX_FRACTION: Final = 0.65
+
+
 class StatusBar(Horizontal):
     """Persistent workspace and command footer."""
 
@@ -986,6 +998,10 @@ class StatusBar(Horizontal):
             id="footer-status",
             markup=False,
         )
+
+    def on_resize(self) -> None:
+        if self.is_mounted:
+            self.query_one("#footer-status", Static).update(self._right_label())
 
     def set_conversation_active(self, active: bool) -> None:
         self._conversation_active = active
@@ -1059,12 +1075,26 @@ class StatusBar(Horizontal):
                 )
                 label.append(f" ({percentage}%)", style="#666666")
             label.append("    ")
-        label.append("ctrl+p", style="#c8c8c8")
-        label.append(" sessions    ", style="#707070")
-        label.append("ctrl+a", style="#c8c8c8")
-        label.append(" audit    ", style="#707070")
-        label.append("ctrl+e", style="#c8c8c8")
-        label.append(" execution    ", style="#707070")
-        label.append("ctrl+q", style="#c8c8c8")
-        label.append(" quit", style="#707070")
+        self._append_hints(label)
         return label
+
+    def _append_hints(self, label: Text) -> None:
+        budget = self._hint_budget()
+        for key, action in _FOOTER_HINTS:
+            separator = _HINT_GAP if label.cell_len else ""
+            width = len(separator) + len(key) + 1 + len(action)
+            if budget >= 0 and label.cell_len + width > budget:
+                return
+            label.append(separator, style="#707070")
+            label.append(key, style="#c8c8c8")
+            label.append(f" {action}", style="#707070")
+
+    def _hint_budget(self) -> int:
+        available = self.content_size.width
+        if available <= 0:
+            return -1
+        workspace = min(
+            len(self._workspace_label()),
+            int(available * _WORKSPACE_MAX_FRACTION),
+        )
+        return available - workspace - len(_HINT_GAP)
