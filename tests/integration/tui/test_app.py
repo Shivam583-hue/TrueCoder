@@ -440,7 +440,13 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(120, 40)) as pilot:
             app.query_one(PromptInput).text = "inspect it"
             await pilot.press("enter")
-            await pilot.pause()
+            await wait_until(
+                pilot,
+                lambda: bool(tool_cards(app))
+                and tool_cards(app)[-1].state == "awaiting-approval"
+                and app._pending_approval is not None,
+                description="the tool call to await approval",
+            )
 
             transcript = app.query_one("#transcript")
             timeline = [
@@ -472,7 +478,13 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(120, 40)) as pilot:
             app.query_one(PromptInput).text = "read it"
             await pilot.press("enter")
-            await pilot.pause()
+            await wait_until(
+                pilot,
+                lambda: bool(tool_cards(app))
+                and tool_cards(app)[-1].state == "awaiting-approval"
+                and app._pending_approval is not None,
+                description="the tool call to await approval",
+            )
 
             cards = list(app.query(ToolCallCard))
             self.assertEqual(len(cards), 1)
@@ -526,7 +538,13 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(120, 40)) as pilot:
             app.query_one(PromptInput).text = "read it"
             await pilot.press("enter")
-            await pilot.pause()
+            await wait_until(
+                pilot,
+                lambda: bool(tool_cards(app))
+                and tool_cards(app)[-1].state == "awaiting-approval"
+                and app._pending_approval is not None,
+                description="the tool call to await approval",
+            )
 
             await pilot.click(".approval-reject")
             await app.workers.wait_for_complete()
@@ -574,7 +592,13 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(120, 40)) as pilot:
             app.query_one(PromptInput).text = "read it"
             await pilot.press("enter")
-            await pilot.pause()
+            await wait_until(
+                pilot,
+                lambda: bool(tool_cards(app))
+                and tool_cards(app)[-1].state == "awaiting-approval"
+                and app._pending_approval is not None,
+                description="the tool call to await approval",
+            )
 
             self.assertEqual(len(list(app.query(ToolCallCard))), 1)
 
@@ -621,7 +645,8 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             await wait_until(
                 pilot,
                 lambda: bool(tool_cards(app))
-                and tool_cards(app)[0].state == "awaiting-approval",
+                and tool_cards(app)[0].state == "awaiting-approval"
+                and app._pending_approval is not None,
                 description="the first tool call to await approval",
             )
 

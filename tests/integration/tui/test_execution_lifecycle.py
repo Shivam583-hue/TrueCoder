@@ -346,7 +346,11 @@ class ApprovalFocusTests(unittest.IsolatedAsyncioTestCase):
                 task = asyncio.create_task(
                     app._request_tool_approval(approval_request())
                 )
-                await pilot.pause()
+                await wait_until(
+                    pilot,
+                    lambda: app._pending_approval is not None,
+                    description="the approval to be registered",
+                )
                 await pilot.press("escape")
                 await pilot.pause()
 
@@ -362,7 +366,11 @@ class ApprovalFocusTests(unittest.IsolatedAsyncioTestCase):
                 task = asyncio.create_task(
                     app._request_tool_approval(approval_request())
                 )
-                await pilot.pause()
+                await wait_until(
+                    pilot,
+                    lambda: app._pending_approval is not None,
+                    description="the approval to be registered",
+                )
 
                 app._resolve_pending_approval(ApprovalScope.WORKSPACE)
                 await pilot.pause()
@@ -382,7 +390,11 @@ class ShutdownTests(unittest.IsolatedAsyncioTestCase):
                 task = asyncio.create_task(
                     app._request_tool_approval(approval_request())
                 )
-                await pilot.pause()
+                await wait_until(
+                    pilot,
+                    lambda: app._pending_approval is not None,
+                    description="the approval to be registered",
+                )
                 self.assertFalse(task.done())
 
             response = await asyncio.wait_for(task, timeout=5)

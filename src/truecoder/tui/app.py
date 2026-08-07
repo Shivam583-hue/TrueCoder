@@ -433,25 +433,11 @@ class TrueCoderApp(App[None]):
                             assistant_message=assistant_message,
                         )
                 elif event.type == AgentEventType.APPROVAL_REQUESTED:
-                    call_id = str(event.data.get("call_id", ""))
-                    card = self._tool_cards.get(call_id)
-                    arguments = event.data.get("arguments")
-                    if card is not None and isinstance(arguments, dict):
-                        raw_scopes = event.data.get("allowed_scopes")
-                        allowed_scopes = (
-                            tuple(
-                                str(scope)
-                                for scope in raw_scopes
-                                if isinstance(scope, str)
-                            )
-                            if isinstance(raw_scopes, (list, tuple))
-                            else ("once",)
-                        )
-                        card.set_awaiting_approval(
-                            arguments,
-                            allowed_scopes=allowed_scopes,
-                        )
-                        self._scroll_to_latest()
+                    # The card is moved into approval by _request_tool_approval,
+                    # which the agent always calls straight after this event.
+                    # Showing the controls here would arm them before anything
+                    # is listening, and a click landing in that window is lost.
+                    self._scroll_to_latest()
                 elif event.type == AgentEventType.TOOL_RESULT:
                     call_id = str(event.data.get("call_id", ""))
                     status = str(event.data.get("status", "error"))
@@ -547,20 +533,38 @@ class TrueCoderApp(App[None]):
         future: asyncio.Future[ApprovalResponse] = (
             asyncio.get_running_loop().create_future()
         )
+        allowed_scopes = tuple(scope.value for scope in request.allowed_scopes)
         card = self._tool_cards.get(request.call_id)
+        restored = card is not None
+
         if card is None:
             card = ToolCallCard(
                 request.call_id,
                 request.tool_name,
                 request.arguments,
                 state="awaiting-approval",
-                allowed_approval_scopes=tuple(
-                    scope.value for scope in request.allowed_scopes
-                ),
+                allowed_approval_scopes=allowed_scopes,
                 mutation=request.mutation,
             )
             card.approval_details = self._approval_detail_rows(request)
             self._tool_cards[request.call_id] = card
+
+        # Registered before the controls can be reached, so a decision can
+        # never arrive while _resolve_pending_approval would discard it.
+        self._pending_approval = _PendingApproval(
+            request,
+            future,
+            card,
+        )
+
+        if restored:
+            card.set_awaiting_approval(
+                request.arguments,
+                allowed_scopes=allowed_scopes,
+                approval_details=self._approval_detail_rows(request),
+                mutation=request.mutation,
+            )
+        else:
             transcript = self.query_one("#transcript", VerticalScroll)
             before = (
                 self._active_assistant
@@ -569,22 +573,8 @@ class TrueCoderApp(App[None]):
                 else None
             )
             await transcript.mount(card, before=before)
-        else:
-            card.set_awaiting_approval(
-                request.arguments,
-                allowed_scopes=tuple(
-                    scope.value for scope in request.allowed_scopes
-                ),
-                approval_details=self._approval_detail_rows(request),
-                mutation=request.mutation,
-            )
 
         self._attach_execution_approval(request)
-        self._pending_approval = _PendingApproval(
-            request,
-            future,
-            card,
-        )
 
         card.query_one(".approval-once", Button).focus(scroll_visible=False)
         self.call_after_refresh(
