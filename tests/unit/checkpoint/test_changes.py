@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,8 +19,20 @@ def _git(root: Path, *arguments: str) -> None:
     subprocess.run(["git", *arguments], cwd=root, check=True, capture_output=True)
 
 
-def _run(root: Path, *arguments: str) -> None:
-    subprocess.run(list(arguments), cwd=root, check=True, capture_output=True)
+def _rewrite(root: Path, name: str, old: str, new: str) -> None:
+    program = (
+        "import pathlib, sys\n"
+        "path = pathlib.Path(sys.argv[1])\n"
+        "path.write_bytes(\n"
+        "    path.read_bytes().replace(sys.argv[2].encode(), sys.argv[3].encode())\n"
+        ")\n"
+    )
+    subprocess.run(
+        [sys.executable, "-c", program, name, old, new],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
 
 
 def _change(path: str, kind, added: int = 0, removed: int = 0) -> FileChange:
@@ -115,7 +128,7 @@ class ComputeChangesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((change.added, change.removed), (1, 1))
 
     async def test_a_change_made_outside_the_edit_tools_is_reported(self):
-        _run(self.root, "sed", "-i", "s/x = 1/x = 999/", "util.py")
+        _rewrite(self.root, "util.py", "x = 1", "x = 999")
 
         changes = await self._changes()
 

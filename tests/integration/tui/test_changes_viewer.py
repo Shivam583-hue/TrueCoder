@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import asynccontextmanager
@@ -22,8 +23,20 @@ def _git(root: Path, *arguments: str) -> None:
     subprocess.run(["git", *arguments], cwd=root, check=True, capture_output=True)
 
 
-def _run(root: Path, *arguments: str) -> None:
-    subprocess.run(list(arguments), cwd=root, check=True, capture_output=True)
+def _rewrite(root: Path, name: str, old: str, new: str) -> None:
+    program = (
+        "import pathlib, sys\n"
+        "path = pathlib.Path(sys.argv[1])\n"
+        "path.write_bytes(\n"
+        "    path.read_bytes().replace(sys.argv[2].encode(), sys.argv[3].encode())\n"
+        ")\n"
+    )
+    subprocess.run(
+        [sys.executable, "-c", program, name, old, new],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
 
 
 def _reply(text: str = "done"):
@@ -144,7 +157,7 @@ class ChangesViewerTests(unittest.IsolatedAsyncioTestCase):
         self._initialise()
         service = CheckpointService(GitWorkspace(self.root))
         await service.capture("before the turn")
-        _run(self.root, "sed", "-i", "s/return raw/return int(raw)/", "app.py")
+        _rewrite(self.root, "app.py", "return raw", "return int(raw)")
         app = self._app(service)
 
         async with running(app) as pilot:
