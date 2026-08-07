@@ -21,6 +21,8 @@ Agent
      ├─ Plan adapter
      ├─ Web fetch adapter
      │   └─ URL policy, pinned client, extraction
+     ├─ Code intelligence adapters
+     │   └─ LSP manager, client, transport
      └─ Shell adapter
 
 Shell adapter
@@ -81,8 +83,31 @@ Each model request includes:
 * recent completed turns
 * the complete active turn
 * the current task plan, when one exists
+* a summary of turns that no longer fit, when one exists
 
 History is selected as one contiguous recent block. Older turns are removed whole. Selection stops when the next turn does not fit.
+
+Every tool bounds its own output, but nothing bounded those outputs against the
+conversation. One shell result may reach 32,769 tokens and one fetched page
+20,001, against a default budget of 12,000 for the entire request, so a single
+result could exceed the whole budget almost threefold and the budget was in
+practice advisory. Tool results are therefore shortened where the request is
+assembled: a result over its share of the budget is replaced by a valid envelope
+carrying as much of the payload as fits, the original status, the number of
+characters dropped, and an instruction to request a narrower range.
+
+That shortening applies to the projection only. `AgentState`, the stored
+session, and the mutation audit keep the complete result, which is the same
+seam the plan uses: `build` returns a fresh list and never edits state. Only
+tool messages are shortened; a user's own words are never truncated.
+
+Compaction handles the other half. When history outgrows half the budget, the
+oldest turns beyond the two most recent are summarised into a rolling summary
+that is injected after the system prompt and labelled as history rather than
+instruction. Summarising runs in the agent before a new turn begins, not inside
+`build`, which keeps context assembly synchronous and side-effect free, and
+means the summarisation request is itself already bounded by the shortening
+above. A failed summary leaves history untouched rather than losing a turn.
 
 The plan is not part of history. It is rendered fresh from the plan store on every build and appended after the active turn, so it is always the most recent thing the model sees and can never be evicted by trimming. It is counted against the token budget before history selection begins, so adding a plan tightens how much history fits instead of silently overflowing the limit.
 
@@ -251,6 +276,38 @@ notice and the prompt guidance says to treat it as data and never as
 instructions. That is mitigation, not a guarantee: a model can still be
 influenced by what it reads, which is the reason `web_fetch` requires approval
 and the reason its content is fenced rather than blended into the transcript.
+
+## Code intelligence
+
+`find_symbol`, `goto_definition`, `find_references`, and `get_diagnostics`
+answer questions with a language server instead of a text search, so a name
+resolves the way the compiler resolves it. Grep cannot separate a definition
+from a mention, or one scope from another; these can.
+
+The stack is layered so each piece is testable alone. Framing is pure: bytes in,
+JSON-RPC messages out, tolerant of a message split across arbitrary chunks and
+bounded so a corrupt header cannot consume memory. The transport owns the
+process, correlates responses by request id, answers server-to-client requests,
+drains stderr for diagnosis, and supports start, stop, and restart. The client
+owns the handshake, document synchronisation, and the read-only queries. The
+manager discovers servers on `PATH`, starts at most one per language on first
+use, and remembers a server that failed to start rather than retrying it on
+every call.
+
+Positions cross the tool boundary one-based, matching what `read_file` returns
+and what a person reads off an editor, and are converted to the protocol's
+zero-based positions inside the client.
+
+Real servers are stricter than a specification suggests. Declaring
+`workspaceFolders` support in the client capabilities made pyright accept the
+handshake and then silently analyse nothing, because that flag promises dynamic
+workspace-folder management this client does not implement. The rule is to claim
+only capabilities that are actually implemented: an unimplemented promise is
+worse than an absent one, because the server changes its behaviour to match it.
+
+This version is read-only by construction. Rename, code actions, formatting, and
+workspace edits are absent, so a language server can never change a file behind
+the mutation review path.
 
 ## Reviewable file mutations
 
@@ -1128,6 +1185,16 @@ Keep these invariants stable as the codebase grows:
 * completed history contains only valid turns
 * context is recent, contiguous, and turn-based
 * the task plan is reprojected into every request and never trimmed as history
+* a tool result is bounded against the conversation, not only against itself
+* shortening changes what is sent and never what is stored
+* a user's own words are never truncated to make room
+* evicted turns are summarised rather than silently forgotten
+* a failed summary loses no history
+* a summary is labelled as history and never as instruction
+* code intelligence resolves names by compiler, never by text match
+* positions are one-based at the tool boundary and zero-based on the wire
+* only capabilities the client actually implements are ever claimed
+* a language server can read the workspace and never write to it
 * the plan costs tokens before history is selected, never after
 * at most one plan step is in progress at a time
 * an invalid plan update leaves the previous plan intact
