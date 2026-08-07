@@ -21,6 +21,8 @@ from truecoder.tools.builtin import ReadFileTool
 from truecoder.tui.app import TrueCoderApp
 from truecoder.tui.widgets import ChatMessage, PromptInput
 
+INVALID_ARGUMENTS = json.dumps({"path": "README.md", "start_line": 0})
+
 
 def _turn(arguments: str):
     return ScriptedLLMClient(
@@ -82,7 +84,7 @@ class InvalidToolCallTests(unittest.IsolatedAsyncioTestCase):
         ]
 
     async def test_a_validation_error_does_not_kill_the_turn(self):
-        app = self._app(json.dumps({"path": "README.md"}))
+        app = self._app(INVALID_ARGUMENTS)
 
         async with self._run(
             app,
@@ -92,7 +94,7 @@ class InvalidToolCallTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(self._replies(app)), 1)
 
     async def test_the_failed_call_is_shown_as_a_failed_card(self):
-        app = self._app(json.dumps({"path": "README.md", "start_line": 0}))
+        app = self._app(INVALID_ARGUMENTS)
 
         async with self._run(
             app,
@@ -104,7 +106,7 @@ class InvalidToolCallTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cards[0].tool_name, "read_file")
 
     async def test_no_message_is_rendered_as_an_error(self):
-        app = self._app(json.dumps({"path": "README.md"}))
+        app = self._app(INVALID_ARGUMENTS)
 
         async with self._run(
             app,

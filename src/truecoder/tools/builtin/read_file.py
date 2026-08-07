@@ -31,13 +31,21 @@ class ReadFileArguments(ToolArguments):
         description="Path to the file, relative to the workspace.",
     )
     start_line: int = Field(
+        default=1,
         ge=1,
-        description="One-based line number at which to start reading.",
+        description=(
+            "One-based line number at which to start reading. "
+            "Defaults to the first line."
+        ),
     )
     line_count: int = Field(
+        default=MAX_LINE_COUNT,
         ge=1,
         le=MAX_LINE_COUNT,
-        description=f"Maximum number of lines to return, up to {MAX_LINE_COUNT}.",
+        description=(
+            f"Maximum number of lines to return, up to {MAX_LINE_COUNT}. "
+            f"Defaults to {MAX_LINE_COUNT}."
+        ),
     )
 
 
@@ -61,7 +69,10 @@ class ReadFileTool(BaseTool[ReadFileArguments]):
     """Read bounded UTF-8 text ranges from a trusted workspace."""
 
     name = "read_file"
-    description = "Read a range of lines from a file in the workspace."
+    description = (
+        "Read a file in the workspace. Reads from the first line by default; "
+        "pass start_line and line_count to read a specific range."
+    )
     arguments_type = ReadFileArguments
     approval = ToolApproval.REQUIRED
 

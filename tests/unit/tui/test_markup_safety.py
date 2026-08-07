@@ -14,8 +14,9 @@ BRACKETED_ERROR = json.dumps(
         "status": "error",
         "error": (
             "Arguments for tool 'read_file' failed validation: 1 validation "
-            "error for ReadFileArguments\nline_count\n  Field required "
-            "[type=missing, input_value={'path': 'README.md'}, input_type=dict]"
+            "error for ReadFileArguments\nstart_line\n  Input should be greater "
+            "than or equal to 1 [type=greater_than_equal, input_value=0, "
+            "input_type=int]"
         ),
         "error_code": "invalid_arguments",
     }
@@ -70,7 +71,7 @@ class ToolCardMarkupTests(unittest.TestCase):
 
         card.finish("error", BRACKETED_ERROR)
 
-        self.assertIn("[type=missing", card._details_text())
+        self.assertIn("[type=greater_than_equal", card._details_text())
 
     def test_bracketed_arguments_are_kept_verbatim(self):
         card = ToolCallCard(

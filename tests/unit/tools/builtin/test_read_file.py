@@ -1,4 +1,3 @@
-
 import os
 import tempfile
 import unittest
@@ -93,17 +92,12 @@ class ReadFileToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.code, expected_code)
 
     def test_definition_has_strict_required_bounded_inputs(self):
-        function_schema = self.tool.definition().to_chat_completion_schema()[
-            "function"
-        ]
+        function_schema = self.tool.definition().to_chat_completion_schema()["function"]
         parameters = function_schema["parameters"]
 
         self.assertEqual(function_schema["name"], "read_file")
         self.assertTrue(function_schema["strict"])
-        self.assertEqual(
-            parameters["required"],
-            ["path", "start_line", "line_count"],
-        )
+        self.assertEqual(parameters["required"], ["path"])
         self.assertEqual(
             set(parameters["properties"]),
             {"path", "start_line", "line_count"},
@@ -113,23 +107,28 @@ class ReadFileToolTests(unittest.IsolatedAsyncioTestCase):
             parameters["properties"]["line_count"]["maximum"],
             MAX_LINE_COUNT,
         )
+        self.assertEqual(parameters["properties"]["start_line"]["default"], 1)
+        self.assertEqual(
+            parameters["properties"]["line_count"]["default"],
+            MAX_LINE_COUNT,
+        )
 
-        for property_schema in parameters["properties"].values():
-            self.assertNotIn("default", property_schema)
+    def test_only_the_path_must_be_supplied(self):
+        arguments = self.tool.parse_arguments('{"path": "README.md"}')
 
-    def test_all_arguments_must_be_supplied(self):
-        incomplete_arguments = [
-            '{"start_line": 1, "line_count": 100}',
-            '{"path": "README.md", "line_count": 100}',
-            '{"path": "README.md", "start_line": 1}',
-        ]
+        self.assertEqual(arguments.start_line, 1)
+        self.assertEqual(arguments.line_count, MAX_LINE_COUNT)
 
-        for arguments_json in incomplete_arguments:
-            with (
-                self.subTest(arguments_json=arguments_json),
-                self.assertRaises(ToolArgumentError),
-            ):
-                self.tool.parse_arguments(arguments_json)
+    def test_a_range_may_be_partially_supplied(self):
+        from_line = self.tool.parse_arguments('{"path": "README.md", "start_line": 40}')
+        capped = self.tool.parse_arguments('{"path": "README.md", "line_count": 10}')
+
+        self.assertEqual((from_line.start_line, from_line.line_count), (40, 500))
+        self.assertEqual((capped.start_line, capped.line_count), (1, 10))
+
+    def test_the_path_is_still_required(self):
+        with self.assertRaises(ToolArgumentError):
+            self.tool.parse_arguments('{"start_line": 1, "line_count": 100}')
 
     def test_line_inputs_are_one_based_positive_and_bounded(self):
         invalid_arguments = [
@@ -190,6 +189,28 @@ class ReadFileToolTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_a_path_alone_reads_the_whole_file(self):
+        source = self.workspace / "source.py"
+        source.write_bytes(b"line 1\nline 2\nline 3\n")
+
+        result = await self.tool.run(self.tool.parse_arguments('{"path": "source.py"}'))
+
+        self.assertEqual(result["content"], "line 1\nline 2\nline 3\n")
+        self.assertEqual(result["start_line"], 1)
+        self.assertEqual(result["end_line"], 3)
+        self.assertFalse(result["has_more"])
+
+    async def test_a_path_alone_stops_at_the_line_cap(self):
+        source = self.workspace / "big.py"
+        source.write_bytes(
+            b"".join(b"line %d\n" % number for number in range(1, MAX_LINE_COUNT + 20))
+        )
+
+        result = await self.tool.run(self.tool.parse_arguments('{"path": "big.py"}'))
+
+        self.assertEqual(result["end_line"], MAX_LINE_COUNT)
+        self.assertTrue(result["has_more"])
+
     async def test_reports_the_actual_range_at_and_beyond_end_of_file(self):
         source = self.workspace / "source.py"
         source.write_text("line 1\nline 2", encoding="utf-8")
@@ -231,9 +252,7 @@ class ReadFileToolTests(unittest.IsolatedAsyncioTestCase):
                 nonlocal yielded_lines
                 yielded_lines += 1
                 if yielded_lines > 3:
-                    raise AssertionError(
-                        "read_file consumed more than one extra line"
-                    )
+                    raise AssertionError("read_file consumed more than one extra line")
                 return f"line {yielded_lines}\n".encode()
 
         with patch.object(Path, "open", return_value=CountingFile()):
