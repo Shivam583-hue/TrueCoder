@@ -159,5 +159,50 @@ class LspClientTests(unittest.IsolatedAsyncioTestCase):
             LspClient(object(), self.root)  # type: ignore[arg-type]
 
 
+class ClientCapabilityTests(unittest.TestCase):
+    def test_dynamic_workspace_folders_are_not_claimed(self):
+        from truecoder.lsp.client import CLIENT_CAPABILITIES
+
+        self.assertNotIn("workspaceFolders", CLIENT_CAPABILITIES["workspace"])
+
+    def test_configuration_support_is_claimed(self):
+        from truecoder.lsp.client import CLIENT_CAPABILITIES
+
+        self.assertTrue(CLIENT_CAPABILITIES["workspace"]["configuration"])
+
+
+class ServerRequestTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self._directory = tempfile.TemporaryDirectory()
+        self.root = Path(self._directory.name).resolve()
+        self.addCleanup(self._directory.cleanup)
+
+    def _client(self) -> LspClient:
+        transport = StdioTransport(
+            [sys.executable, str(SERVER)],
+            cwd=self.root,
+        )
+        return LspClient(transport, self.root)
+
+    def test_a_configuration_request_gets_one_entry_per_item(self):
+        answer = self._client()._on_request(
+            "workspace/configuration",
+            {"items": [{"section": "python"}, {"section": "pyright"}]},
+        )
+
+        self.assertEqual(answer, [{}, {}])
+
+    def test_a_folders_request_gets_the_workspace_root(self):
+        answer = self._client()._on_request("workspace/workspaceFolders", {})
+
+        self.assertEqual(len(answer), 1)
+        self.assertTrue(answer[0]["uri"].startswith("file://"))
+
+    def test_an_unknown_server_request_is_answered_with_null(self):
+        self.assertIsNone(
+            self._client()._on_request("client/registerCapability", {})
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

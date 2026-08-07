@@ -24,7 +24,7 @@ SHUTDOWN_TIMEOUT: Final = 3.0
 CLIENT_CAPABILITIES: Final[dict[str, Any]] = {
     "workspace": {
         "symbol": {"dynamicRegistration": False},
-        "workspaceFolders": True,
+        "configuration": True,
     },
     "textDocument": {
         "synchronization": {"dynamicRegistration": False, "didSave": False},
@@ -58,6 +58,7 @@ class LspClient:
         self._diagnostics: dict[str, tuple[Diagnostic, ...]] = {}
         self._diagnostic_events: dict[str, asyncio.Event] = {}
         self._transport.set_notification_handler(self._on_notification)
+        self._transport.set_request_handler(self._on_request)
 
     @property
     def root(self) -> Path:
@@ -85,9 +86,7 @@ class LspClient:
                 "processId": None,
                 "clientInfo": {"name": "TrueCoder"},
                 "rootUri": path_to_uri(self._root),
-                "workspaceFolders": [
-                    {"uri": path_to_uri(self._root), "name": self._root.name}
-                ],
+                "workspaceFolders": self._folders(),
                 "capabilities": CLIENT_CAPABILITIES,
             },
         )
@@ -276,6 +275,18 @@ class LspClient:
                 pass
 
         return self._diagnostics.get(uri, ())
+
+    def _folders(self) -> list[dict[str, str]]:
+        return [{"uri": path_to_uri(self._root), "name": self._root.name}]
+
+    def _on_request(self, method: str, params: dict[str, Any]) -> Any:
+        if method == "workspace/workspaceFolders":
+            return self._folders()
+        if method == "workspace/configuration":
+            items = params.get("items")
+            count = len(items) if isinstance(items, list) else 1
+            return [{} for _ in range(count)]
+        return None
 
     def _on_notification(self, method: str, params: dict[str, Any]) -> None:
         if method != "textDocument/publishDiagnostics":

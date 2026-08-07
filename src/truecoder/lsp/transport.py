@@ -21,6 +21,7 @@ READ_CHUNK_BYTES: Final = 65536
 MAX_STDERR_CHARACTERS: Final = 8000
 
 NotificationHandler = Callable[[str, dict[str, Any]], None]
+RequestHandler = Callable[[str, dict[str, Any]], Any]
 
 
 class TransportError(RuntimeError):
@@ -55,6 +56,7 @@ class StdioTransport:
         self._buffer = MessageBuffer()
         self._next_id = 1
         self._handler: NotificationHandler | None = None
+        self._request_handler: RequestHandler | None = None
         self._stderr = ""
 
     @property
@@ -67,6 +69,9 @@ class StdioTransport:
 
     def set_notification_handler(self, handler: NotificationHandler) -> None:
         self._handler = handler
+
+    def set_request_handler(self, handler: RequestHandler) -> None:
+        self._request_handler = handler
 
     async def start(self) -> None:
         if self.running:
@@ -251,16 +256,30 @@ class StdioTransport:
             return
 
         if method is not None and request_id is not None:
-            asyncio.create_task(self._refuse(request_id, str(method)))
+            params = payload.get("params")
+            asyncio.create_task(
+                self._answer(
+                    request_id,
+                    str(method),
+                    params if isinstance(params, dict) else {},
+                )
+            )
 
-    async def _refuse(self, request_id: Any, method: str) -> None:
-        del method
+    async def _answer(
+        self,
+        request_id: Any,
+        method: str,
+        params: dict[str, Any],
+    ) -> None:
+        handler = self._request_handler
+        result = None if handler is None else handler(method, params)
+
         try:
             await self._write(
                 {
                     "jsonrpc": "2.0",
                     "id": request_id,
-                    "result": None,
+                    "result": result,
                 }
             )
         except TransportError:
