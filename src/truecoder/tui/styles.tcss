@@ -459,6 +459,10 @@ ToolCallCard.state-completed .tool-state-glyph {
     color: $tc-blue;
 }
 
+ToolCallCard.state-completed .tool-state-label {
+    color: $tc-text-muted;
+}
+
 ToolCallCard.state-rejected .tool-state-glyph,
 ToolCallCard.state-rejected .tool-state-label,
 ToolCallCard.state-failed .tool-state-glyph,
