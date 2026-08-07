@@ -102,6 +102,18 @@ Each model request includes:
 
 History is selected as one contiguous recent block. Older turns are removed whole. Selection stops when the next turn does not fit.
 
+The system prompt carries an environment block gathered once at startup: working
+directory, operating system, the interpreter TrueCoder is running, and the
+workspace virtual environment when one exists.
+A model that is told none of this has to discover it by running commands, and it
+spends a turn on `python --version` and a failing `pip install` before reaching
+the work.
+The block is facts only, and it states the absence of a virtual environment as
+plainly as its presence, so the model never has to infer anything from silence.
+Repository instructions are separate and come after it, because `AGENTS.md` is
+where a user records conventions, not where they should have to write down which
+machine the agent is on.
+
 Every tool bounds its own output, but nothing bounded those outputs against the
 conversation. One shell result may reach 32,769 tokens and one fetched page
 20,001, against a default budget of 12,000 for the entire request, so a single
@@ -825,7 +837,25 @@ requirements. `local` permits only the current host's local backend;
 `container` permits only the container backend; `auto` may move to another
 candidate only when that candidate satisfies the complete unchanged contract.
 An explicit shell is never silently substituted. If selection fails, the error
-preserves the reasons for every permitted candidate.
+preserves the reasons for every permitted candidate, and states them in its
+message rather than only carrying them as data.
+A request nothing can satisfy is the model's to fix, so the shell tool reports it
+as `no_compatible_backend` naming the backend that refused and why, instead of
+folding it into the generic infrastructure error.
+
+The local and container backends support disjoint filesystem modes, which makes
+the shell tool's defaults decide the backend before `auto` ever ranks candidates.
+Local backends support only `filesystem_mode="host"` and report network isolation
+as unsupported; the container supports only the workspace modes. A default of
+`workspace-read` or `network_access=false` therefore eliminates every local
+candidate, and every command lands in a sandbox that holds no project
+dependencies and no package index.
+The shell tool consequently defaults to `filesystem_mode="host"` and
+`network_access=true`, so ordinary work reaches the machine the user is actually
+on, and asking for the container, a workspace filesystem mode, or no network is
+what opts into isolation.
+The approval gate, not the sandbox, is the boundary that protects the default
+path: every command is fingerprinted, previewed, and approved before it runs.
 
 `BackendDescriptor.available` means the host prerequisites for that adapter
 were discovered. It does not by itself authorize a command. Every concrete
@@ -1478,6 +1508,9 @@ Keep these invariants stable as the codebase grows:
 * local POSIX and Windows execution never claim filesystem or network isolation
 * discovery facts are bounded, explicit, and separated from pure selection
 * backend selection compares every capability requirement independently
+* a default that no local backend can satisfy silently forces the sandbox
+* the machine the agent runs on is stated, never left to be discovered
+* a request nothing can run names what refused it and why
 * an explicit backend or shell preference is never silently downgraded
 * execution cannot start before its pending audit evidence is durable
 * every admitted execution ends in one immutable terminal audit state
