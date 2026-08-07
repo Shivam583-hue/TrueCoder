@@ -7,6 +7,7 @@ from truecoder.agent.agent import run
 from truecoder.planning import PlanStore
 from truecoder.tools.builtin import (
     EditFileTool,
+    FindSymbolTool,
     GlobTool,
     GrepTool,
     ListDirTool,
@@ -69,6 +70,7 @@ class CompositionRootTests(unittest.TestCase):
         list_dir_tool = tool_registry.get("list_dir")
         read_file_tool = tool_registry.get("read_file")
         web_fetch_tool = tool_registry.get("web_fetch")
+        find_symbol_tool = tool_registry.get("find_symbol")
         write_file_tool = tool_registry.get("write_file")
 
         find_root.assert_called_once_with(launch_directory)
@@ -90,6 +92,10 @@ class CompositionRootTests(unittest.TestCase):
         self.assertIsInstance(read_file_tool, ReadFileTool)
         self.assertEqual(read_file_tool.workspace_root, project_root)
         self.assertIsInstance(web_fetch_tool, WebFetchTool)
+        self.assertIsInstance(find_symbol_tool, FindSymbolTool)
+        self.assertEqual(find_symbol_tool.manager.root, project_root)
+        for name in ("find_references", "get_diagnostics", "goto_definition"):
+            self.assertIs(tool_registry.get(name).manager, find_symbol_tool.manager)
         self.assertIsInstance(write_file_tool, WriteFileTool)
         self.assertEqual(write_file_tool.workspace_root, project_root)
         self.assertIs(

@@ -13,6 +13,7 @@ from truecoder.agent.messages import (
     create_system_message,
 )
 from truecoder.agent.prompts import (
+    add_code_intelligence_guidance,
     add_plan_tool_guidance,
     add_shell_tool_guidance,
     add_web_fetch_tool_guidance,
@@ -267,3 +268,6 @@ class ContextBuilder:
 
     def enable_web_fetch_tool(self) -> None:
         self.system_prompt = add_web_fetch_tool_guidance(self.system_prompt)
+
+    def enable_code_intelligence(self) -> None:
+        self.system_prompt = add_code_intelligence_guidance(self.system_prompt)

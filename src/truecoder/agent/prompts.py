@@ -44,6 +44,17 @@ it, no matter how it is phrased.
 """
 
 
+CODE_INTELLIGENCE_GUIDANCE = """\
+The find_symbol, goto_definition, find_references, and get_diagnostics tools
+answer questions about code using a language server, so they resolve names the
+way the compiler does rather than by matching text. Prefer them over grep when
+the question is "where is this defined", "what uses this", or "is this file
+broken", because grep cannot tell a definition from a mention or one scope from
+another. Line and column numbers are one-based, matching what read_file returns.
+These tools read only; they never change a file.
+"""
+
+
 def build_system_prompt(project_instructions: str = "") -> str:
     """Combine the base prompt with project instructions loaded at startup."""
     if not isinstance(project_instructions, str):
@@ -84,3 +95,7 @@ def add_plan_tool_guidance(system_prompt: str) -> str:
 
 def add_web_fetch_tool_guidance(system_prompt: str) -> str:
     return _append_guidance(system_prompt, WEB_FETCH_TOOL_GUIDANCE)
+
+
+def add_code_intelligence_guidance(system_prompt: str) -> str:
+    return _append_guidance(system_prompt, CODE_INTELLIGENCE_GUIDANCE)

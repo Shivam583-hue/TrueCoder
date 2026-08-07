@@ -34,6 +34,7 @@ from truecoder.execution.cancellation import CancellationSource
 from truecoder.execution.context import ExecutionContextFactory, workspace_id_for
 from truecoder.execution.events import ExecutionEventSink
 from truecoder.execution.runner import PreviewSink
+from truecoder.lsp.manager import LspManager
 from truecoder.mutation import FileDiff
 from truecoder.planning import PlanStore
 from truecoder.session import (
@@ -64,6 +65,7 @@ from truecoder.tools.builtin import (
     UpdatePlanTool,
     WebFetchTool,
     WriteFileTool,
+    code_intelligence_tools,
 )
 from truecoder.tools.mutation_audit import (
     MutationAudit,
@@ -150,6 +152,7 @@ class Agent:
         self.max_iterations = max_iterations
         self.plan_store = plan_store
         self.summarizer = summarizer
+        self.close_failures = 0
         if plan_store is not None:
             if "update_plan" not in self.tool_registry:
                 self.tool_registry.register(UpdatePlanTool(plan_store))
@@ -157,6 +160,8 @@ class Agent:
             self.context_builder.enable_plan_tool()
         if "web_fetch" in self.tool_registry:
             self.context_builder.enable_web_fetch_tool()
+        if "find_symbol" in self.tool_registry:
+            self.context_builder.enable_code_intelligence()
         self._execution_context_factory = (
             execution_context_factory or ExecutionContextFactory()
         )
@@ -504,6 +509,14 @@ class Agent:
         self.state.reset()
 
     async def close(self) -> None:
+        for tool in self.tool_registry.all():
+            closer = getattr(tool, "aclose", None)
+            if not callable(closer):
+                continue
+            try:
+                await closer()
+            except Exception:  # noqa: BLE001 - one bad tool cannot block shutdown
+                self.close_failures += 1
         await self.llm_client.close()
 
 
@@ -532,6 +545,9 @@ def run() -> None:
     tool_registry.register(ListDirTool(project_root))
     tool_registry.register(ReadFileTool(project_root))
     tool_registry.register(WebFetchTool())
+    lsp_manager = LspManager(project_root)
+    for tool in code_intelligence_tools(lsp_manager):
+        tool_registry.register(tool)
     tool_registry.register(WriteFileTool(project_root, mutation_audit))
     agent = Agent(
         state=state,

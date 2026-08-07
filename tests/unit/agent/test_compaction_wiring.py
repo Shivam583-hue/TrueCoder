@@ -134,5 +134,49 @@ class CompactionWiringTests(unittest.IsolatedAsyncioTestCase):
             )
 
 
+class ToolShutdownTests(unittest.IsolatedAsyncioTestCase):
+    async def test_closing_the_agent_closes_every_closeable_tool(self):
+        from truecoder.tools import ToolApproval, ToolArguments, ToolRegistry
+        from truecoder.tools.base import BaseTool
+
+        closed: list[str] = []
+
+        class Closeable(BaseTool[ToolArguments]):
+            name = "closeable"
+            description = "A tool that owns a resource."
+            arguments_type = ToolArguments
+            approval = ToolApproval.NOT_REQUIRED
+
+            async def run(self, arguments, invocation=None):
+                return {}
+
+            async def aclose(self) -> None:
+                closed.append(self.name)
+
+        class Exploding(Closeable):
+            name = "exploding"
+
+            async def aclose(self) -> None:
+                raise RuntimeError("cannot close")
+
+        registry = ToolRegistry()
+        registry.register(Exploding())
+        registry.register(Closeable())
+        agent = Agent(
+            llm_client=ScriptedLLMClient([]),
+            tool_registry=registry,
+            context_builder=ContextBuilder(
+                system_prompt="s",
+                max_input_tokens=10,
+                token_counter=FixedTokenCounter(),
+            ),
+        )
+
+        await agent.close()
+
+        self.assertEqual(closed, ["closeable"])
+        self.assertEqual(agent.close_failures, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
