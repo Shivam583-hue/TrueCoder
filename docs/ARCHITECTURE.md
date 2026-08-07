@@ -857,6 +857,18 @@ what opts into isolation.
 The approval gate, not the sandbox, is the boundary that protects the default
 path: every command is fingerprinted, previewed, and approved before it runs.
 
+Policy keeps one lever over that default. A command whose risk reaches critical
+and that policy still permits has its filesystem and network isolation raised to
+the configured minimum, which no local backend can provide.
+Policy never rewrites the request to achieve this, because selection never
+mutates what it was asked for. It raises the requirement and lets selection fail,
+so a critical command asking for the host is refused with both rejections named
+rather than quietly run unprotected. Moving it into the sandbox is an explicit
+new request.
+Every rule that reaches critical today is also denied outright, so the escalation
+matters most for `unknown_risk`: an operator who sets it to `critical` gets every
+unrecognised command forced into the sandbox instead of onto their machine.
+
 `BackendDescriptor.available` means the host prerequisites for that adapter
 were discovered. It does not by itself authorize a command. Every concrete
 backend must pass the shared contract suite before the execution service can
@@ -1511,6 +1523,9 @@ Keep these invariants stable as the codebase grows:
 * a default that no local backend can satisfy silently forces the sandbox
 * the machine the agent runs on is stated, never left to be discovered
 * a request nothing can run names what refused it and why
+* a permitted critical command is refused on the host, never run unprotected
+* policy raises a requirement and never rewrites the request to meet it
+* a tool call that never started still shows what it tried to run
 * an explicit backend or shell preference is never silently downgraded
 * execution cannot start before its pending audit evidence is durable
 * every admitted execution ends in one immutable terminal audit state
