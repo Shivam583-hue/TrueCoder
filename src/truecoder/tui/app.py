@@ -39,6 +39,12 @@ from truecoder.tui.checkpoints import (
     CheckpointBrowserScreen,
     RestoreCheckpointScreen,
 )
+from truecoder.tui.commands import (
+    help_text,
+    looks_like_command,
+    parse_command,
+    unknown_command_message,
+)
 from truecoder.tui.execution_health import (
     ExecutionHealthScreen,
     health_failure_message,
@@ -49,6 +55,7 @@ from truecoder.tui.execution_view import (
     is_terminal_stage,
 )
 from truecoder.tui.memory import MemoryAction, MemoryBrowserScreen
+from truecoder.tui.model_picker import ModelPickerScreen
 from truecoder.tui.sessions import (
     DeleteSessionScreen,
     RenameSessionScreen,
@@ -311,7 +318,59 @@ class TrueCoderApp(App[None]):
 
     @on(PromptInput.Submitted)
     async def submit_from_keyboard(self, event: PromptInput.Submitted) -> None:
+        if looks_like_command(event.value):
+            self.query_one(PromptInput).text = ""
+            await self._run_command(event.value)
+            return
         await self._submit_prompt(event.value)
+
+    async def _run_command(self, text: str) -> None:
+        parsed = parse_command(text)
+        if parsed is None:
+            self.notify(unknown_command_message(text), severity="warning")
+            return
+
+        if parsed.name == "help":
+            self.notify(help_text(), timeout=12)
+            return
+
+        if parsed.name == "model":
+            self.notify(f"Answering with {self.agent.llm_client.settings.model}")
+            return
+
+        if parsed.name == "models":
+            await self._choose_model(refresh=parsed.argument == "refresh")
+
+    async def _choose_model(self, *, refresh: bool = False) -> None:
+        from truecoder.providers.catalog import CatalogError, load_models
+
+        settings = self.agent.llm_client.settings
+        models: tuple = ()
+        reason: str | None = None
+        try:
+            models = await load_models(
+                settings.provider,
+                settings.credential,
+                refresh=refresh,
+            )
+        except CatalogError as error:
+            reason = str(error)
+
+        if reason is None and not models:
+            reason = "the provider listed no models"
+
+        self.push_screen(
+            ModelPickerScreen(models, settings.model, unavailable_reason=reason),
+            self._apply_model_choice,
+        )
+
+    def _apply_model_choice(self, model: str | None) -> None:
+        if not model:
+            return
+        self.agent.llm_client.settings.select_model(model)
+        self._model_name = model
+        self.query_one(Composer).set_model_name(model)
+        self.notify(f"Now answering with {model}")
 
     @on(ExecutionStageMessage)
     async def advance_execution_card(self, message: ExecutionStageMessage) -> None:

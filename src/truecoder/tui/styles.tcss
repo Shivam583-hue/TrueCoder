@@ -27,6 +27,7 @@ SessionManagerScreen,
 RenameSessionScreen,
 DeleteSessionScreen,
 AuditViewerScreen,
+ModelPickerScreen,
 ExecutionHealthScreen {
     align: center middle;
     background: #00000099;
@@ -1096,4 +1097,58 @@ ExecutionCard.expanded .execution-details {
     width: 100%;
     height: auto;
     color: $tc-text-secondary;
+}
+
+/* Model picker */
+#model-picker-dialog {
+    width: 78;
+    max-width: 92%;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $tc-surface;
+    border: round $tc-border;
+}
+
+.model-dialog-title {
+    color: $tc-text;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#model-filter {
+    margin-bottom: 1;
+    background: $tc-surface-hover;
+    border: none;
+    height: 3;
+}
+
+#model-list {
+    height: auto;
+    max-height: 24;
+    background: transparent;
+}
+
+.model-item {
+    padding: 0 1;
+    background: transparent;
+}
+
+.model-item.active .model-item-line {
+    color: $tc-blue;
+    text-style: bold;
+}
+
+.model-item-line {
+    color: $tc-text-secondary;
+}
+
+.model-dialog-empty {
+    color: $tc-text-muted;
+    margin-bottom: 1;
+}
+
+.model-dialog-help {
+    color: $tc-text-muted;
+    margin-top: 1;
 }

@@ -224,6 +224,17 @@ class Composer(Vertical):
     def set_busy(self, busy: bool) -> None:
         self.set_class(busy, "busy")
 
+    def set_model_name(self, model_name: str) -> None:
+        self.model_name = model_name
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one("#composer-metadata", Static).update(
+                _session_metadata(model_name)
+            )
+        except NoMatches:
+            return
+
 
 class ChatMessage(Vertical):
     """A user or assistant entry in the chronological timeline."""
