@@ -717,6 +717,16 @@ compact completed summaries such as `Listed src · 4 entries`,
 `Edited src/app.py · 1 replacement`; the same summaries are reconstructed when
 a session is resumed.
 
+An edit call carries a list of edits rather than one replacement. They apply in
+order to the in-memory text, each seeing the result of the one before it, and the
+file is written once at the end. A series that fails at any point writes nothing,
+so a partially applied refactor is not a state the workspace can reach. The
+rejection names which edit failed and why, because "old_text was not found" is
+useless when four were submitted.
+
+This matters for cost as much as correctness. A ten-site change used to be ten
+tool calls, ten approvals, and ten model requests against a fixed iteration cap.
+
 ## Task planning
 
 The planner exists so a long task keeps its shape. It is a checklist, not an
@@ -1590,6 +1600,72 @@ closing it. Shutdown now releases it beside the memory store, and a failure to
 close is counted rather than raised, because one stuck handle must not prevent
 releasing the next.
 
+## Running without a person
+
+The interface used to be the only entry point, which quietly made three things
+impossible: continuous integration, scripting, and subagents, since a subagent is
+a headless agent. Composition is therefore separate from presentation.
+`build_session` assembles the agent, tools, stores, and session manager and
+returns them; `run_interactive` puts a Textual app in front of that, and the
+one-shot path drives the same object and renders events to a stream.
+
+The interesting problem is not plumbing, it is what approval means when nobody is
+there to give it. Refusing everything makes the mode useless and approving
+everything discards the execution platform, so an autonomy level names a risk
+ceiling and the existing classification decides the rest. `read-only` permits
+neither a file change nor a command, `edit` permits changes and commands up to
+medium risk, and `full` permits up to high; critical is denied by policy before
+autonomy is consulted. The default is the most restrictive one, because an
+operator who did not choose should get the safe answer.
+
+A refusal is stated rather than silent. Each one names the tool and the ceiling
+it exceeded, printed to standard error, so a run that did less than expected
+explains why instead of looking like the model gave up.
+
+This is also what made the risk taxonomy matter. When every default request
+carried a high-risk finding for touching the host filesystem, `ls` and
+`rm -rf build` scored identically, and no ceiling built on that could
+discriminate. Request shape now states what access was granted without inflating
+risk, and the command decides the level.
+
+## Scoring the agent
+
+Every improvement in this project so far was found by watching a session fail.
+That finds real defects and cannot answer whether a change made the agent better.
+
+An evaluation task is a set of files, a prompt, and a check that inspects the
+workspace afterwards. The runner materialises each task into a throwaway
+directory, runs one turn, and applies the check to what is on disk. Checks assert
+outcomes, not calls: that a file now contains something, or that a file the task
+forbade touching is byte-identical. A task that asks a question ships with a check
+that nothing changed, because a read-only request that edits anyway has failed
+even when the answer is right.
+
+One task never stops the suite. A factory that raises, a turn that errors, and a
+check that fails all become the same thing: one failed result carrying a reason.
+
+## Delegation
+
+A subagent shares the workspace and nothing else. It gets a fresh state, a fresh
+context, its own iteration budget, and a tool registry without `delegate` in it,
+so depth is bounded structurally rather than by a counter anyone could forget.
+
+Only the final reply crosses back. The subagent's transcript, its tool results,
+and the files it read stay in its own context, which is the entire point: the
+parent pays for one report instead of the whole investigation.
+
+The tool defines the contract and the agent layer implements it. `delegate` knows
+about a runner that takes a task and returns a reply, a call count, and an
+optional error; it does not import the agent, because tools do not depend on
+outer layers. The composition root supplies a runner that drives a real agent and
+maps its event stream into that shape.
+
+Approval is inherited, not bypassed. The subagent uses the parent's approval
+handler, so a delegated command reaches the same person or the same autonomy
+ceiling as a direct one. Delegation moves work off the parent's context; it does
+not move it outside the gate. A subagent that fails returns an error the parent
+can read and react to, rather than a silence it has to interpret.
+
 ## Design rules
 
 Keep these invariants stable as the codebase grows:
@@ -1687,6 +1763,16 @@ Keep these invariants stable as the codebase grows:
 * a path rooted under either platform convention is refused under both
 * a budget too small to hold one ordinary file makes the agent re-read forever
 * the system prompt teaches the agent to work, it does not describe the agent
+* composition is separate from presentation, so the agent can run without a UI
+* with nobody watching, the safe answer is the default answer
+* an unattended refusal is stated, never silent
+* risk describes the command, never the shape every command shares
+* a task is scored by what it left on disk, not by which calls it made
+* one failed task never stops the suite
+* a subagent shares the workspace and nothing else
+* only a subagent's reply crosses back, never its transcript
+* a subagent cannot delegate, and inherits the approval it cannot bypass
+* several edits to one file land together or not at all
 * an explicit backend or shell preference is never silently downgraded
 * execution cannot start before its pending audit evidence is durable
 * every admitted execution ends in one immutable terminal audit state

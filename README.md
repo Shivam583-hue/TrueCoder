@@ -9,7 +9,7 @@
 [![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](#testing)
 
 TrueCoder is a Python agent runtime that reads, searches, edits, and runs code inside one project.
-It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, fourteen approval-gated tools plus any MCP servers you configure, a task planner, language-server code intelligence, workspace checkpoints, durable memory, user-configured hooks, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
+It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, fifteen approval-gated tools plus any MCP servers you configure, a task planner, language-server code intelligence, workspace checkpoints, durable memory, user-configured hooks, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
 Shell execution passes through policy evaluation, capability-based backend selection, an approval fingerprint, a durable audit admission, a resource launch gate, arbitrated terminal outcomes, and one immutable terminal audit record.
 Commands run on your machine by default, with the toolchain, virtual environments, and caches you already have, because the approval gate is the security boundary and an agent that cannot run your test suite is not useful.
 When a command must be isolated instead, the certified sandbox profile runs it in a digest-pinned, non-root, read-only, network-denied, capability-dropped Docker container that is proven against real Docker rather than assumed safe.
@@ -44,7 +44,7 @@ Coming soon...
 - **Terminal-native agent** - a Textual TUI with streaming responses, live tool cards, inline approvals, cancellation, and token accounting.
 - **Turn-based conversation model** - only complete, valid turns enter history, so a tool call never survives without its result.
 - **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
-- **Fourteen approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, `get_diagnostics`, `remember`, and `forget`, each with its own validated schema and security boundary. A tool call the model gets wrong comes back as an error it can read and retry, so a bad argument costs one call rather than the turn.
+- **Fifteen approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, `get_diagnostics`, `remember`, `forget`, and `delegate`, each with its own validated schema and security boundary. `edit_file` takes a list of edits applied together, so a multi-site change costs one call and one approval and either lands whole or not at all. A tool call the model gets wrong comes back as an error it can read and retry, so a bad argument costs one call rather than the turn.
 - **A context budget that is actually enforced** - a single shell or fetch result can exceed the whole token budget, so oversized tool results are shortened where the request is assembled, into a valid envelope that says how much was dropped. The stored turn, the session record, and the audit keep the complete result.
 - **Memory you can read, correct, and delete** - `remember` records a durable fact about the project and `forget` drops one, both approval-gated because they change behaviour in future sessions. A note that stops being true is corrected in one step with `replaces`, so a correction never leaves the old version contradicting the new one on every later turn. Notes are keyed case- and punctuation-insensitively so trivial variants cannot crowd out real facts, they are scoped to one workspace, projected into every request, and `ctrl+n` shows exactly what the model is being told.
 - **Hooks that run inside the execution plane** - a versioned `hooks.json` can run your formatter or linter at turn start or after a turn that changed files. Because you wrote the config, a hook is pre-authorised rather than prompting, but it is still bounded, policy-checked, and written to the same durable audit as any other command.
@@ -63,6 +63,9 @@ Coming soon...
 - **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
 - **Policy-evaluated execution** - ordered rules classify read-only, test, build, package, network, deletion, permission, Git, script, and unknown commands, and requested limits can only tighten the configured ceiling.
 - **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
+- **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. With nobody watching, what may proceed is a configured decision rather than an accident: `--autonomy read-only|edit|full` sets a risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
+- **Scored, not vibed** - `truecoder --eval` runs a fixed set of tasks in throwaway workspaces and reports how many passed, so "did that change help?" has an answer. Each task asserts an outcome on disk rather than which calls were made.
+- **Delegation with a hard boundary** - `delegate` hands a self-contained subtask to a fresh agent that shares the workspace but starts with an empty conversation. Only its final reply crosses back, never its transcript, it cannot delegate again, and it is approval-gated like any other tool.
 - **MCP servers, treated as untrusted** - configured servers contribute their tools through the same registry, approval fingerprint, and audit as everything else. Their schemas are bounded before the model ever sees them, their names are namespaced so nothing can shadow a built-in, and their output is labelled as third-party data the model must never take instructions from. A server that fails to start is reported and skipped; it never stops the others or the application.
 - **A system prompt that teaches the agent to work** - learn how the repository builds and tests itself before running anything, never install a tool to make a command succeed, treat a shortened result as an instruction to read a narrower range rather than the same one again, and remember that every call spends a human approval. Each rule is there because its absence was observed costing a turn.
 - **The agent knows what machine it is on** - the working directory, operating system, interpreter, and any workspace virtual environment are gathered at startup and stated in the system prompt, so the model runs your test suite through the right interpreter instead of probing for it or guessing.
@@ -125,6 +128,7 @@ TrueCoder/
 │   │   ├── approval.py                # Agent-side approval routing
 │   │   ├── prompts.py                 # System prompt and conditional tool guidance
 │   │   ├── environment.py             # Startup facts about the machine and its interpreters
+│   │   ├── autonomy.py                # What may proceed with nobody watching
 │   │   └── project_instructions.py    # Project root discovery and AGENTS.md loading
 │   │
 │   ├── memory/                        # Durable per-workspace notes
@@ -146,7 +150,13 @@ TrueCoder/
 │   │   ├── changes.py                 # Working tree against a checkpoint tree
 │   │   └── service.py                 # Capture, list, prune, restore, compare
 │   │
+│   ├── cli.py                         # Interactive launch, one-shot prompts, and scoring
 │   ├── workspace.py                   # One containment rule for workspace-relative paths
+│   │
+│   ├── evaluation/                    # Fixed tasks scored in throwaway workspaces
+│   │   ├── models.py                  # Tasks, outcome checks, and the report
+│   │   ├── runner.py                  # One task per temporary workspace
+│   │   └── tasks.py                   # The shipped task set
 │   │
 │   ├── jsonrpc/                       # Shared JSON-RPC over stdio
 │   │   ├── framing.py                 # Framing contract and neutral message builders
@@ -190,6 +200,7 @@ TrueCoder/
 │   │   ├── mutation_audit.py          # Immutable evidence for every applied change
 │   │   └── builtin/
 │   │       ├── filesystem.py          # Shared sensitive-path and containment policy
+│   │       ├── delegate.py            # A bounded subtask handed to a fresh agent
 │   │       ├── read_file.py           # Bounded UTF-8 line ranges, 500-line default window
 │   │       ├── write_file.py          # Atomic replacement, 32 KiB cap, diff preview
 │   │       ├── edit_file.py           # Exact-text edits with concurrent-change detection
@@ -288,6 +299,7 @@ TrueCoder/
     │   ├── planning/                  # Plan and step invariants
     │   ├── mutation/                  # Diff hunks, bounds, and truncation
     │   ├── web/                       # URL policy, SSRF refusals, extraction
+    │   ├── evaluation/                # Task checks, the runner, and the report
     │   ├── jsonrpc/                   # Transport lifecycle and request routing
     │   ├── mcp/                       # Framing, schema bounds, client, adapter, manager
     │   ├── lsp/                       # Framing, client, discovery
@@ -360,13 +372,13 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **35,586** across 149 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,435 lines**, 55% of src | The execution control plane, audit store, and platform backends. Tools are 4,019 lines, the TUI is 3,579, the agent is 2,610, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, the client is 435, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, and planning is 146. |
-| Test lines                 |                      **36,684** across 196 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.02 to 1.                                       |
-| Automated scenarios        |                      **1,967**, locally clean   | 1,734 unit, 146 integration, 41 contract, 24 end-to-end, and 22 sandbox scenarios. On Linux, 1,954 pass and 13 Windows-only scenarios skip.                     |
-| Unit suite                 |                  **1,734 passing in 10.9 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **36,357** across 156 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,435 lines**, 53% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 3,579, the agent is 2,783, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, the client is 435, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
+| Test lines                 |                      **37,824** across 204 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.02 to 1.                                       |
+| Automated scenarios        |                      **2,055**, locally clean   | 1,818 unit, 146 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,042 pass and 13 Windows-only scenarios skip.                     |
+| Unit suite                 |                  **1,818 passing in 11.5 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
-| End-to-end suite           |                                 **24 passing** | A scripted model drives a real agent with real tools against a real workspace, asserting what changed on disk, which backend ran, and that results reached the model intact. |
+| End-to-end suite           |                                 **28 passing** | A scripted model drives a real agent with real tools against a real workspace, asserting what changed on disk, which backend ran, and that results reached the model intact. |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
 | Lint                       |                          **ruff check clean** | ruff 0.16.0 over `src`, `tests`, and `container`.                                                                                                            |
 | Certified sandbox profile  |         **Linux + Docker + one pinned image** | Podman and nerdctl are refused until their dialects pass the same tests. Non-Linux hosts report `container-platform-unsupported`.                             |
@@ -782,6 +794,9 @@ Update `container/image.lock` in the same commit, because discovery refuses an i
 | `python -m unittest discover -s tests/contract -t .` | Run the backend contract suite                                  |
 | `python -m unittest discover -s tests/integration -t .` | Run real-process, SQLite, and TUI integration scenarios      |
 | `python -m unittest discover -s tests/e2e -t .`      | Run the end-to-end task suite                                   |
+| `truecoder -p "..."`                                 | Run one prompt without the interface                            |
+| `truecoder -p "..." --autonomy edit`                 | Allow file changes and medium-risk commands unattended          |
+| `truecoder --eval`                                   | Score the agent on the shipped tasks                            |
 | `python -m unittest discover -s tests/sandbox -t .`  | Run the adversarial Docker sandbox suite                        |
 | `ruff check src tests container`                     | Lint source, tests, and the image entrypoint                    |
 | `docker build -t truecoder-exec:1 container/`        | Build the execution sandbox image                               |
