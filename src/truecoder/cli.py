@@ -42,6 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Stop the turn after this many model requests.",
     )
     parser.add_argument(
+        "--eval",
+        dest="run_eval",
+        action="store_true",
+        help="Score the agent on the shipped tasks and report how many passed.",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Print only the final reply.",
@@ -94,6 +100,29 @@ def _report_refusals(handler: UnattendedApprovals, stream: TextIO) -> None:
         print(f"refused {tool_name}: {reason}", file=stream)
 
 
+def _eval_agent_factory(autonomy: Autonomy):
+    from truecoder.agent.agent import build_eval_agent
+
+    def build(root, task):
+        agent = build_eval_agent(root, max_iterations=task.max_iterations)
+        agent.approval_handler = UnattendedApprovals(autonomy)
+        return agent
+
+    return build
+
+
+async def _evaluate(arguments, *, stream: TextIO) -> int:
+    from truecoder.evaluation import DEFAULT_TASKS, run_suite
+
+    autonomy = autonomy_from_name(arguments.autonomy)
+    report = await run_suite(DEFAULT_TASKS, _eval_agent_factory(autonomy))
+
+    for result in report.results:
+        print(result.summary, file=stream)
+    print(report.summary)
+    return EXIT_OK if report.is_clean else EXIT_FAILED
+
+
 async def _headless(arguments, *, stream: TextIO) -> int:
     from truecoder.agent.agent import build_session
 
@@ -125,6 +154,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
 
+    try:
+        autonomy_from_name(arguments.autonomy)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_USAGE
+
+    if arguments.run_eval:
+        return asyncio.run(_evaluate(arguments, stream=sys.stderr))
+
     if arguments.prompt is None:
         from truecoder.agent.agent import run_interactive
 
@@ -133,12 +171,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not arguments.prompt.strip():
         print("error: the prompt cannot be empty", file=sys.stderr)
-        return EXIT_USAGE
-
-    try:
-        autonomy_from_name(arguments.autonomy)
-    except ValueError as error:
-        print(f"error: {error}", file=sys.stderr)
         return EXIT_USAGE
 
     if arguments.max_iterations is not None and arguments.max_iterations < 1:

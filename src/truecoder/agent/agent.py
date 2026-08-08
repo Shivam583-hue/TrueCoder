@@ -781,6 +781,30 @@ def build_session(*, max_iterations: int | None = None) -> AgentSession:
     )
 
 
+def build_eval_agent(project_root: Path, *, max_iterations: int = 12) -> Agent:
+    from truecoder.execution.configuration import load_execution_config
+
+    mutation_audit = MutationAudit(project_root / ".truecoder-mutations.sqlite3")
+    tool_registry = ToolRegistry()
+    tool_registry.register(EditFileTool(project_root, mutation_audit))
+    tool_registry.register(GlobTool(project_root))
+    tool_registry.register(GrepTool(project_root))
+    tool_registry.register(ListDirTool(project_root))
+    tool_registry.register(ReadFileTool(project_root))
+    tool_registry.register(WriteFileTool(project_root, mutation_audit))
+    return Agent(
+        state=AgentState(),
+        context_builder=ContextBuilder.from_environment(
+            environment=describe_environment(collect_environment(project_root)),
+        ),
+        tool_registry=tool_registry,
+        project_root=project_root,
+        execution_bootstrap_config=load_execution_config(),
+        mutation_audit=mutation_audit,
+        max_iterations=max_iterations,
+    )
+
+
 def run_interactive() -> None:
     from truecoder.tui.app import TrueCoderApp
 
