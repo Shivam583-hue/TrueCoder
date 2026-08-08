@@ -243,8 +243,8 @@ ArgumentsT = TypeVar("ArgumentsT", bound=ToolArguments)
 class BaseTool(ABC, Generic[ArgumentsT]):
     """Base class shared by all executable tools."""
 
-    name: ClassVar[str]
-    description: ClassVar[str]
+    name: str
+    description: str
     arguments_type: ClassVar[type[ArgumentsT]]
     approval: ClassVar[ToolApproval] = ToolApproval.REQUIRED
 
