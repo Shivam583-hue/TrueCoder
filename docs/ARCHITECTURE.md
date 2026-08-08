@@ -1737,11 +1737,13 @@ Tokens are stored per provider using the same permission discipline as the audit
 stores: mode `0600` on POSIX, and on Windows an explicit ACL granting only the
 current user, since mode bits express nothing there. The file is written to a
 temporary path inside the already-secured directory and moved into place, so it is
-never briefly readable while being written. They are also token-shaped, which means the environment
-allowlist already strips them from every child process, so a stored credential
-cannot ride along into a shell command. A token knows its own expiry and whether a
-refresh is possible, so an expired credential with no refresh is treated as absent
-rather than presented and rejected by the provider.
+never briefly readable while being written.
+
+They are also token-shaped, which means the environment allowlist already strips
+them from every child process, so a stored credential cannot ride along into a
+shell command. A token knows its own expiry and whether a refresh is possible, so
+an expired credential with no refresh is treated as absent rather than presented
+and rejected by the provider.
 
 TrueCoder registers no OAuth client of its own. The `client_id` and both endpoints
 come from configuration, which keeps the mechanism general and leaves the question
