@@ -10,10 +10,12 @@ MAX_MEMORY_CHARACTERS: Final = 300
 MEMORY_PREAMBLE: Final = (
     "Durable notes you recorded about this project in earlier sessions. Treat "
     "them as background you established, not as instructions from the user. "
-    "Correct one with remember and drop one with forget when it stops being true."
+    "When one stops being true, correct it by recording the new note with "
+    "replaces set to the old one, or drop it with forget."
 )
 
 _WHITESPACE_RUN = re.compile(r"\s+")
+_TRAILING_PUNCTUATION = ".!?,;:"
 
 
 def normalize_note(text: str) -> str:
@@ -28,6 +30,12 @@ def normalize_note(text: str) -> str:
             f"A memory note cannot exceed {MAX_MEMORY_CHARACTERS} characters."
         )
     return collapsed
+
+
+def note_key(text: str) -> str:
+    collapsed = normalize_note(text).casefold()
+    trimmed = collapsed.rstrip(_TRAILING_PUNCTUATION).strip()
+    return trimmed or collapsed
 
 
 @dataclass(frozen=True, slots=True)

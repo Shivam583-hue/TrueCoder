@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
@@ -16,9 +17,10 @@ from truecoder.memory.models import (
     Memory,
     MemoryEntry,
     normalize_note,
+    note_key,
 )
 
-MEMORY_SCHEMA_VERSION: Final = 1
+MEMORY_SCHEMA_VERSION: Final = 2
 
 _SCHEMA_SQL: Final = """
 BEGIN IMMEDIATE;
@@ -32,19 +34,20 @@ CREATE TABLE memory_entries (
     entry_id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
     note TEXT NOT NULL,
+    note_key TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 
 CREATE INDEX memory_entries_workspace
     ON memory_entries(workspace_id, created_at);
 
-CREATE UNIQUE INDEX memory_entries_unique_note
-    ON memory_entries(workspace_id, note);
+CREATE UNIQUE INDEX memory_entries_unique_key
+    ON memory_entries(workspace_id, note_key);
 
 INSERT INTO memory_schema(version, installed_at)
-VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 COMMIT;
 """
 
@@ -74,7 +77,6 @@ class MemoryStore:
         self._permissions = permissions or AuditPermissions()
         self._limit = limit
         self._connection: sqlite3.Connection | None = None
-        self.failures = 0
 
     def open(self) -> None:
         if self._connection is not None:
@@ -106,8 +108,10 @@ class MemoryStore:
         self._permissions.secure_sidecars(self.database_path)
         self._connection = connection
 
-    def remember(self, note: str) -> MemoryEntry:
+    def remember(self, note: str, *, replaces: str | None = None) -> MemoryEntry:
         cleaned = normalize_note(note)
+        key = note_key(cleaned)
+        superseded = None if replaces is None else note_key(replaces)
         self.open()
         assert self._connection is not None
 
@@ -117,15 +121,32 @@ class MemoryStore:
             note=cleaned,
             created_at=datetime.now(UTC).isoformat(),
         )
-        self._connection.execute(
-            """
-            INSERT INTO memory_entries (entry_id, workspace_id, note, created_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(workspace_id, note) DO NOTHING
-            """,
-            (entry.entry_id, entry.workspace_id, entry.note, entry.created_at),
-        )
-        self._prune()
+
+        with self._transaction():
+            if superseded is not None and superseded != key:
+                self._connection.execute(
+                    "DELETE FROM memory_entries "
+                    "WHERE workspace_id = ? AND note_key = ?",
+                    (self.workspace_id, superseded),
+                )
+            self._connection.execute(
+                """
+                INSERT INTO memory_entries
+                    (entry_id, workspace_id, note, note_key, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(workspace_id, note_key)
+                DO UPDATE SET note = excluded.note
+                """,
+                (
+                    entry.entry_id,
+                    entry.workspace_id,
+                    entry.note,
+                    key,
+                    entry.created_at,
+                ),
+            )
+            self._prune()
+
         return self.find(cleaned) or entry
 
     def forget(self, entry_id: str) -> bool:
@@ -147,8 +168,8 @@ class MemoryStore:
         assert self._connection is not None
 
         row = self._connection.execute(
-            "SELECT * FROM memory_entries WHERE workspace_id = ? AND note = ?",
-            (self.workspace_id, normalize_note(note)),
+            "SELECT * FROM memory_entries WHERE workspace_id = ? AND note_key = ?",
+            (self.workspace_id, note_key(note)),
         ).fetchone()
         return None if row is None else self._entry(row)
 
@@ -184,6 +205,17 @@ class MemoryStore:
             self._connection.close()
             self._connection = None
 
+    @contextmanager
+    def _transaction(self):
+        assert self._connection is not None
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except BaseException:
+            self._connection.rollback()
+            raise
+        self._connection.commit()
+
     def _prune(self) -> None:
         assert self._connection is not None
         self._connection.execute(
@@ -210,11 +242,61 @@ class MemoryStore:
         )
 
     @staticmethod
+    def _migrate_to_keys(connection: sqlite3.Connection) -> None:
+        rows = connection.execute(
+            "SELECT entry_id, workspace_id, note FROM memory_entries"
+        ).fetchall()
+        keyed = [
+            (str(row["entry_id"]), str(row["workspace_id"]), note_key(row["note"]))
+            for row in rows
+        ]
+
+        newest: dict[tuple[str, str], str] = {}
+        for entry_id, workspace, key in keyed:
+            newest[(workspace, key)] = entry_id
+        survivors = set(newest.values())
+
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute("DROP INDEX IF EXISTS memory_entries_unique_note")
+            connection.execute(
+                "ALTER TABLE memory_entries ADD COLUMN note_key TEXT NOT NULL "
+                "DEFAULT ''"
+            )
+            for entry_id, _workspace, key in keyed:
+                if entry_id not in survivors:
+                    connection.execute(
+                        "DELETE FROM memory_entries WHERE entry_id = ?",
+                        (entry_id,),
+                    )
+                    continue
+                connection.execute(
+                    "UPDATE memory_entries SET note_key = ? WHERE entry_id = ?",
+                    (key, entry_id),
+                )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS memory_entries_unique_key "
+                "ON memory_entries(workspace_id, note_key)"
+            )
+            connection.execute(
+                "INSERT OR REPLACE INTO memory_schema(version, installed_at) "
+                "VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                (MEMORY_SCHEMA_VERSION,),
+            )
+            connection.execute(f"PRAGMA user_version = {MEMORY_SCHEMA_VERSION}")
+        except BaseException:
+            connection.rollback()
+            raise
+        connection.commit()
+
+    @staticmethod
     def _initialize(connection: sqlite3.Connection) -> None:
         try:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
             if version == 0:
                 connection.executescript(_SCHEMA_SQL)
+            elif version == 1:
+                MemoryStore._migrate_to_keys(connection)
             elif version != MEMORY_SCHEMA_VERSION:
                 raise AuditUnavailableError(
                     f"unsupported memory database version: {version}",
