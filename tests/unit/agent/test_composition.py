@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from truecoder.agent.agent import run
+from truecoder.agent.agent import run_interactive
 from truecoder.checkpoint import CheckpointService
 from truecoder.memory import MemoryStore
 from truecoder.planning import PlanStore
@@ -63,7 +63,7 @@ class CompositionRootTests(unittest.TestCase):
                 patch("truecoder.agent.agent.Agent") as agent_type,
                 patch("truecoder.tui.app.TrueCoderApp") as app_type,
             ):
-                run()
+                run_interactive()
 
         tool_registry = agent_type.call_args.kwargs["tool_registry"]
         edit_file_tool = tool_registry.get("edit_file")

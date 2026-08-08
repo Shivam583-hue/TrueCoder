@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from truecoder.agent.approval import (
@@ -712,11 +712,20 @@ class Agent:
         await self.llm_client.close()
 
 
-def run() -> None:
-    """Launch the TrueCoder terminal application."""
+@dataclass(frozen=True, slots=True)
+class AgentSession:
+    agent: Agent
+    session_manager: SessionManager
+    state: AgentState
+
+    async def close(self) -> None:
+        await self.agent.close()
+        self.session_manager.close()
+
+
+def build_session(*, max_iterations: int | None = None) -> AgentSession:
     from truecoder.execution.configuration import load_execution_config
     from truecoder.mcp.configuration import load_mcp_servers
-    from truecoder.tui.app import TrueCoderApp
 
     launch_directory = Path.cwd().resolve(strict=True)
     project_root = find_project_root(launch_directory)
@@ -760,9 +769,26 @@ def run() -> None:
         mutation_audit=mutation_audit,
         hooks=load_hooks(),
         mcp_manager=McpManager(load_mcp_servers(), project_root),
+        **({} if max_iterations is None else {"max_iterations": max_iterations}),
     )
     agent.summarizer = TurnSummarizer(agent.llm_client)
     session_store = SQLiteSessionStore(default_session_database_path())
     session_manager = SessionManager(session_store, state, project_root)
+    return AgentSession(
+        agent=agent,
+        session_manager=session_manager,
+        state=state,
+    )
 
-    TrueCoderApp(agent, session_manager=session_manager).run()
+
+def run_interactive() -> None:
+    from truecoder.tui.app import TrueCoderApp
+
+    session = build_session()
+    TrueCoderApp(session.agent, session_manager=session.session_manager).run()
+
+
+def run() -> None:
+    from truecoder.cli import main
+
+    raise SystemExit(main())

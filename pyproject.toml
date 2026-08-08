@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-truecoder = "truecoder.agent.agent:run"
+truecoder = "truecoder.cli:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
