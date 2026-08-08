@@ -1555,6 +1555,15 @@ not by inspecting an approval object.
 The rule this suite encodes is that a behaviour nobody exercises end to end is a
 behaviour nobody has checked, however many unit tests surround its parts.
 
+It has already earned that. The suite writes into a temporary workspace and
+deletes it afterwards, which on Windows fails while any handle is still open, and
+that is how an unclosed mutation-audit connection surfaced. `Agent.close` released
+the memory store and every tool exposing `aclose`, but the mutation audit was
+constructed as a local in composition and handed to two tools, so nothing owned
+closing it. Shutdown now releases it beside the memory store, and a failure to
+close is counted rather than raised, because one stuck handle must not prevent
+releasing the next.
+
 ## Design rules
 
 Keep these invariants stable as the codebase grows:
@@ -1603,6 +1612,7 @@ Keep these invariants stable as the codebase grows:
 * a tool call the model gets wrong is reported to it, never raised at the user
 * what will not fit is dropped whole, never cut wherever the edge falls
 * a widget that may already be unmounted is updated without raising
+* every durable handle the agent was given is released when it closes
 * tool calls always have matching results
 * only publicly routable addresses are reachable, by allowlist not blocklist
 * every resolved address is validated, not only the one that gets used
