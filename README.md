@@ -63,7 +63,8 @@ Coming soon...
 - **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
 - **Policy-evaluated execution** - ordered rules classify read-only, test, build, package, network, deletion, permission, Git, script, and unknown commands, and requested limits can only tighten the configured ceiling.
 - **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
-- **Switch models without restarting** - type `/models` to pick from everything your provider lists, filtered as you type and annotated with context windows. The list is fetched from the provider's own `/v1/models`, bounded like any other untrusted response, and cached for six hours so it never costs a request at launch. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type.
+- **Switch models without restarting** - type `/models` to pick from everything your provider lists, filtered as you type and annotated with context windows. The list comes from the provider's own `/v1/models`, bounded like any other untrusted response, and cached for six hours so it never costs a request at launch. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type.
+- **Two ways to authenticate** - an API key from the environment, or `/login` to authorise in your browser. The browser flow is OAuth 2.0 authorization code with PKCE, which is the correct grant for a program that cannot keep a secret: the verifier never leaves the process, the callback listens only on loopback for a single request, and a mismatched `state` is refused. Tokens are written `0600` in your config directory and are stripped from every child process environment by the same rule that strips any other credential.
 - **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. With nobody watching, what may proceed is a configured decision rather than an accident: `--autonomy read-only|edit|full` sets a risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
 - **Scored, not vibed** - `truecoder --eval` runs a fixed set of tasks in throwaway workspaces and reports how many passed, so "did that change help?" has an answer. Each task asserts an outcome on disk rather than which calls were made.
 - **Delegation with a hard boundary** - `delegate` hands a self-contained subtask to a fresh agent that shares the workspace but starts with an empty conversation. Only its final reply crosses back, never its transcript, it cannot delegate again, and it is approval-gated like any other tool.
@@ -155,7 +156,12 @@ TrueCoder/
 │   │
 │   ├── providers/                     # Where a model and its credentials come from
 │   │   ├── models.py                  # Credentials, providers, and the active selection
-│   │   └── catalog.py                 # Bounded model discovery with a cached TTL
+│   │   ├── catalog.py                 # Bounded model discovery with a cached TTL
+│   │   ├── configuration.py           # Strict providers.json, fail-closed
+│   │   ├── oauth.py                   # PKCE, the callback contract, and token lifetime
+│   │   ├── login.py                   # Loopback callback server and the browser round trip
+│   │   ├── store.py                   # The remembered model selection
+│   │   └── tokens.py                  # Private token storage, one entry per provider
 │   ├── workspace.py                   # One containment rule for workspace-relative paths
 │   │
 │   ├── evaluation/                    # Fixed tasks scored in throwaway workspaces
@@ -380,11 +386,11 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **37,057** across 161 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,435 lines**, 52% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 3,833, the agent is 2,783, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, the client is 460, JSON-RPC is 424, memory is 407, hooks are 402, providers are 421, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
-| Test lines                 |                      **38,334** across 208 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.02 to 1.                                       |
-| Automated scenarios        |                      **2,107**, locally clean   | 1,863 unit, 153 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,094 pass and 13 Windows-only scenarios skip.                     |
-| Unit suite                 |                  **1,863 passing in 11.6 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **38,072** across 166 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,435 lines**, 51% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 3,892, the agent is 2,783, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, providers are 1,377, the client is 460, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
+| Test lines                 |                      **39,172** across 213 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.02 to 1.                                       |
+| Automated scenarios        |                      **2,194**, locally clean   | 1,944 unit, 159 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,181 pass and 13 Windows-only scenarios skip.                     |
+| Unit suite                 |                  **1,944 passing in 12.1 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | End-to-end suite           |                                 **28 passing** | A scripted model drives a real agent with real tools against a real workspace, asserting what changed on disk, which backend ran, and that results reached the model intact. |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
@@ -700,6 +706,40 @@ goes through the execution service, so it is policy-classified, bounded by its
 timeout and an output ceiling, and recorded in the durable audit. A hook that
 fails is reported and never blocks the turn.
 
+### Optional providers and browser sign-in
+
+The same config directory may contain `providers.json`, which names where a model
+comes from and, when the provider publishes one, how to sign in with a browser:
+
+```json
+{
+  "version": 1,
+  "providers": [
+    {
+      "name": "acme",
+      "base_url": "https://api.acme.example/v1",
+      "oauth": {
+        "client_id": "your-registered-client-id",
+        "authorize_url": "https://acme.example/oauth/authorize",
+        "token_url": "https://acme.example/oauth/token",
+        "scopes": ["models.read", "chat"]
+      }
+    }
+  ]
+}
+```
+
+With that in place, `/login` opens your browser, TrueCoder listens on a loopback
+port for the single redirect, verifies the `state` it issued, exchanges the code
+together with the PKCE verifier, and stores the result in `tokens.json` at mode
+`0600`. `/logout` forgets it. Both endpoints must be `https`, and parsing is strict
+and fail-closed in the same way as `hooks.json` and `mcp.json`.
+
+The `client_id` is yours to supply. TrueCoder ships no registered client for any
+provider, because whether a given provider permits a third-party client to use a
+given account is that provider's decision and worth reading their terms for. API
+key authentication needs none of this and remains the default.
+
 ### Optional MCP tool servers
 
 The same config directory may contain `mcp.json`, which adds tools from Model
@@ -806,6 +846,7 @@ Update `container/image.lock` in the same commit, because discovery refuses an i
 | `truecoder -p "..." --autonomy edit`                 | Allow file changes and medium-risk commands unattended          |
 | `truecoder --eval`                                   | Score the agent on the shipped tasks                            |
 | `/models` in the composer                            | Choose which model answers                                      |
+| `/login` in the composer                             | Authorise the current provider in your browser                  |
 | `python -m unittest discover -s tests/sandbox -t .`  | Run the adversarial Docker sandbox suite                        |
 | `ruff check src tests container`                     | Lint source, tests, and the image entrypoint                    |
 | `docker build -t truecoder-exec:1 container/`        | Build the execution sandbox image                               |
@@ -870,6 +911,9 @@ Checkpoints are git objects and refs, so they live inside `.git` where the conte
 | Memory              | `<user data dir>/truecoder/memory.sqlite3`                  | Durable notes, scoped by canonical workspace identity              |
 | Hooks               | `<user config dir>/truecoder/hooks.json`                    | Optional user-configured commands, strict and versioned            |
 | MCP servers         | `<user config dir>/truecoder/mcp.json`                      | Optional third-party tool servers, strict and versioned            |
+| Providers           | `<user config dir>/truecoder/providers.json`                | Optional base URLs and OAuth clients, strict and versioned         |
+| Model selection     | `<user config dir>/truecoder/settings.json`                 | The model chosen with `/models`, remembered across restarts        |
+| Authorisation       | `<user config dir>/truecoder/tokens.json`                   | OAuth tokens, one per provider, written `0600`                     |
 | Checkpoints         | `refs/truecoder/checkpoints/*` inside the repository        | Workspace snapshots as git objects, pruned to the newest 25        |
 | Execution policy    | `<user config dir>/truecoder/execution.json`                | Optional operator ceilings and backend settings                    |
 | Trusted rules       | `<user config dir>/truecoder/trusted-commands.json`         | Optional executable-specific restrictions                          |

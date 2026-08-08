@@ -1687,9 +1687,17 @@ builds a new one. That distinction is the whole reason the object exists, and it
 is what a naive "just store the model somewhere" would have missed.
 
 The environment is one credential source rather than the only one. Existing `.env`
-setups resolve through the same path, which is what keeps this refactor from being
-a breaking change, and leaves room for an OAuth credential later without touching
-the client.
+setups resolve through the same path, and a credential is a protocol rather than a
+class, so an API key and an OAuth token are interchangeable to everything above
+them. Resolution has a fixed order: a remembered selection outranks `MODEL` from
+the environment, because a choice made in the interface is more recent than a file
+written once, and a stored token outranks an API key only when it is still usable.
+
+A selection that vanishes at exit is not a selection. `/models` writes the chosen
+model to its own small file, and startup reads it before the environment. That file
+is parsed as strictly as every other configuration, and a corrupt one is ignored
+rather than repaired, because falling back to the environment is always safe while
+guessing at a damaged file is not.
 
 A provider's model list is third-party JSON and is treated as such: the count is
 capped, identifiers and names are length-bounded, context windows outside a
@@ -1709,6 +1717,33 @@ enumerate them and every future command inherits parsing, casing, and the unknow
 command message for free. A command is one word plus an optional argument, and a
 multi-line input is never a command, because a prompt that happens to start with a
 slash is far more likely than a command someone wrapped across lines.
+
+## Signing in with a browser
+
+An API key is a string the user already has. A browser sign-in is a protocol, and
+the grant matters: a terminal program cannot keep a client secret, so this is
+authorization code with PKCE rather than the implicit or client-credentials flows
+that would require one.
+
+The parts that carry the security are small and separately testable. A fresh
+verifier is generated per attempt and its SHA-256 challenge is what travels to the
+provider, so the value that proves the exchange never leaves the process. A random
+`state` is issued and compared with `secrets.compare_digest` on return, and a
+mismatch is refused before the code is read, because a callback with someone else's
+state is the shape of a cross-site request forgery. The callback server binds
+loopback only, answers exactly one request, and closes.
+
+Tokens are stored per provider at mode `0600`, using the same permission discipline
+as the audit stores. They are also token-shaped, which means the environment
+allowlist already strips them from every child process, so a stored credential
+cannot ride along into a shell command. A token knows its own expiry and whether a
+refresh is possible, so an expired credential with no refresh is treated as absent
+rather than presented and rejected by the provider.
+
+TrueCoder registers no OAuth client of its own. The `client_id` and both endpoints
+come from configuration, which keeps the mechanism general and leaves the question
+of which providers permit a third-party client where it belongs, with the person
+reading that provider's terms.
 
 ## Design rules
 
@@ -1821,6 +1856,12 @@ Keep these invariants stable as the codebase grows:
 * changing a model is free, changing a connection invalidates it
 * a provider's model list is bounded before it is shown or cached
 * a slash command is answered here, never sent to the model
+* a credential is a protocol, so how you authenticate never reaches the client
+* a remembered choice outranks the environment, a broken file outranks nothing
+* the PKCE verifier never leaves the process
+* a callback with the wrong state is refused before its code is read
+* a stored token is private on disk and stripped from every child process
+* tests never write to the real configuration directory
 * an explicit backend or shell preference is never silently downgraded
 * execution cannot start before its pending audit evidence is durable
 * every admitted execution ends in one immutable terminal audit state
