@@ -340,6 +340,14 @@ class TrueCoderApp(App[None]):
 
         if parsed.name == "models":
             await self._choose_model(refresh=parsed.argument == "refresh")
+            return
+
+        if parsed.name == "login":
+            await self._authorise_provider()
+            return
+
+        if parsed.name == "logout":
+            self._forget_authorisation()
 
     async def _choose_model(self, *, refresh: bool = False) -> None:
         from truecoder.providers.catalog import CatalogError, load_models
@@ -367,10 +375,59 @@ class TrueCoderApp(App[None]):
     def _apply_model_choice(self, model: str | None) -> None:
         if not model:
             return
-        self.agent.llm_client.settings.select_model(model)
+        from truecoder.providers.store import StoredSelection, save_selection
+
+        settings = self.agent.llm_client.settings
+        settings.select_model(model)
         self._model_name = model
         self.query_one(Composer).set_model_name(model)
-        self.notify(f"Now answering with {model}")
+
+        if save_selection(StoredSelection(model=model, provider=settings.provider.name)):
+            self.notify(f"Now answering with {model}")
+        else:
+            self.notify(
+                f"Now answering with {model}, but the choice could not be saved.",
+                severity="warning",
+            )
+
+    async def _authorise_provider(self) -> None:
+        from truecoder.providers.login import authorise
+        from truecoder.providers.oauth import OAuthError
+        from truecoder.providers.tokens import store_token
+
+        settings = self.agent.llm_client.settings
+        client = settings.provider.oauth
+        if client is None:
+            self.notify(
+                f"No OAuth client is configured for {settings.provider.name!r}.",
+                severity="warning",
+            )
+            return
+
+        self.notify("Opening your browser to authorise.", timeout=8)
+        try:
+            token = await authorise(client, provider=settings.provider.name)
+        except OAuthError as error:
+            self.notify(f"Authorisation failed: {error}", severity="error", timeout=12)
+            return
+
+        settings.use(settings.provider, token)
+        if store_token(token):
+            self.notify("Authorised, and the token was saved.")
+        else:
+            self.notify(
+                "Authorised, but the token could not be saved.",
+                severity="warning",
+            )
+
+    def _forget_authorisation(self) -> None:
+        from truecoder.providers.tokens import forget_token
+
+        name = self.agent.llm_client.settings.provider.name
+        if forget_token(name):
+            self.notify(f"Forgot the stored authorisation for {name!r}.")
+        else:
+            self.notify(f"No stored authorisation for {name!r}.", severity="warning")
 
     @on(ExecutionStageMessage)
     async def advance_execution_card(self, message: ExecutionStageMessage) -> None:

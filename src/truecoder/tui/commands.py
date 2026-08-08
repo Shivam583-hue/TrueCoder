@@ -32,6 +32,8 @@ class ParsedCommand:
 COMMANDS: Final = (
     SlashCommand("models", "Choose which model answers"),
     SlashCommand("model", "Show the model currently answering"),
+    SlashCommand("login", "Authorise this provider in your browser"),
+    SlashCommand("logout", "Forget the stored authorisation"),
     SlashCommand("help", "List what you can type here"),
 )
 
