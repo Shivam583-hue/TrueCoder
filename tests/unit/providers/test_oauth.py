@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from tests.helpers.platforms import requires_posix_permissions
 from truecoder.providers.login import CallbackServer, authorise, request_target
 from truecoder.providers.oauth import (
     REFRESH_MARGIN_SECONDS,
@@ -302,6 +303,7 @@ class TokenStoreTests(unittest.TestCase):
 
         self.assertEqual(sorted(load_tokens(self.path)), ["one", "two"])
 
+    @requires_posix_permissions
     def test_the_file_is_private(self):
         store_token(OAuthToken(access_token="a", provider="p"), self.path)
 

@@ -1733,8 +1733,11 @@ mismatch is refused before the code is read, because a callback with someone els
 state is the shape of a cross-site request forgery. The callback server binds
 loopback only, answers exactly one request, and closes.
 
-Tokens are stored per provider at mode `0600`, using the same permission discipline
-as the audit stores. They are also token-shaped, which means the environment
+Tokens are stored per provider using the same permission discipline as the audit
+stores: mode `0600` on POSIX, and on Windows an explicit ACL granting only the
+current user, since mode bits express nothing there. The file is written to a
+temporary path inside the already-secured directory and moved into place, so it is
+never briefly readable while being written. They are also token-shaped, which means the environment
 allowlist already strips them from every child process, so a stored credential
 cannot ride along into a shell command. A token knows its own expiry and whether a
 refresh is possible, so an expired credential with no refresh is treated as absent
