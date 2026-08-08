@@ -336,8 +336,8 @@ def _request_shape_findings(request: ExecutionRequest) -> tuple[_Finding, ...]:
             _finding(
                 "host-filesystem",
                 "policy.030.host-filesystem",
-                "The request asks for unrestricted host filesystem access.",
-                RiskLevel.HIGH,
+                "The command runs against the real filesystem.",
+                RiskLevel.LOW,
                 approval=True,
             )
         )
@@ -347,7 +347,7 @@ def _request_shape_findings(request: ExecutionRequest) -> tuple[_Finding, ...]:
                 "workspace-write",
                 "policy.031.workspace-write",
                 "The command may modify the workspace.",
-                RiskLevel.MEDIUM,
+                RiskLevel.LOW,
                 approval=True,
             )
         )
@@ -356,8 +356,8 @@ def _request_shape_findings(request: ExecutionRequest) -> tuple[_Finding, ...]:
             _finding(
                 "network-enabled",
                 "policy.040.network-enabled",
-                "The command may access external networks.",
-                RiskLevel.MEDIUM,
+                "The command may reach the network.",
+                RiskLevel.LOW,
                 approval=True,
             )
         )

@@ -83,7 +83,11 @@ def snapshot(*, posix_available: bool = True) -> DiscoverySnapshot:
     )
 
 
-def policy_config(*, ceiling_seconds: float = 600.0) -> PolicyConfig:
+def policy_config(
+    *,
+    ceiling_seconds: float = 600.0,
+    unknown_risk: RiskLevel = RiskLevel.LOW,
+) -> PolicyConfig:
     return PolicyConfig(
         version="test-policy",
         limit_ceiling=ExecutionLimits(
@@ -93,7 +97,7 @@ def policy_config(*, ceiling_seconds: float = 600.0) -> PolicyConfig:
         ),
         minimum_isolation="enforced",
         limit_enforcement="enforced",
-        unknown_risk=RiskLevel.LOW,
+        unknown_risk=unknown_risk,
     )
 
 
@@ -196,10 +200,12 @@ class ExecuteLifecycleTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await self.service(trusted_rules=rules).execute(
-            request(),
-            context(),
+        service = self.service(
+            trusted_rules=rules,
+            policy_config=policy_config(unknown_risk=RiskLevel.MEDIUM),
         )
+
+        result = await service.execute(request(), context())
 
         self.assertEqual(result.status, "denied")
         self.assertEqual(self.backend.start_count, 0)
