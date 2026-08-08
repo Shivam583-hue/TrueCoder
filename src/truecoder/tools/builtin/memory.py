@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from pydantic import Field
 
@@ -23,6 +23,15 @@ class RememberArguments(ToolArguments):
             "sense weeks from now."
         ),
     )
+    replaces: str | None = Field(
+        default=None,
+        max_length=MAX_MEMORY_CHARACTERS,
+        description=(
+            "The note this one supersedes, quoted from your memory. Setting it "
+            "removes that note as this one is recorded, so a correction leaves "
+            "one note rather than two that disagree."
+        ),
+    )
 
 
 class ForgetArguments(ToolArguments):
@@ -36,12 +45,14 @@ class ForgetArguments(ToolArguments):
 class RememberOutput(TypedDict):
     note: str
     stored: int
+    replaced: NotRequired[str]
 
 
 class ForgetOutput(TypedDict):
     note: str
     removed: bool
     stored: int
+    available: NotRequired[list[str]]
 
 
 class _MemoryTool(BaseTool[ToolArguments]):
@@ -64,7 +75,9 @@ class RememberTool(_MemoryTool):
         "Record one durable fact about this project so it is available in later "
         "sessions. Use it for things that stay true: where a subsystem lives, a "
         "convention the user asked for, a decision and its reason. Do not record "
-        "transient state, secrets, or anything already written in the repository."
+        "transient state, secrets, or anything already written in the repository. "
+        "To correct a note that has stopped being true, record the new one with "
+        "replaces set to the old one rather than recording it on its own."
     )
     arguments_type = RememberArguments
 
@@ -75,8 +88,10 @@ class RememberTool(_MemoryTool):
     ) -> RememberOutput:
         del invocation
 
+        superseded = self._superseded(arguments.replaces)
+
         try:
-            entry = self._store.remember(arguments.note)
+            entry = self._store.remember(arguments.note, replaces=arguments.replaces)
         except (TypeError, ValueError) as error:
             raise ToolExecutionError(str(error), code="invalid_note") from error
         except Exception as error:
@@ -85,7 +100,22 @@ class RememberTool(_MemoryTool):
                 code="memory_unavailable",
             ) from error
 
-        return {"note": entry.note, "stored": len(self._store.entries())}
+        result: RememberOutput = {
+            "note": entry.note,
+            "stored": len(self._store.entries()),
+        }
+        if superseded is not None:
+            result["replaced"] = superseded
+        return result
+
+    def _superseded(self, replaces: str | None) -> str | None:
+        if replaces is None:
+            return None
+        try:
+            existing = self._store.find(replaces)
+        except Exception:  # noqa: BLE001 - reporting never blocks the write
+            return None
+        return None if existing is None else existing.note
 
 
 class ForgetTool(_MemoryTool):
@@ -113,11 +143,15 @@ class ForgetTool(_MemoryTool):
                 code="memory_unavailable",
             ) from error
 
-        return {
+        remaining = self._store.entries()
+        result: ForgetOutput = {
             "note": arguments.note,
             "removed": removed,
-            "stored": len(self._store.entries()),
+            "stored": len(remaining),
         }
+        if not removed:
+            result["available"] = [entry.note for entry in remaining]
+        return result
 
 
 def memory_tools(store: MemoryStore) -> tuple[BaseTool[ToolArguments], ...]:

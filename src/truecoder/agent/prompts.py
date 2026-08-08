@@ -152,6 +152,11 @@ secrets, credentials, transient state, or anything the repository already says,
 because AGENTS.md is the right home for instructions the user maintains. Your
 notes are shown back to you before every reply, so read them rather than
 recording the same thing twice.
+
+When a note has stopped being true, correct it in one step: record the new note
+with replaces set to the old one. Recording the correction on its own leaves both
+versions in your memory, and you will be told two contradictory things every turn
+afterwards. Quote the note you are replacing from the list you were shown.
 """
 
 
