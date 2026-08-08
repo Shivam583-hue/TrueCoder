@@ -99,9 +99,7 @@ class MutationApprovalTests(unittest.IsolatedAsyncioTestCase):
             json.dumps(
                 {
                     "path": "a.py",
-                    "old_text": "two",
-                    "new_text": "TWO",
-                    "replace_all": False,
+                    "edits": [{"old_text": "two", "new_text": "TWO"}],
                 }
             ),
         )

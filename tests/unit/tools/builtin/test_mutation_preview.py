@@ -5,6 +5,7 @@ from pathlib import Path
 from truecoder.tools import ToolExecutionError
 from truecoder.tools.base import MutatingTool
 from truecoder.tools.builtin import (
+    Edit,
     EditFileArguments,
     EditFileTool,
     WriteFileArguments,
@@ -90,9 +91,9 @@ class EditFilePreviewTests(unittest.IsolatedAsyncioTestCase):
         return await self.tool.preview_mutation(
             EditFileArguments(
                 path="a.py",
-                old_text=old,
-                new_text=new,
-                replace_all=replace_all,
+                edits=[
+                    Edit(old_text=old, new_text=new, replace_all=replace_all)
+                ],
             )
         )
 

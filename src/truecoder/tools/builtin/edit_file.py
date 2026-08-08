@@ -4,6 +4,7 @@ import asyncio
 import os
 import stat
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
@@ -25,8 +26,28 @@ from truecoder.tools.context import ToolInvocationContext
 from truecoder.tools.mutation_audit import MutationAudit, record_mutation
 
 MAX_EDIT_FILE_BYTES = 1024 * 1024
+MAX_EDITS_PER_CALL = 32
 MAX_EDIT_TEXT_BYTES = 32 * 1024
 _TEXT_CONTROL_CHARACTERS = frozenset({"\t", "\n", "\r"})
+
+
+class Edit(ToolArguments):
+    """One exact replacement within a file."""
+
+    old_text: str = Field(
+        min_length=1,
+        description="Exact text that currently exists in the file.",
+    )
+    new_text: str = Field(
+        description="Text that replaces old_text. Use an empty string to delete it.",
+    )
+    replace_all: bool = Field(
+        default=False,
+        description=(
+            "Replace every exact occurrence when true. When false, old_text must "
+            "occur exactly once."
+        ),
+    )
 
 
 class EditFileArguments(ToolArguments):
@@ -36,25 +57,64 @@ class EditFileArguments(ToolArguments):
         min_length=1,
         description="Existing UTF-8 text file path relative to the workspace.",
     )
-    old_text: str = Field(
+    edits: list[Edit] = Field(
         min_length=1,
-        description="Exact text that currently exists in the file.",
-    )
-    new_text: str = Field(
-        description="Text that replaces old_text. Use an empty string to delete it.",
-    )
-    replace_all: bool = Field(
+        max_length=MAX_EDITS_PER_CALL,
         description=(
-            "Replace every exact occurrence when true. When false, old_text must "
-            "occur exactly once."
+            "The replacements to apply in order, each seeing the result of the "
+            "one before it. They are applied together: if any one does not "
+            "match, the file is left untouched."
         ),
     )
 
 
 class EditFileOutput(TypedDict):
     path: str
+    edits_applied: int
     replacements: int
     bytes_written: int
+
+
+class EditRejected(ValueError):
+    def __init__(self, message: str, code: str) -> None:
+        self.message = message
+        self.code = code
+        super().__init__(message)
+
+
+def apply_edits(content: str, edits: Sequence[Edit]) -> tuple[str, int]:
+    edited = content
+    replacements = 0
+
+    for index, edit in enumerate(edits, start=1):
+        occurrences = edited.count(edit.old_text)
+        if occurrences == 0:
+            raise EditRejected(
+                f"Edit {index} of {len(edits)}: old_text was not found in the file.",
+                code="text_not_found",
+            )
+        if not edit.replace_all and occurrences != 1:
+            raise EditRejected(
+                (
+                    f"Edit {index} of {len(edits)}: old_text occurs {occurrences} "
+                    "times. Provide more surrounding text or set replace_all to true."
+                ),
+                code="ambiguous_match",
+            )
+
+        edited = edited.replace(
+            edit.old_text,
+            edit.new_text,
+            -1 if edit.replace_all else 1,
+        )
+        replacements += occurrences if edit.replace_all else 1
+
+    if edited == content:
+        raise EditRejected(
+            "The requested replacements would not change the file.",
+            code="no_change",
+        )
+    return edited, replacements
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +139,9 @@ class EditFileTool(BaseTool[EditFileArguments]):
 
     name = "edit_file"
     description = (
-        "Replace exact text in an existing UTF-8 workspace file. Set replace_all "
+        "Replace exact text in an existing UTF-8 workspace file. Pass several "
+        "edits to change a file in one call; they apply in order and together, so "
+        "the file is left untouched unless every one matches. Set replace_all "
         "to false for one unique occurrence or true for every occurrence."
     )
     arguments_type = EditFileArguments
@@ -109,13 +171,18 @@ class EditFileTool(BaseTool[EditFileArguments]):
         arguments: EditFileArguments,
         invocation: ToolInvocationContext | None = None,
     ) -> EditFileOutput:
-        old_text = self._encode_edit_text(arguments.old_text, field_name="old_text")
-        new_text = self._encode_edit_text(arguments.new_text, field_name="new_text")
-        if len(old_text) > MAX_EDIT_TEXT_BYTES or len(new_text) > MAX_EDIT_TEXT_BYTES:
-            raise ToolExecutionError(
-                f"Edit text exceeds the maximum size of {MAX_EDIT_TEXT_BYTES} bytes.",
-                code="edit_too_large",
-            )
+        for edit in arguments.edits:
+            old_text = self._encode_edit_text(edit.old_text, field_name="old_text")
+            new_text = self._encode_edit_text(edit.new_text, field_name="new_text")
+            if (
+                len(old_text) > MAX_EDIT_TEXT_BYTES
+                or len(new_text) > MAX_EDIT_TEXT_BYTES
+            ):
+                raise ToolExecutionError(
+                    f"Edit text exceeds the maximum size of "
+                    f"{MAX_EDIT_TEXT_BYTES} bytes.",
+                    code="edit_too_large",
+                )
 
         return await asyncio.to_thread(self._edit_atomic, arguments, invocation)
 
@@ -130,16 +197,9 @@ class EditFileTool(BaseTool[EditFileArguments]):
         )
         original_content, _, _ = self._read_original(destination)
 
-        occurrences = original_content.count(arguments.old_text)
-        if occurrences == 0 or (not arguments.replace_all and occurrences != 1):
-            return None
-
-        edited_content = original_content.replace(
-            arguments.old_text,
-            arguments.new_text,
-            -1 if arguments.replace_all else 1,
-        )
-        if edited_content == original_content:
+        try:
+            edited_content, _ = apply_edits(original_content, arguments.edits)
+        except EditRejected:
             return None
 
         return build_file_diff(
@@ -183,32 +243,13 @@ class EditFileTool(BaseTool[EditFileArguments]):
             destination
         )
 
-        occurrence_count = original_content.count(arguments.old_text)
-        if occurrence_count == 0:
-            raise ToolExecutionError(
-                "old_text was not found in the file.",
-                code="text_not_found",
+        try:
+            edited_content, replacements = apply_edits(
+                original_content,
+                arguments.edits,
             )
-        if not arguments.replace_all and occurrence_count != 1:
-            raise ToolExecutionError(
-                (
-                    f"old_text occurs {occurrence_count} times. Provide more "
-                    "surrounding text or set replace_all to true."
-                ),
-                code="ambiguous_match",
-            )
-
-        replacements = occurrence_count if arguments.replace_all else 1
-        edited_content = original_content.replace(
-            arguments.old_text,
-            arguments.new_text,
-            -1 if arguments.replace_all else 1,
-        )
-        if edited_content == original_content:
-            raise ToolExecutionError(
-                "The requested replacement would not change the file.",
-                code="no_change",
-            )
+        except EditRejected as error:
+            raise ToolExecutionError(error.message, code=error.code) from None
 
         encoded_content = edited_content.encode("utf-8")
         if len(encoded_content) > MAX_EDIT_FILE_BYTES:
@@ -241,6 +282,7 @@ class EditFileTool(BaseTool[EditFileArguments]):
         )
         return {
             "path": arguments.path,
+            "edits_applied": len(arguments.edits),
             "replacements": replacements,
             "bytes_written": len(encoded_content),
         }

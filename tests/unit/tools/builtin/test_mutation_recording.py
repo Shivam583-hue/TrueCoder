@@ -9,6 +9,7 @@ from truecoder.execution.cancellation import CancellationSource
 from truecoder.execution.models import ExecutionContext
 from truecoder.tools import ToolExecutionError
 from truecoder.tools.builtin import (
+    Edit,
     EditFileArguments,
     EditFileTool,
     WriteFileArguments,
@@ -83,9 +84,7 @@ class MutationRecordingTests(unittest.IsolatedAsyncioTestCase):
         await tool.run(
             EditFileArguments(
                 path="a.py",
-                old_text="two",
-                new_text="TWO",
-                replace_all=False,
+                edits=[Edit(old_text="two", new_text="TWO")],
             ),
             self.invocation,
         )
@@ -129,9 +128,12 @@ class MutationRecordingTests(unittest.IsolatedAsyncioTestCase):
             await tool.run(
                 EditFileArguments(
                     path="a.py",
-                    old_text="missing",
-                    new_text="x",
-                    replace_all=False,
+                    edits=[
+                        Edit(
+                            old_text="missing",
+                            new_text="x",
+                        )
+                    ],
                 ),
                 self.invocation,
             )

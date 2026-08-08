@@ -11,6 +11,7 @@ from truecoder.tools.builtin.code_intelligence import (
 from truecoder.tools.builtin.edit_file import (
     MAX_EDIT_FILE_BYTES,
     MAX_EDIT_TEXT_BYTES,
+    Edit,
     EditFileArguments,
     EditFileOutput,
     EditFileTool,
@@ -86,6 +87,7 @@ __all__ = [
     "MAX_LINE_COUNT",
     "MAX_WRITE_BYTES",
     "UNTRUSTED_NOTICE",
+    "Edit",
     "EditFileArguments",
     "EditFileOutput",
     "EditFileTool",

@@ -1,4 +1,3 @@
-
 import stat
 import tempfile
 import unittest
@@ -13,6 +12,7 @@ from truecoder.tools import (
 )
 from truecoder.tools.builtin import (
     MAX_EDIT_TEXT_BYTES,
+    Edit,
     EditFileArguments,
     EditFileOutput,
     EditFileTool,
@@ -38,9 +38,13 @@ class EditFileToolTests(unittest.IsolatedAsyncioTestCase):
     ) -> EditFileArguments:
         return EditFileArguments(
             path=path,
-            old_text=old_text,
-            new_text=new_text,
-            replace_all=replace_all,
+            edits=[
+                Edit(
+                    old_text=old_text,
+                    new_text=new_text,
+                    replace_all=replace_all,
+                )
+            ],
         )
 
     async def _assert_error_code(
@@ -58,14 +62,13 @@ class EditFileToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(function["name"], "edit_file")
         self.assertTrue(function["strict"])
+        self.assertEqual(parameters["required"], ["path", "edits"])
+        self.assertEqual(set(parameters["properties"]), {"path", "edits"})
+        edit = parameters["$defs"]["Edit"]
         self.assertEqual(
-            parameters["required"],
-            ["path", "old_text", "new_text", "replace_all"],
+            set(edit["properties"]), {"old_text", "new_text", "replace_all"}
         )
-        self.assertEqual(
-            set(parameters["properties"]),
-            {"path", "old_text", "new_text", "replace_all"},
-        )
+        self.assertFalse(edit["additionalProperties"])
         self.assertFalse(parameters["additionalProperties"])
         self.assertIs(self.tool.approval, ToolApproval.REQUIRED)
 
@@ -98,6 +101,7 @@ class EditFileToolTests(unittest.IsolatedAsyncioTestCase):
             result,
             {
                 "path": "script.sh",
+                "edits_applied": 1,
                 "replacements": 1,
                 "bytes_written": len("#!/bin/sh\nexit 0\n"),
             },
@@ -112,9 +116,7 @@ class EditFileToolTests(unittest.IsolatedAsyncioTestCase):
         destination = self.workspace / "values.txt"
         destination.write_text("old old older", encoding="utf-8")
 
-        result = await self.tool.run(
-            self._arguments("values.txt", replace_all=True)
-        )
+        result = await self.tool.run(self._arguments("values.txt", replace_all=True))
 
         self.assertEqual(result["replacements"], 3)
         self.assertEqual(destination.read_text(encoding="utf-8"), "new new newer")
@@ -123,9 +125,7 @@ class EditFileToolTests(unittest.IsolatedAsyncioTestCase):
         destination = self.workspace / "notes.txt"
         destination.write_text("keep remove keep", encoding="utf-8")
 
-        await self.tool.run(
-            self._arguments("notes.txt", " remove", "")
-        )
+        await self.tool.run(self._arguments("notes.txt", " remove", ""))
 
         self.assertEqual(destination.read_text(encoding="utf-8"), "keep keep")
 
