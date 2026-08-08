@@ -28,6 +28,7 @@ from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType
+from truecoder.providers.models import settings_from_environment
 from truecoder.tools import ToolCall
 
 
@@ -161,6 +162,14 @@ def make_rate_limit_error() -> RateLimitError:
 
 
 class LLMClientTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        isolation = patch(
+            "truecoder.client.llm_client.resolve_settings",
+            side_effect=lambda: settings_from_environment(),
+        )
+        isolation.start()
+        self.addCleanup(isolation.stop)
+
     async def _collect_events(
         self,
         llm_client: LLMClient,

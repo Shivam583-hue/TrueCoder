@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from tests.helpers.tui import wait_until
@@ -45,6 +47,17 @@ class ModelCommandTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         return TrueCoderApp(agent)
+
+    def setUp(self) -> None:
+        self._directory = tempfile.TemporaryDirectory()
+        self.config = Path(self._directory.name).resolve() / "settings.json"
+        self.addCleanup(self._directory.cleanup)
+        saver = patch(
+            "truecoder.providers.store.default_settings_path",
+            return_value=self.config,
+        )
+        saver.start()
+        self.addCleanup(saver.stop)
 
     async def _type(self, app: TrueCoderApp, pilot, text: str) -> None:
         app.query_one(PromptInput).text = text
@@ -131,6 +144,7 @@ class ModelCommandTests(unittest.IsolatedAsyncioTestCase):
                     "openai/gpt-5",
                 )
                 self.assertEqual(app._model_name, "openai/gpt-5")
+                self.assertIn("openai/gpt-5", self.config.read_text())
 
     async def test_an_unreachable_provider_explains_itself(self):
         app = self._app()
