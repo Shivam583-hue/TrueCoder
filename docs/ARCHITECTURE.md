@@ -1666,6 +1666,50 @@ ceiling as a direct one. Delegation moves work off the parent's context; it does
 not move it outside the gate. A subagent that fails returns an error the parent
 can read and react to, rather than a silence it has to interpret.
 
+## Choosing a model
+
+Which model answers used to be decided by `os.getenv` in two places: the client
+read `API_KEY` and `BASE_URL` once and cached the connection forever, and re-read
+`MODEL` on every request. That combination cannot be changed at runtime. Setting a
+new model would take effect while the cached connection still pointed at the old
+provider, which is a bug waiting for the first person to switch.
+
+Settings are therefore resolved once and handed to the client rather than fetched
+by it. A credential knows how to turn itself into client options and how to
+describe itself without revealing itself, so a key can be shown in the interface
+as its last four characters and never in full. A provider knows its base URL and
+where its model list lives. The active selection holds both plus the model.
+
+The seam is drawn where invalidation matters. Changing the model is free, because
+the same connection serves any model the provider offers. Changing the provider or
+the credential fires a listener that drops the cached client, so the next request
+builds a new one. That distinction is the whole reason the object exists, and it
+is what a naive "just store the model somewhere" would have missed.
+
+The environment is one credential source rather than the only one. Existing `.env`
+setups resolve through the same path, which is what keeps this refactor from being
+a breaking change, and leaves room for an OAuth credential later without touching
+the client.
+
+A provider's model list is third-party JSON and is treated as such: the count is
+capped, identifiers and names are length-bounded, context windows outside a
+plausible range are dropped, and duplicates are collapsed. The result is cached to
+disk with a timestamp and a six-hour lifetime, because this is a network call and
+it must not happen at launch or on a keystroke. A cache that is corrupt, truncated,
+or stale is ignored rather than repaired.
+
+## Commands typed into the composer
+
+Anything beginning with a slash is intercepted before it reaches the agent. That
+ordering is the point: a mistyped command must not become a prompt, and an unknown
+one must say so rather than being quietly answered by the model.
+
+Commands are a registry rather than a chain of conditionals, so `/help` can
+enumerate them and every future command inherits parsing, casing, and the unknown
+command message for free. A command is one word plus an optional argument, and a
+multi-line input is never a command, because a prompt that happens to start with a
+slash is far more likely than a command someone wrapped across lines.
+
 ## Design rules
 
 Keep these invariants stable as the codebase grows:
@@ -1773,6 +1817,10 @@ Keep these invariants stable as the codebase grows:
 * only a subagent's reply crosses back, never its transcript
 * a subagent cannot delegate, and inherits the approval it cannot bypass
 * several edits to one file land together or not at all
+* the client is given its settings and never reaches for them
+* changing a model is free, changing a connection invalidates it
+* a provider's model list is bounded before it is shown or cached
+* a slash command is answered here, never sent to the model
 * an explicit backend or shell preference is never silently downgraded
 * execution cannot start before its pending audit evidence is durable
 * every admitted execution ends in one immutable terminal audit state

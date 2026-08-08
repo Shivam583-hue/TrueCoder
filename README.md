@@ -63,6 +63,7 @@ Coming soon...
 - **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
 - **Policy-evaluated execution** - ordered rules classify read-only, test, build, package, network, deletion, permission, Git, script, and unknown commands, and requested limits can only tighten the configured ceiling.
 - **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
+- **Switch models without restarting** - type `/models` to pick from everything your provider lists, filtered as you type and annotated with context windows. The list is fetched from the provider's own `/v1/models`, bounded like any other untrusted response, and cached for six hours so it never costs a request at launch. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type.
 - **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. With nobody watching, what may proceed is a configured decision rather than an accident: `--autonomy read-only|edit|full` sets a risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
 - **Scored, not vibed** - `truecoder --eval` runs a fixed set of tasks in throwaway workspaces and reports how many passed, so "did that change help?" has an answer. Each task asserts an outcome on disk rather than which calls were made.
 - **Delegation with a hard boundary** - `delegate` hands a self-contained subtask to a fresh agent that shares the workspace but starts with an empty conversation. Only its final reply crosses back, never its transcript, it cannot delegate again, and it is approval-gated like any other tool.
@@ -151,6 +152,10 @@ TrueCoder/
 │   │   └── service.py                 # Capture, list, prune, restore, compare
 │   │
 │   ├── cli.py                         # Interactive launch, one-shot prompts, and scoring
+│   │
+│   ├── providers/                     # Where a model and its credentials come from
+│   │   ├── models.py                  # Credentials, providers, and the active selection
+│   │   └── catalog.py                 # Bounded model discovery with a cached TTL
 │   ├── workspace.py                   # One containment rule for workspace-relative paths
 │   │
 │   ├── evaluation/                    # Fixed tasks scored in throwaway workspaces
@@ -289,6 +294,8 @@ TrueCoder/
 │       ├── checkpoints.py             # Checkpoint browser and restore prompt
 │       ├── changes.py                 # What this turn changed on disk
 │       ├── memory.py                  # Memory browser and deletion
+│       ├── commands.py                # Slash-command parsing and the registry
+│       ├── model_picker.py            # Filterable model chooser
 │       └── styles.tcss                # Terminal stylesheet
 │
 └── tests/
@@ -300,6 +307,7 @@ TrueCoder/
     │   ├── mutation/                  # Diff hunks, bounds, and truncation
     │   ├── web/                       # URL policy, SSRF refusals, extraction
     │   ├── evaluation/                # Task checks, the runner, and the report
+    │   ├── providers/                 # Credentials, selection, and catalog bounds
     │   ├── jsonrpc/                   # Transport lifecycle and request routing
     │   ├── mcp/                       # Framing, schema bounds, client, adapter, manager
     │   ├── lsp/                       # Framing, client, discovery
@@ -372,11 +380,11 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **36,357** across 156 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,435 lines**, 53% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 3,579, the agent is 2,783, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, the client is 435, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
-| Test lines                 |                      **37,824** across 204 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.02 to 1.                                       |
-| Automated scenarios        |                      **2,055**, locally clean   | 1,818 unit, 146 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,042 pass and 13 Windows-only scenarios skip.                     |
-| Unit suite                 |                  **1,818 passing in 11.5 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **37,057** across 161 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,435 lines**, 52% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 3,833, the agent is 2,783, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, the client is 460, JSON-RPC is 424, memory is 407, hooks are 402, providers are 421, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
+| Test lines                 |                      **38,334** across 208 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.02 to 1.                                       |
+| Automated scenarios        |                      **2,107**, locally clean   | 1,863 unit, 153 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,094 pass and 13 Windows-only scenarios skip.                     |
+| Unit suite                 |                  **1,863 passing in 11.6 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | End-to-end suite           |                                 **28 passing** | A scripted model drives a real agent with real tools against a real workspace, asserting what changed on disk, which backend ran, and that results reached the model intact. |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
@@ -797,6 +805,7 @@ Update `container/image.lock` in the same commit, because discovery refuses an i
 | `truecoder -p "..."`                                 | Run one prompt without the interface                            |
 | `truecoder -p "..." --autonomy edit`                 | Allow file changes and medium-risk commands unattended          |
 | `truecoder --eval`                                   | Score the agent on the shipped tasks                            |
+| `/models` in the composer                            | Choose which model answers                                      |
 | `python -m unittest discover -s tests/sandbox -t .`  | Run the adversarial Docker sandbox suite                        |
 | `ruff check src tests container`                     | Lint source, tests, and the image entrypoint                    |
 | `docker build -t truecoder-exec:1 container/`        | Build the execution sandbox image                               |
