@@ -108,9 +108,7 @@ class _AppPreviewSink:
         stream: str,
         text: str,
     ) -> None:
-        self._app.post_message(
-            ExecutionOutputMessage(execution_id, stream, text)
-        )
+        self._app.post_message(ExecutionOutputMessage(execution_id, stream, text))
 
 
 def _package_version() -> str:
@@ -152,7 +150,9 @@ class TrueCoderApp(App[None]):
         Binding("ctrl+p", "manage_sessions", "Sessions", show=False, priority=True),
         Binding("ctrl+a", "manage_audit", "Audit", show=False, priority=True),
         Binding("ctrl+e", "execution_health", "Execution", show=False, priority=True),
-        Binding("ctrl+r", "manage_checkpoints", "Checkpoints", show=False, priority=True),
+        Binding(
+            "ctrl+r", "manage_checkpoints", "Checkpoints", show=False, priority=True
+        ),
         Binding("ctrl+d", "review_changes", "Changes", show=False, priority=True),
         Binding("ctrl+n", "manage_memory", "Memory", show=False, priority=True),
         Binding("escape", "cancel_response", "Stop", show=False),
@@ -227,7 +227,30 @@ class TrueCoderApp(App[None]):
                     severity="warning",
                     timeout=8,
                 )
+        await self._announce_mcp_servers()
         self.query_one(PromptInput).focus()
+
+    async def _announce_mcp_servers(self) -> None:
+        manager = self.agent.mcp_manager
+        if manager is None:
+            return
+
+        await self.agent.initialize_mcp()
+        if manager.unavailable_reason is not None:
+            self.notify(
+                f"Tool servers unavailable: {manager.unavailable_reason}",
+                severity="warning",
+                timeout=10,
+            )
+            return
+
+        failures = [status for status in manager.statuses if not status.connected]
+        for status in failures:
+            self.notify(
+                f"Tool server {status.name!r} did not start: {status.reason}",
+                severity="warning",
+                timeout=10,
+            )
 
     async def on_unmount(self) -> None:
         self._reject_pending_approval_for_shutdown()
@@ -354,8 +377,7 @@ class TrueCoderApp(App[None]):
         transcript = self.query_one("#transcript", VerticalScroll)
         before = (
             self._active_assistant
-            if self._active_assistant is not None
-            and self._active_assistant.is_mounted
+            if self._active_assistant is not None and self._active_assistant.is_mounted
             else None
         )
         await transcript.mount(card, before=before)
@@ -628,9 +650,7 @@ class TrueCoderApp(App[None]):
             if scope is None
             else ApprovalResponse.approve(scope)
         )
-        pending.card.set_state(
-            "running" if scope is not None else "rejected"
-        )
+        pending.card.set_state("running" if scope is not None else "rejected")
         pending.future.set_result(response)
         self._clear_pending_approval()
 
@@ -890,14 +910,10 @@ class TrueCoderApp(App[None]):
             self.notify(f"Changes could not be read: {error}", severity="error")
             return
 
-        self.push_screen(
-            WorkspaceChangesScreen(changes, unavailable_reason=reason)
-        )
+        self.push_screen(WorkspaceChangesScreen(changes, unavailable_reason=reason))
 
     def _announce_hooks(self) -> None:
-        failures = [
-            outcome for outcome in self.agent.hook_outcomes if not outcome.ok
-        ]
+        failures = [outcome for outcome in self.agent.hook_outcomes if not outcome.ok]
         if not failures:
             return
 

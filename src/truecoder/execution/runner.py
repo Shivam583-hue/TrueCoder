@@ -673,9 +673,7 @@ class ExecutionRunner:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             observed_at = self._clock.monotonic()
-            backend_exit_signal = (
-                _task_result(wait_task) if wait_task in done else None
-            )
+            backend_exit_signal = _task_result(wait_task) if wait_task in done else None
             wait_failed = wait_task in done and backend_exit_signal is None
             candidate = choose_terminal_candidate(
                 done=done,

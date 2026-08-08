@@ -74,9 +74,7 @@ class TrustedRuleSet:
             if rule.rule_id in seen_ids:
                 raise TrustedRulesError(f"duplicate rule id: {rule.rule_id}")
             if rule.executable in seen_executables:
-                raise TrustedRulesError(
-                    f"duplicate executable rule: {rule.executable}"
-                )
+                raise TrustedRulesError(f"duplicate executable rule: {rule.executable}")
             seen_ids.add(rule.rule_id)
             seen_executables.add(rule.executable)
 
@@ -236,8 +234,7 @@ def apply_trusted_rules(
         allowed=decision.allowed,
         risk=decision.risk,
         requires_approval=(
-            decision.allowed
-            and (decision.requires_approval or rule.require_approval)
+            decision.allowed and (decision.requires_approval or rule.require_approval)
         ),
         effective_limits=decision.effective_limits,
         requirements=decision.requirements,

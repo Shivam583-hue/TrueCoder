@@ -61,7 +61,9 @@ class CheckpointService:
         if skip_unchanged and existing and existing[0].tree == tree:
             return existing[0]
 
-        checkpoint_id = f"{now_utc().replace(':', '').replace('.', '')}-{uuid.uuid4().hex[:8]}"
+        checkpoint_id = (
+            f"{now_utc().replace(':', '').replace('.', '')}-{uuid.uuid4().hex[:8]}"
+        )
         created_at = now_utc()
         message = encode_message(
             label=label,

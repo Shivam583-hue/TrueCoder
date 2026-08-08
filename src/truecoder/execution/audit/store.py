@@ -421,9 +421,7 @@ class SQLiteAuditStore:
                         """,
                         (workspace_id, limit),
                     ).fetchall()
-                return tuple(
-                    self._snapshot_from_row(connection, row) for row in rows
-                )
+                return tuple(self._snapshot_from_row(connection, row) for row in rows)
         except AuditPersistenceError:
             raise
         except (
@@ -602,9 +600,7 @@ class SQLiteAuditStore:
             try:
                 configure_connection(destination)
                 initialize_schema(destination)
-                destination.execute(
-                    "DROP TRIGGER audit_resources_not_after_terminal"
-                )
+                destination.execute("DROP TRIGGER audit_resources_not_after_terminal")
                 destination.execute("BEGIN IMMEDIATE")
                 try:
                     self._copy_retained_rows(
@@ -711,7 +707,6 @@ class SQLiteAuditStore:
             f"INSERT INTO {table} ({column_sql}) VALUES ({placeholders})",
             (tuple(row[column] for column in columns) for row in rows),
         )
-
 
     def _write(
         self,

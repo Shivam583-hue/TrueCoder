@@ -64,7 +64,9 @@ class PosixCgroup:
         try:
             self.path.relative_to(self.delegated_root)
         except ValueError as exc:
-            raise ValueError("cgroup path must remain beneath its delegated root") from exc
+            raise ValueError(
+                "cgroup path must remain beneath its delegated root"
+            ) from exc
         if not isinstance(self.controllers, tuple):
             raise TypeError("controllers must be a tuple")
 
@@ -94,9 +96,9 @@ def create_execution_cgroup(
 
     adapter = io or SystemCgroupIO()
     root = info.delegated_path.resolve(strict=False)
-    digest = hashlib.sha256(
-        f"{execution_id}\0{ownership_token}".encode()
-    ).hexdigest()[:24]
+    digest = hashlib.sha256(f"{execution_id}\0{ownership_token}".encode()).hexdigest()[
+        :24
+    ]
     path = (root / f"truecoder-{digest}").resolve(strict=False)
     try:
         path.relative_to(root)

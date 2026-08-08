@@ -57,9 +57,7 @@ TERMINAL_STAGE_BY_STATUS: Final[dict[ExecutionStatus, ExecutionLifecycleStage]] 
     "failed_to_start": "failed_to_start",
 }
 
-REASON_BEARING_STATUSES: Final = frozenset(
-    {"timed_out", "cancelled", "limit_exceeded"}
-)
+REASON_BEARING_STATUSES: Final = frozenset({"timed_out", "cancelled", "limit_exceeded"})
 
 _NO_EXIT_CODE_STATUSES: Final = REASON_BEARING_STATUSES | {
     "denied",
@@ -257,9 +255,7 @@ def build_cancelled_before_start_result(
     if record.finalization is None:
         raise ValueError("a terminal audit record requires a finalization")
     if record.finalization.outcome is not TerminalOutcome.FAILED_TO_START:
-        raise ValueError(
-            "a pre-start cancellation must be recorded as failed_to_start"
-        )
+        raise ValueError("a pre-start cancellation must be recorded as failed_to_start")
     if reason not in {"cancellation", "shutdown"}:
         raise ValueError(f"unknown cancellation reason: {reason!r}")
 
@@ -330,10 +326,7 @@ def public_diagnostic(
         return None, None
     code, separator, message = detail.partition(": ")
     if not separator:
-        if all(
-            character.isalnum() or character in "._-"
-            for character in detail
-        ):
+        if all(character.isalnum() or character in "._-" for character in detail):
             return detail, None
         return finalization.outcome.value, detail
     return code, message

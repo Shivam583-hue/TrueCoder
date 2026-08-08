@@ -130,12 +130,7 @@ class HookRunner:
             if release is not None:
                 release()
 
-        detail = (
-            result.reason_message
-            or result.stderr
-            or result.stdout
-            or ""
-        ).strip()
+        detail = (result.reason_message or result.stderr or result.stdout or "").strip()
         return HookOutcome(
             hook=hook,
             status=result.status,

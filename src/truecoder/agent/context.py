@@ -14,6 +14,7 @@ from truecoder.agent.messages import (
 )
 from truecoder.agent.prompts import (
     add_code_intelligence_guidance,
+    add_mcp_tool_guidance,
     add_memory_tool_guidance,
     add_plan_tool_guidance,
     add_shell_tool_guidance,
@@ -63,11 +64,12 @@ class TiktokenTokenCounter:
             (str, bytes, bytearray),
         ):
             return sum(
-                self._count_string_values(nested_value)
-                for nested_value in value
+                self._count_string_values(nested_value) for nested_value in value
             )
 
-        raise TypeError("Message values must contain only strings, lists, mappings, or None.")
+        raise TypeError(
+            "Message values must contain only strings, lists, mappings, or None."
+        )
 
     @classmethod
     def _validate_message(cls, message: Mapping[str, Any]) -> None:
@@ -87,9 +89,7 @@ class TiktokenTokenCounter:
 
         if role == "assistant":
             if content is not None and not isinstance(content, str):
-                raise TypeError(
-                    "Assistant message content must be a string or None."
-                )
+                raise TypeError("Assistant message content must be a string or None.")
 
             if content is None and not isinstance(message.get("tool_calls"), list):
                 raise TypeError(
@@ -212,8 +212,7 @@ class ContextBuilder:
             *plan_tail,
         ]
         context_token_count = sum(
-            self.token_counter.count_message(message)
-            for message in required_messages
+            self.token_counter.count_message(message) for message in required_messages
         )
 
         if context_token_count > self.max_input_tokens:
@@ -224,8 +223,7 @@ class ContextBuilder:
         for turn in reversed(state.uncompacted_turns):
             projected = self.project(turn)
             turn_token_count = sum(
-                self.token_counter.count_message(message)
-                for message in projected
+                self.token_counter.count_message(message) for message in projected
             )
 
             if context_token_count + turn_token_count > self.max_input_tokens:
@@ -235,9 +233,7 @@ class ContextBuilder:
             context_token_count += turn_token_count
 
         selected_history = [
-            message
-            for turn in reversed(selected_turns)
-            for message in turn
+            message for turn in reversed(selected_turns) for message in turn
         ]
 
         return copy_messages(
@@ -302,6 +298,9 @@ class ContextBuilder:
 
     def enable_web_fetch_tool(self) -> None:
         self.system_prompt = add_web_fetch_tool_guidance(self.system_prompt)
+
+    def enable_mcp_tools(self) -> None:
+        self.system_prompt = add_mcp_tool_guidance(self.system_prompt)
 
     def enable_code_intelligence(self) -> None:
         self.system_prompt = add_code_intelligence_guidance(self.system_prompt)

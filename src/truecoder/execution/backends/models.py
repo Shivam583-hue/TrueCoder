@@ -187,9 +187,7 @@ class CgroupV2Info:
         if not set(self.enabled_controllers).issubset(self.controllers):
             raise ValueError("enabled controllers must be available controllers")
         if not self.mounted and (
-            self.writable
-            or self.controllers
-            or self.enabled_controllers
+            self.writable or self.controllers or self.enabled_controllers
         ):
             raise ValueError(
                 "an unmounted cgroup v2 filesystem cannot be writable "

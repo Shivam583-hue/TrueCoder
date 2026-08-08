@@ -441,9 +441,7 @@ async def discover_container_image(
     if runtime is None:
         return None
     try:
-        image = parse_image_lock(
-            io.read_text(lock_path, IMAGE_LOCK_READ_LIMIT_BYTES)
-        )
+        image = parse_image_lock(io.read_text(lock_path, IMAGE_LOCK_READ_LIMIT_BYTES))
     except (OSError, TypeError, ValueError):
         return None
 

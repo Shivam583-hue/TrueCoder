@@ -221,10 +221,7 @@ class LLMClient:
                     )
 
                     if fragment.id is not None:
-                        if (
-                            buffer.call_id is not None
-                            and buffer.call_id != fragment.id
-                        ):
+                        if buffer.call_id is not None and buffer.call_id != fragment.id:
                             yield StreamEvent(
                                 type=EventType.ERROR,
                                 error=(
@@ -276,9 +273,7 @@ class LLMClient:
             if not buffer.call_id:
                 yield StreamEvent(
                     type=EventType.ERROR,
-                    error=(
-                        f"Tool call at index {index} completed without a call ID."
-                    ),
+                    error=(f"Tool call at index {index} completed without a call ID."),
                 )
                 return
 

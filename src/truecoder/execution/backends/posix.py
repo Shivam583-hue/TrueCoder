@@ -231,9 +231,7 @@ class PosixExecutionHandle:
         native_reason = frame.payload["native_reason"]
         return BackendExit(
             exit_code=exit_code if isinstance(exit_code, int) else None,
-            native_reason=(
-                native_reason if isinstance(native_reason, str) else None
-            ),
+            native_reason=(native_reason if isinstance(native_reason, str) else None),
         )
 
     async def _terminate_impl(
@@ -386,9 +384,7 @@ class PosixBackend:
         self._shells = shells
         self._cgroup_v2 = cgroup_v2
         self._inherited_environment = (
-            dict(inherited_environment)
-            if inherited_environment is not None
-            else None
+            dict(inherited_environment) if inherited_environment is not None else None
         )
         self._environment_policy = environment_policy
         self._startup_timeout = float(startup_timeout_seconds)
@@ -456,9 +452,7 @@ class PosixBackend:
             self._shells,
             execution_id=execution.execution_id,
             cgroup_path=cgroup.path if cgroup is not None else None,
-            cgroup_controllers=(
-                cgroup.controllers if cgroup is not None else ()
-            ),
+            cgroup_controllers=(cgroup.controllers if cgroup is not None else ()),
         )
         resources = _StartResources(cgroup=cgroup)
         try:

@@ -100,7 +100,9 @@ def normalize_url(raw: str) -> FetchTarget:
     try:
         parts = urlsplit(candidate)
     except ValueError as error:
-        raise UrlPolicyError("The URL could not be parsed.", code="invalid_url") from error
+        raise UrlPolicyError(
+            "The URL could not be parsed.", code="invalid_url"
+        ) from error
 
     scheme = parts.scheme.lower()
     if scheme not in ALLOWED_SCHEMES:

@@ -162,9 +162,13 @@ def audit_row_from(
     resource = snapshot.resource or (
         finalization.resource if finalization is not None else None
     )
-    backend = resource.backend if resource is not None else summary.get(
-        "backend",
-        "auto",
+    backend = (
+        resource.backend
+        if resource is not None
+        else summary.get(
+            "backend",
+            "auto",
+        )
     )
     return AuditRow(
         run_id=snapshot.record.run_id,
@@ -194,8 +198,10 @@ def filter_rows(
     if limit <= 0:
         raise ValueError("limit must be greater than zero")
 
-    selected = rows if audit_filter is None else tuple(
-        row for row in rows if audit_filter.matches(row)
+    selected = (
+        rows
+        if audit_filter is None
+        else tuple(row for row in rows if audit_filter.matches(row))
     )
     ordered = sorted(selected, key=lambda row: row.updated_at_utc, reverse=True)
     return tuple(ordered[: min(limit, MAX_ROWS)])
@@ -294,7 +300,9 @@ class AuditViewerScreen(ModalScreen[None]):
                     id="audit-list",
                 )
                 yield Static(
-                    self.rows[0].details_text() if self.rows else "No audit runs recorded",
+                    self.rows[0].details_text()
+                    if self.rows
+                    else "No audit runs recorded",
                     id="audit-details",
                     markup=False,
                 )
@@ -356,9 +364,7 @@ class AuditViewerScreen(ModalScreen[None]):
         if selected:
             await audit_list.extend(AuditListItem(row) for row in selected)
             audit_list.index = 0
-            self.query_one("#audit-details", Static).update(
-                selected[0].details_text()
-            )
+            self.query_one("#audit-details", Static).update(selected[0].details_text())
         else:
             self.query_one("#audit-details", Static).update("No matching audit runs")
         self._update_filter_summary(len(selected))

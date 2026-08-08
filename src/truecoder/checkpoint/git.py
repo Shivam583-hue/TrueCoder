@@ -140,7 +140,9 @@ class GitWorkspace:
     async def delete_ref(self, ref: str) -> None:
         await self._run("update-ref", "-d", ref)
 
-    async def list_refs(self, prefix: str = CHECKPOINT_REF_PREFIX) -> tuple[tuple[str, str], ...]:
+    async def list_refs(
+        self, prefix: str = CHECKPOINT_REF_PREFIX
+    ) -> tuple[tuple[str, str], ...]:
         result = await self._run(
             "for-each-ref",
             "--format=%(refname) %(objectname)",
@@ -195,8 +197,7 @@ class GitWorkspace:
 
         fields = [field for field in result.stdout.split("\0") if field]
         return tuple(
-            (fields[index], fields[index + 1])
-            for index in range(0, len(fields) - 1, 2)
+            (fields[index], fields[index + 1]) for index in range(0, len(fields) - 1, 2)
         )
 
     async def blob_size(self, tree: str, path: str) -> int | None:

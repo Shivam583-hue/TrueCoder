@@ -38,9 +38,7 @@ class Hook:
                 f"hook name '{name[:20]}...' exceeds {MAX_HOOK_NAME_LENGTH} characters"
             )
         if self.event not in HOOK_EVENTS:
-            raise HookConfigError(
-                f"hook '{name}' has an unknown event: {self.event!r}"
-            )
+            raise HookConfigError(f"hook '{name}' has an unknown event: {self.event!r}")
         if self.condition not in HOOK_CONDITIONS:
             raise HookConfigError(
                 f"hook '{name}' has an unknown condition: {self.condition!r}"
@@ -55,9 +53,7 @@ class Hook:
             raise HookConfigError(
                 f"hook '{name}' exceeds {MAX_HOOK_ARGUMENTS} command arguments"
             )
-        if not all(
-            isinstance(argument, str) and argument for argument in self.command
-        ):
+        if not all(isinstance(argument, str) and argument for argument in self.command):
             raise HookConfigError(
                 f"hook '{name}' has an empty or non-text command argument"
             )
@@ -100,8 +96,7 @@ class HookSuite:
         return tuple(
             hook
             for hook in self.hooks
-            if hook.event == event
-            and (hook.condition == "always" or files_changed)
+            if hook.event == event and (hook.condition == "always" or files_changed)
         )
 
 

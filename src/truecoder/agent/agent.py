@@ -46,6 +46,7 @@ from truecoder.execution.runner import PreviewSink
 from truecoder.hooks import HookOutcome, HookSuite, load_hooks
 from truecoder.hooks.runner import HookRunner
 from truecoder.lsp.manager import LspManager
+from truecoder.mcp.manager import McpManager
 from truecoder.memory import MemoryStore, default_memory_database_path
 from truecoder.mutation import FileDiff
 from truecoder.planning import PlanStore
@@ -113,6 +114,7 @@ class Agent:
         checkpoints: CheckpointService | None = None,
         memory_store: MemoryStore | None = None,
         hooks: HookSuite | None = None,
+        mcp_manager: McpManager | None = None,
     ) -> None:
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
@@ -193,6 +195,10 @@ class Agent:
                     self.tool_registry.register(tool)
             self.context_builder.attach_memory_store(memory_store)
             self.context_builder.enable_memory_tool()
+        if mcp_manager is not None and not isinstance(mcp_manager, McpManager):
+            raise TypeError("mcp_manager must be an McpManager")
+        self.mcp_manager = mcp_manager
+        self._mcp_initialized = False
         if "web_fetch" in self.tool_registry:
             self.context_builder.enable_web_fetch_tool()
         if "find_symbol" in self.tool_registry:
@@ -273,6 +279,29 @@ class Agent:
             event_sink=event_sink,
             preview_sink=preview_sink,
         )
+
+    async def initialize_mcp(self) -> tuple[str, ...]:
+        if self._mcp_initialized or self.mcp_manager is None:
+            return ()
+        self._mcp_initialized = True
+
+        try:
+            tools = await self.mcp_manager.start()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a tool server never blocks startup
+            return ()
+
+        registered: list[str] = []
+        for tool in tools:
+            if tool.name in self.tool_registry:
+                continue
+            self.tool_registry.register(tool)
+            registered.append(tool.name)
+
+        if registered:
+            self.context_builder.enable_mcp_tools()
+        return tuple(registered)
 
     async def initialize_execution(self) -> ExecutionRuntime | None:
         if self._execution_initialized:
@@ -658,6 +687,11 @@ class Agent:
                 await closer()
             except Exception:  # noqa: BLE001 - one bad tool cannot block shutdown
                 self.close_failures += 1
+        if self.mcp_manager is not None:
+            try:
+                await self.mcp_manager.stop()
+            except Exception:  # noqa: BLE001 - shutdown continues past a bad server
+                self.close_failures += 1
         if self.memory_store is not None:
             try:
                 self.memory_store.close()
@@ -669,6 +703,7 @@ class Agent:
 def run() -> None:
     """Launch the TrueCoder terminal application."""
     from truecoder.execution.configuration import load_execution_config
+    from truecoder.mcp.configuration import load_mcp_servers
     from truecoder.tui.app import TrueCoderApp
 
     launch_directory = Path.cwd().resolve(strict=True)
@@ -711,6 +746,7 @@ def run() -> None:
         checkpoints=checkpoints,
         memory_store=memory_store,
         hooks=load_hooks(),
+        mcp_manager=McpManager(load_mcp_servers(), project_root),
     )
     agent.summarizer = TurnSummarizer(agent.llm_client)
     session_store = SQLiteSessionStore(default_session_database_path())

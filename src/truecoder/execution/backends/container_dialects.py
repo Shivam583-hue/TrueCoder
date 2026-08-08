@@ -90,9 +90,8 @@ def docker_create_argv(plan: ContainerCreatePlan) -> tuple[str, ...]:
         argv.extend(("--label", f"{key}={value}"))
 
     for mount in plan.mounts:
-        specification = (
-            f"type=bind,src={mount.source},dst={mount.target}"
-            + (",readonly" if mount.read_only else "")
+        specification = f"type=bind,src={mount.source},dst={mount.target}" + (
+            ",readonly" if mount.read_only else ""
         )
         argv.extend(("--mount", specification))
 

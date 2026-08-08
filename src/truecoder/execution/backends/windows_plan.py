@@ -208,9 +208,7 @@ def build_windows_plan(
 
     request = prepared.request
     if request.filesystem_mode != "host":
-        raise ValueError(
-            "the windows backend only supports the host filesystem mode"
-        )
+        raise ValueError("the windows backend only supports the host filesystem mode")
 
     if request.mode == "exec":
         argv = tuple(request.argv or ())

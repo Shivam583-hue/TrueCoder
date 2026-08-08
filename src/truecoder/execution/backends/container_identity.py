@@ -98,9 +98,7 @@ def read_facts(resource: BackendResourceIdentifier) -> ContainerResourceFacts:
     details = dict(resource.native_details)
     missing = tuple(name for name in REQUIRED_DETAILS if name not in details)
     if missing:
-        raise ValueError(
-            f"container resource is missing details: {', '.join(missing)}"
-        )
+        raise ValueError(f"container resource is missing details: {', '.join(missing)}")
     runtime = details[DETAIL_RUNTIME]
     if runtime != "docker":
         raise ValueError(f"unsupported container runtime: {runtime!r}")

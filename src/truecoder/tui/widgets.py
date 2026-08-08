@@ -88,6 +88,7 @@ def _launcher_tip() -> Text:
     )
     return tip
 
+
 _TOOL_STATE_LABELS = {
     "queued": "Queued",
     "awaiting-approval": "Awaiting approval",
@@ -144,6 +145,8 @@ def _display_target(value: object) -> str:
     if len(text) > MAX_TARGET_CHARACTERS:
         return f"{text[: MAX_TARGET_CHARACTERS - 1]}…"
     return text
+
+
 _APPROVAL_SCOPES = frozenset({"once", "session", "workspace"})
 
 
@@ -325,9 +328,7 @@ def render_diff(diff: FileDiff) -> Text:
             text.append("\n")
         text.append(f"{hunk.header}\n", style=_DIFF_HEADER_STYLE)
         for line in hunk.lines:
-            number = (
-                line.before_number if line.kind == "removed" else line.after_number
-            )
+            number = line.before_number if line.kind == "removed" else line.after_number
             label = "    " if number is None else f"{number:>4}"
             text.append(
                 f"{DIFF_LINE_PREFIXES[line.kind]} {label}  {line.text}\n",
@@ -499,9 +500,7 @@ class ToolCallCard(Vertical):
 
         self.arguments = arguments
         self.mutation = mutation
-        self.allowed_approval_scopes = self._validate_approval_scopes(
-            allowed_scopes
-        )
+        self.allowed_approval_scopes = self._validate_approval_scopes(allowed_scopes)
         self.approval_details = approval_details
         self.running_at = None
         self.raw_arguments = json.dumps(
@@ -630,10 +629,7 @@ class ToolCallCard(Vertical):
         if self.tool_name == "write_file" and isinstance(output, dict):
             bytes_written = output.get("bytes_written")
             if isinstance(bytes_written, int) and not isinstance(bytes_written, bool):
-                return (
-                    f"{bytes_written:,} "
-                    f"{'byte' if bytes_written == 1 else 'bytes'}"
-                )
+                return f"{bytes_written:,} {'byte' if bytes_written == 1 else 'bytes'}"
         collection_keys = {
             "glob": ("matches", "match", "matches"),
             "grep": ("matches", "match", "matches"),
@@ -1028,9 +1024,7 @@ class StatusBar(Horizontal):
     def set_conversation_active(self, active: bool) -> None:
         self._conversation_active = active
         if self.is_mounted:
-            self.query_one("#footer-workspace", Static).update(
-                self._workspace_label()
-            )
+            self.query_one("#footer-workspace", Static).update(self._workspace_label())
             self.query_one("#footer-status", Static).update(self._right_label())
 
     def set_usage(self, usage: TokenUsage | None) -> None:

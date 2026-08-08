@@ -267,7 +267,9 @@ def parse_hover(payload: Any) -> str:
     if isinstance(payload, str):
         return payload.strip()
     if isinstance(payload, list):
-        return "\n\n".join(part for part in (parse_hover(item) for item in payload) if part)
+        return "\n\n".join(
+            part for part in (parse_hover(item) for item in payload) if part
+        )
     if not isinstance(payload, dict):
         return ""
 

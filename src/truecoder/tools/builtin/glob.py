@@ -95,7 +95,9 @@ class GlobTool(BaseTool[GlobArguments]):
                 code="invalid_pattern",
             )
 
-        parts = tuple(part for part in posix_pattern.split("/") if part not in ("", "."))
+        parts = tuple(
+            part for part in posix_pattern.split("/") if part not in ("", ".")
+        )
         if not parts or ".." in parts:
             raise ToolExecutionError(
                 "The glob pattern must stay beneath the requested directory.",

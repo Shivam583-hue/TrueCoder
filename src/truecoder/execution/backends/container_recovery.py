@@ -108,9 +108,13 @@ class ContainerRecoveryHandler:
         if current_version != facts.runtime_version:
             raise self._error(resource, "container recovery runtime version changed")
         if facts.label_schema != LABEL_SCHEMA_VERSION:
-            raise self._error(resource, "container recovery label schema is unsupported")
+            raise self._error(
+                resource, "container recovery label schema is unsupported"
+            )
         if facts.plan_version != PLAN_VERSION:
-            raise self._error(resource, "container recovery plan version is unsupported")
+            raise self._error(
+                resource, "container recovery plan version is unsupported"
+            )
         return facts
 
     @staticmethod

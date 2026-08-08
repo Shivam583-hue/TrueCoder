@@ -65,9 +65,7 @@ def turns_to_compact(
         return 0
 
     threshold = max_input_tokens * threshold_share
-    used = sum(
-        counter.count_message(message) for turn in turns for message in turn
-    )
+    used = sum(counter.count_message(message) for turn in turns for message in turn)
     if used <= threshold:
         return 0
 
@@ -95,7 +93,9 @@ def render_transcript(turns: Sequence[Sequence[ModelMessage]]) -> str:
 
 
 class TurnSummarizer:
-    def __init__(self, llm_client, *, max_characters: int = MAX_SUMMARY_CHARACTERS) -> None:
+    def __init__(
+        self, llm_client, *, max_characters: int = MAX_SUMMARY_CHARACTERS
+    ) -> None:
         if llm_client is None:
             raise ValueError("A summarizer requires an LLM client.")
         if max_characters < 1:

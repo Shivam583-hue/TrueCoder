@@ -303,9 +303,7 @@ class MutationAudit:
                 kind=str(row["kind"]),  # type: ignore[arg-type]
                 recorded_at=str(row["recorded_at"]),
                 before_sha256=(
-                    None
-                    if row["before_sha256"] is None
-                    else str(row["before_sha256"])
+                    None if row["before_sha256"] is None else str(row["before_sha256"])
                 ),
                 after_sha256=str(row["after_sha256"]),
                 before_bytes=int(row["before_bytes"]),

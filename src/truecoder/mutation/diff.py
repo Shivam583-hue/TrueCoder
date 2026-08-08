@@ -126,17 +126,17 @@ def build_file_diff(
             )
         )
 
-    newline_changed = bool(before) and bool(after) and (
-        _ends_with_newline(before) != _ends_with_newline(after)
+    newline_changed = (
+        bool(before)
+        and bool(after)
+        and (_ends_with_newline(before) != _ends_with_newline(after))
     )
 
     # Equal split lines mean no hunks, so without this any difference that
     # survives splitlines - CRLF against LF above all - would render as an
     # unchanged file while the write still rewrites every line.
     line_endings_changed = (
-        before != after
-        and before_lines == after_lines
-        and not newline_changed
+        before != after and before_lines == after_lines and not newline_changed
     )
 
     return FileDiff(

@@ -154,9 +154,7 @@ async def write_frame_async(
             while offset < len(data):
                 written = os.write(fd, data[offset:])
                 if written <= 0:
-                    raise BrokenPipeError(
-                        "POSIX protocol pipe closed during write"
-                    )
+                    raise BrokenPipeError("POSIX protocol pipe closed during write")
                 offset += written
         except BlockingIOError:
             return

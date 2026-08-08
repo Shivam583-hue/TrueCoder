@@ -36,9 +36,7 @@ def find_workspace_interpreter(project_root: Path) -> str | None:
     if not isinstance(project_root, Path):
         raise TypeError("project_root must be a pathlib.Path")
 
-    relative_names = (
-        _WINDOWS_INTERPRETERS if _is_windows() else _POSIX_INTERPRETERS
-    )
+    relative_names = _WINDOWS_INTERPRETERS if _is_windows() else _POSIX_INTERPRETERS
     for directory in VIRTUAL_ENVIRONMENT_DIRECTORIES:
         for relative in relative_names:
             candidate = project_root / directory / relative
@@ -78,13 +76,9 @@ def describe_environment(facts: EnvironmentFacts) -> str:
         ),
     ]
     if facts.workspace_interpreter is not None:
-        lines.append(
-            f"Workspace virtual environment: {facts.workspace_interpreter}"
-        )
+        lines.append(f"Workspace virtual environment: {facts.workspace_interpreter}")
     else:
-        lines.append(
-            "Workspace virtual environment: none found in the project root"
-        )
+        lines.append("Workspace virtual environment: none found in the project root")
 
     body = "\n".join(lines)
     return f"<environment>\n{body}\n</environment>"

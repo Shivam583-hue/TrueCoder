@@ -71,15 +71,11 @@ def default_policy_config() -> PolicyConfig:
 @dataclass(frozen=True, slots=True)
 class ExecutionBootstrapConfig:
     enabled: bool = True
-    audit_database_path: Path = field(
-        default_factory=default_audit_database_path
-    )
+    audit_database_path: Path = field(default_factory=default_audit_database_path)
     image_lock_path: Path = DEFAULT_IMAGE_LOCK
     trusted_rules_path: Path = field(default_factory=default_trusted_rules_path)
     policy_config: PolicyConfig = field(default_factory=default_policy_config)
-    environment_policy: EnvironmentPolicy = field(
-        default_factory=EnvironmentPolicy
-    )
+    environment_policy: EnvironmentPolicy = field(default_factory=EnvironmentPolicy)
     container_default_memory_bytes: int = DEFAULT_MEMORY_BYTES
     container_default_pids_limit: int = DEFAULT_PIDS_LIMIT
     container_cpu_rate_ceiling: float | None = None
@@ -299,9 +295,7 @@ async def bootstrap_execution(
         environment_policy=settings.environment_policy,
         host_environment=os.environ,
         trusted_rules=trusted_rules,
-        container_network_configured=(
-            settings.container_isolated_network is not None
-        ),
+        container_network_configured=(settings.container_isolated_network is not None),
     )
     runtime = _runtime_with_health(
         enabled=True,

@@ -215,7 +215,9 @@ class ContainerLabels:
     def matches(self, labels: dict[str, str]) -> bool:
         if labels.get(LABEL_MANAGED) != "true":
             return False
-        return all(key in labels and labels[key] == value for key, value in self.as_pairs())
+        return all(
+            key in labels and labels[key] == value for key, value in self.as_pairs()
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,9 +287,7 @@ class ContainerSecurityProfile:
     def __post_init__(self) -> None:
         _require_positive_int(self.memory_bytes, "memory_bytes")
         if self.memory_bytes < MIN_MEMORY_BYTES:
-            raise ValueError(
-                f"memory_bytes must be at least {MIN_MEMORY_BYTES} bytes"
-            )
+            raise ValueError(f"memory_bytes must be at least {MIN_MEMORY_BYTES} bytes")
         _require_positive_int(self.pids_limit, "pids_limit")
         if self.pids_limit < MIN_PIDS_LIMIT:
             raise ValueError(f"pids_limit must be at least {MIN_PIDS_LIMIT}")
@@ -347,9 +347,7 @@ class ContainerCreatePlan:
 
     def __post_init__(self) -> None:
         if self.runtime != "docker":
-            raise ValueError(
-                f"runtime dialect is not implemented: {self.runtime!r}"
-            )
+            raise ValueError(f"runtime dialect is not implemented: {self.runtime!r}")
         _require_identifier(self.name, "container name")
         if len(self.name) > MAX_NAME_LENGTH:
             raise ValueError("container name is too long")
@@ -404,9 +402,7 @@ class ContainerCreatePlan:
     @property
     def workspace_mount(self) -> ContainerMount:
         return next(
-            mount
-            for mount in self.mounts
-            if mount.target == CONTAINER_WORKSPACE
+            mount for mount in self.mounts if mount.target == CONTAINER_WORKSPACE
         )
 
 
@@ -479,7 +475,9 @@ class ContainerBackendFacts:
 
     def __post_init__(self) -> None:
         _require_identifier(self.runtime, "runtime")
-        _require_text(self.runtime_version, "runtime_version", maximum=MAX_IDENTIFIER_BYTES)
+        _require_text(
+            self.runtime_version, "runtime_version", maximum=MAX_IDENTIFIER_BYTES
+        )
         if self.image is not None and not isinstance(self.image, ContainerImage):
             raise TypeError("image must be a ContainerImage or None")
 

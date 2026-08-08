@@ -359,6 +359,4 @@ def _retention_policy(
             )
         )
     except ValueError as error:
-        raise ExecutionConfigError(
-            f"invalid retention policy: {error}"
-        ) from None
+        raise ExecutionConfigError(f"invalid retention policy: {error}") from None

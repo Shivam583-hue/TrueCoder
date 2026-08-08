@@ -349,8 +349,7 @@ class ContainerBackend:
             )
         if inspection.state != "created":
             raise BackendStartError(
-                "the container is not stopped before registration: "
-                f"{inspection.state}",
+                f"the container is not stopped before registration: {inspection.state}",
                 execution_id=context.execution_id,
                 backend="container",
                 operation="start",

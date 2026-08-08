@@ -52,9 +52,7 @@ def _validate_backend_failures(
                 f"failures[{index}].reasons[{reason_index}]",
             )
             if reason in seen_reasons:
-                raise ValueError(
-                    f"failures[{index}].reasons cannot contain duplicates"
-                )
+                raise ValueError(f"failures[{index}].reasons cannot contain duplicates")
             seen_reasons.add(reason)
 
         seen_backends.add(backend)

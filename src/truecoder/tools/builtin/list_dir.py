@@ -105,9 +105,9 @@ class ListDirTool(BaseTool[ListDirArguments]):
                         continue
 
                     if entry.is_symlink():
-                        entry_type: Literal[
-                            "directory", "file", "symlink", "other"
-                        ] = "symlink"
+                        entry_type: Literal["directory", "file", "symlink", "other"] = (
+                            "symlink"
+                        )
                     elif entry.is_dir(follow_symlinks=False):
                         entry_type = "directory"
                     elif entry.is_file(follow_symlinks=False):

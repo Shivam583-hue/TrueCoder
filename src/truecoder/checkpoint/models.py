@@ -80,7 +80,7 @@ def decode_message(message: str) -> dict[str, Any]:
         stripped = line.strip()
         if not stripped.startswith(METADATA_MARKER):
             continue
-        payload = stripped[len(METADATA_MARKER):].strip()
+        payload = stripped[len(METADATA_MARKER) :].strip()
         try:
             decoded = json.loads(payload)
         except ValueError:

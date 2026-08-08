@@ -777,8 +777,7 @@ class ExecutionResult:
         if self.reason_code is not None:
             code = _require_nonempty_string(self.reason_code, "reason_code")
             if len(code) > 128 or any(
-                not (character.isalnum() or character in "._-")
-                for character in code
+                not (character.isalnum() or character in "._-") for character in code
             ):
                 raise ValueError(
                     "reason_code must contain at most 128 letters, digits, "

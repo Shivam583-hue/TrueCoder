@@ -323,9 +323,7 @@ def _cgroup_limit_reason(plan: PosixLaunchPlan) -> str | None:
         cgroup = PosixCgroup(
             path=plan.cgroup_path,
             delegated_root=plan.cgroup_path.parent,
-            controllers=tuple(
-                plan.cgroup_controllers
-            ),
+            controllers=tuple(plan.cgroup_controllers),
             baseline=CgroupCounters(0, 0, 0),
         )
         return limit_reason(
