@@ -11,6 +11,12 @@ from truecoder.providers.catalog import (
     read_cache,
     write_cache,
 )
+from truecoder.providers.configuration import (
+    ProviderConfigError,
+    default_providers_config_path,
+    load_providers,
+    parse_providers,
+)
 from truecoder.providers.login import CallbackServer, authorise
 from truecoder.providers.models import (
     DEFAULT_PROVIDER_NAME,
@@ -67,6 +73,7 @@ __all__ = [
     "OAuthError",
     "OAuthToken",
     "Provider",
+    "ProviderConfigError",
     "SessionSettings",
     "SettingsError",
     "StoredSelection",
@@ -74,6 +81,7 @@ __all__ = [
     "authorization_url",
     "decode_cache",
     "default_catalog_path",
+    "default_providers_config_path",
     "default_settings_path",
     "default_tokens_path",
     "encode_cache",
@@ -84,9 +92,11 @@ __all__ = [
     "generate_pkce",
     "generate_state",
     "load_models",
+    "load_providers",
     "load_selection",
     "load_tokens",
     "parse_models",
+    "parse_providers",
     "parse_selection",
     "parse_token_response",
     "parse_tokens",
