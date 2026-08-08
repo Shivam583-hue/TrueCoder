@@ -81,6 +81,7 @@ from truecoder.tools.builtin import (
     code_intelligence_tools,
     memory_tools,
 )
+from truecoder.tools.builtin.delegate import DelegateTool, SubagentOutcome
 from truecoder.tools.mutation_audit import (
     MutationAudit,
     default_mutation_database_path,
@@ -772,6 +773,9 @@ def build_session(*, max_iterations: int | None = None) -> AgentSession:
         **({} if max_iterations is None else {"max_iterations": max_iterations}),
     )
     agent.summarizer = TurnSummarizer(agent.llm_client)
+    tool_registry.register(
+        DelegateTool(subagent_runner(agent, mutation_audit))
+    )
     session_store = SQLiteSessionStore(default_session_database_path())
     session_manager = SessionManager(session_store, state, project_root)
     return AgentSession(
@@ -779,6 +783,51 @@ def build_session(*, max_iterations: int | None = None) -> AgentSession:
         session_manager=session_manager,
         state=state,
     )
+
+
+def subagent_registry(project_root: Path, audit: MutationAudit) -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register(EditFileTool(project_root, audit))
+    registry.register(GlobTool(project_root))
+    registry.register(GrepTool(project_root))
+    registry.register(ListDirTool(project_root))
+    registry.register(ReadFileTool(project_root))
+    registry.register(WriteFileTool(project_root, audit))
+    return registry
+
+
+def subagent_runner(parent: Agent, audit: MutationAudit):
+    async def run(task: str, max_iterations: int) -> SubagentOutcome:
+        subagent = Agent(
+            state=AgentState(),
+            context_builder=ContextBuilder.from_environment(
+                environment=describe_environment(
+                    collect_environment(parent.project_root)
+                ),
+            ),
+            tool_registry=subagent_registry(parent.project_root, audit),
+            project_root=parent.project_root,
+            max_iterations=max_iterations,
+        )
+        subagent.approval_handler = parent.approval_handler
+
+        reply = ""
+        tool_calls = 0
+        error: str | None = None
+        try:
+            async for event in subagent.run(task):
+                if event.type is AgentEventType.TOOL_CALL:
+                    tool_calls += 1
+                elif event.type is AgentEventType.AGENT_ERROR:
+                    error = str(event.data.get("error", "the subtask failed"))
+                elif event.type is AgentEventType.AGENT_END:
+                    reply = str(event.data.get("response") or "")
+        finally:
+            await subagent.close()
+
+        return SubagentOutcome(reply=reply, tool_calls=tool_calls, error=error)
+
+    return run
 
 
 def build_eval_agent(project_root: Path, *, max_iterations: int = 12) -> Agent:

@@ -8,6 +8,10 @@ from truecoder.tools.builtin.code_intelligence import (
     PositionArguments,
     code_intelligence_tools,
 )
+from truecoder.tools.builtin.delegate import (
+    DelegateArguments,
+    DelegateTool,
+)
 from truecoder.tools.builtin.edit_file import (
     MAX_EDIT_FILE_BYTES,
     MAX_EDIT_TEXT_BYTES,
@@ -87,6 +91,8 @@ __all__ = [
     "MAX_LINE_COUNT",
     "MAX_WRITE_BYTES",
     "UNTRUSTED_NOTICE",
+    "DelegateArguments",
+    "DelegateTool",
     "Edit",
     "EditFileArguments",
     "EditFileOutput",
