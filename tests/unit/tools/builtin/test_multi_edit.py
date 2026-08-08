@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from truecoder.tools.base import ToolExecutionError
 from truecoder.tools.builtin import Edit, EditFileArguments, EditFileTool
 from truecoder.tools.builtin.edit_file import (
@@ -131,13 +133,13 @@ class MultiEditToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(diff)
 
     async def test_at_least_one_edit_is_required(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValidationError):
             EditFileArguments(path="a.py", edits=[])
 
     async def test_too_many_edits_are_refused(self):
         edits = [_edit(f"x{n}", f"y{n}") for n in range(MAX_EDITS_PER_CALL + 1)]
 
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValidationError):
             EditFileArguments(path="a.py", edits=edits)
 
     async def test_replace_all_defaults_to_false(self):

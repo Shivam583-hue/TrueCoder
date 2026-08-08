@@ -173,8 +173,8 @@ class SessionManagerUITests(unittest.IsolatedAsyncioTestCase):
                         "call_edit",
                         "edit_file",
                         (
-                            '{"path":"example.py","old_text":"pass",'
-                            '"new_text":"value = 1","replace_all":false}'
+                            '{"path":"example.py","edits":'
+                            '[{"old_text":"pass","new_text":"value = 1"}]}'
                         ),
                     ),
                 )

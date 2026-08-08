@@ -816,9 +816,9 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
                     "edit_file",
                     {
                         "path": "src/example.py",
-                        "old_text": "pass",
-                        "new_text": "value = 1",
-                        "replace_all": False,
+                        "edits": [
+                            {"old_text": "pass", "new_text": "value = 1"}
+                        ],
                     },
                     (
                         '{"status":"success","output":{"path":"src/example.py",'
