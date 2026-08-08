@@ -1,5 +1,4 @@
 import asyncio
-import os
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -23,6 +22,11 @@ from truecoder.client.response import (
     TokenUsage,
     ToolCallDelta,
 )
+from truecoder.providers.models import (
+    CredentialError,
+    SessionSettings,
+    settings_from_environment,
+)
 from truecoder.tools.base import ToolCall
 
 load_dotenv()
@@ -36,9 +40,34 @@ class _ToolCallBuffer:
 
 
 class LLMClient:
-    def __init__(self) -> None:
+    def __init__(self, settings: SessionSettings | None = None) -> None:
         self.__client: AsyncOpenAI | None = None
         self._max_retries: int = 3
+        self._settings = settings
+        if settings is not None:
+            settings.on_connection_change(self._invalidate)
+
+    @property
+    def settings(self) -> SessionSettings:
+        if self._settings is None:
+            try:
+                resolved = settings_from_environment()
+            except CredentialError as error:
+                raise RuntimeError(str(error)) from None
+            resolved.on_connection_change(self._invalidate)
+            self._settings = resolved
+        return self._settings
+
+    def _invalidate(self) -> None:
+        client = self.__client
+        self.__client = None
+        if client is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(client.close())
 
     async def __aenter__(self) -> "LLMClient":  # noqa: PYI034 - Python 3.10
         return self
@@ -48,17 +77,16 @@ class LLMClient:
 
     def get_client(self) -> AsyncOpenAI:
         if self.__client is None:
-            api_key = os.getenv("API_KEY")
-            if not api_key:
+            settings = self.settings
+            if settings.credential is None:
                 raise RuntimeError("API_KEY must be set in the .env file")
 
             client_options: dict[str, Any] = {
-                "api_key": api_key,
+                **settings.credential.client_options(),
                 "max_retries": 0,
             }
-            base_url = os.getenv("BASE_URL")
-            if base_url:
-                client_options["base_url"] = base_url
+            if settings.provider.base_url:
+                client_options["base_url"] = settings.provider.base_url
 
             self.__client = AsyncOpenAI(**client_options)
 
@@ -76,10 +104,7 @@ class LLMClient:
         *,
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncGenerator[StreamEvent, None]:
-        model = os.getenv("MODEL")
-        if not model:
-            raise RuntimeError("MODEL must be set in the .env file")
-
+        model = self.settings.model
         client = self.get_client()
 
         if tools:
