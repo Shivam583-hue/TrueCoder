@@ -9,6 +9,7 @@ from truecoder.execution.defaults import DEFAULT_EXECUTION_LIMITS
 from truecoder.execution.errors import ExecutionInfrastructureError
 from truecoder.execution.models import ExecutionLimits, ExecutionRequest
 from truecoder.hooks.models import Hook, HookOutcome
+from truecoder.workspace import resolve_inside_workspace
 
 MAX_HOOK_OUTPUT_BYTES: Final = 256 * 1024
 MAX_HOOK_RETURN_BYTES: Final = 8 * 1024
@@ -27,15 +28,11 @@ def hook_limits(hook: Hook) -> ExecutionLimits:
 
 
 def resolve_working_directory(project_root: Path, requested: str) -> Path:
-    candidate = Path(requested)
-    if candidate.is_absolute():
-        raise ValueError("a hook working directory must be workspace-relative")
-
-    resolved = (project_root / candidate).resolve()
-    root = project_root.resolve()
-    if resolved != root and root not in resolved.parents:
-        raise ValueError("a hook working directory must stay inside the workspace")
-    return resolved
+    return resolve_inside_workspace(
+        project_root,
+        requested,
+        subject="hook working directory",
+    )
 
 
 def build_hook_request(hook: Hook, project_root: Path) -> ExecutionRequest:

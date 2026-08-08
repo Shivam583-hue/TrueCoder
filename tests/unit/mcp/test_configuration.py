@@ -117,9 +117,10 @@ class ParseTests(unittest.TestCase):
         with self.assertRaises(McpConfigError):
             parse_mcp_servers(payload)
 
-    def test_an_absolute_working_directory_is_refused(self):
-        with self.assertRaises(McpConfigError):
-            parse_mcp_servers(_config(working_directory="/etc"))
+    def test_a_rooted_working_directory_is_refused(self):
+        for value in ("/etc", "\\Windows", "C:/Windows", "C:Windows"):
+            with self.subTest(value=value), self.assertRaises(McpConfigError):
+                parse_mcp_servers(_config(working_directory=value))
 
     def test_a_non_text_environment_value_is_refused(self):
         with self.assertRaises(McpConfigError):
@@ -190,9 +191,10 @@ class WorkingDirectoryTests(unittest.TestCase):
             with self.subTest(requested=requested), self.assertRaises(McpConfigError):
                 resolve_working_directory(self.root, requested)
 
-    def test_an_absolute_path_is_refused(self):
-        with self.assertRaises(McpConfigError):
-            resolve_working_directory(self.root, "/etc")
+    def test_a_rooted_path_is_refused(self):
+        for value in ("/etc", "\\Windows", "C:/Windows", "C:Windows"):
+            with self.subTest(value=value), self.assertRaises(McpConfigError):
+                resolve_working_directory(self.root, value)
 
 
 class ServerModelTests(unittest.TestCase):

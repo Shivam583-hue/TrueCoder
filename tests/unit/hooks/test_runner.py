@@ -114,9 +114,10 @@ class HookRequestTests(unittest.TestCase):
     def test_the_workspace_root_is_allowed(self):
         self.assertEqual(resolve_working_directory(self.root, "."), self.root)
 
-    def test_an_absolute_working_directory_is_refused(self):
-        with self.assertRaises(ValueError):
-            resolve_working_directory(self.root, "/etc")
+    def test_a_rooted_working_directory_is_refused(self):
+        for value in ("/etc", "\\Windows", "C:/Windows", "C:Windows"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                resolve_working_directory(self.root, value)
 
     def test_an_escaping_working_directory_is_refused(self):
         with self.assertRaises(ValueError):

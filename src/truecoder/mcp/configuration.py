@@ -8,6 +8,7 @@ from typing import Final
 from platformdirs import user_config_path
 
 from truecoder.mcp.models import usable_tool_name
+from truecoder.workspace import is_workspace_relative, resolve_inside_workspace
 
 MCP_CONFIG_VERSION: Final = 1
 MAX_CONFIG_BYTES: Final = 64 * 1024
@@ -170,7 +171,7 @@ def _working_directory(name: str, value: object) -> str:
         return "."
     if not isinstance(value, str) or not value.strip():
         raise McpConfigError(f"server {name!r} working directory must be text")
-    if Path(value).is_absolute():
+    if not is_workspace_relative(value):
         raise McpConfigError(
             f"server {name!r} working directory must be workspace-relative"
         )
@@ -186,14 +187,11 @@ def _timeout(name: str, value: object) -> float:
 
 
 def resolve_working_directory(project_root: Path, requested: str) -> Path:
-    candidate = Path(requested)
-    if candidate.is_absolute():
-        raise McpConfigError("a server working directory must be workspace-relative")
-
-    resolved = (project_root / candidate).resolve()
-    root = project_root.resolve()
-    if resolved != root and root not in resolved.parents:
-        raise McpConfigError(
-            "a server working directory must stay inside the workspace"
+    try:
+        return resolve_inside_workspace(
+            project_root,
+            requested,
+            subject="server working directory",
         )
-    return resolved
+    except ValueError as error:
+        raise McpConfigError(str(error)) from None
