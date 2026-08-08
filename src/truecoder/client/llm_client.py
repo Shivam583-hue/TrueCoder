@@ -25,7 +25,7 @@ from truecoder.client.response import (
 from truecoder.providers.models import (
     CredentialError,
     SessionSettings,
-    settings_from_environment,
+    resolve_settings,
 )
 from truecoder.tools.base import ToolCall
 
@@ -51,7 +51,7 @@ class LLMClient:
     def settings(self) -> SessionSettings:
         if self._settings is None:
             try:
-                resolved = settings_from_environment()
+                resolved = resolve_settings()
             except CredentialError as error:
                 raise RuntimeError(str(error)) from None
             resolved.on_connection_change(self._invalidate)

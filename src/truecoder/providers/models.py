@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Final
+from typing import Any, Final, Protocol, runtime_checkable
+
+from truecoder.providers.oauth import OAuthClient
 
 MAX_MODEL_ID_CHARACTERS: Final = 200
 MAX_MODEL_NAME_CHARACTERS: Final = 120
@@ -11,6 +13,19 @@ DEFAULT_PROVIDER_NAME: Final = "default"
 
 class CredentialError(ValueError):
     pass
+
+
+@runtime_checkable
+class Credential(Protocol):
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def is_usable(self) -> bool: ...
+
+    def client_options(self) -> dict[str, Any]: ...
+
+    def redacted(self) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,19 +52,19 @@ class ApiKey:
         return f"api key ending {tail}" if tail else "api key"
 
 
-Credential = ApiKey
-
-
 @dataclass(frozen=True, slots=True)
 class Provider:
     name: str = DEFAULT_PROVIDER_NAME
     base_url: str | None = None
+    oauth: OAuthClient | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
             raise CredentialError("a provider needs a name")
         if self.base_url is not None and not isinstance(self.base_url, str):
             raise CredentialError("base_url must be text or None")
+        if self.oauth is not None and not isinstance(self.oauth, OAuthClient):
+            raise CredentialError("oauth must be an OAuthClient or None")
 
     @property
     def models_url(self) -> str:
@@ -137,8 +152,11 @@ class SessionSettings:
             listener()
 
 
-def settings_from_environment() -> SessionSettings:
-    model = os.getenv("MODEL", "").strip()
+def settings_from_environment(
+    *,
+    stored_model: str | None = None,
+) -> SessionSettings:
+    model = (stored_model or "").strip() or os.getenv("MODEL", "").strip()
     if not model:
         raise CredentialError("MODEL must be set in the environment or a .env file")
 
@@ -149,3 +167,17 @@ def settings_from_environment() -> SessionSettings:
         credential=ApiKey(raw_key) if raw_key else None,
         model=model,
     )
+
+
+def resolve_settings() -> SessionSettings:
+    from truecoder.providers.store import load_selection
+    from truecoder.providers.tokens import load_tokens
+
+    stored = load_selection()
+    settings = settings_from_environment(stored_model=stored.model)
+
+    tokens = load_tokens()
+    token = tokens.get(settings.provider.name)
+    if token is not None and token.is_usable:
+        settings.credential = token
+    return settings
