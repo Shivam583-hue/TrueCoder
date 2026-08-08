@@ -622,6 +622,15 @@ configured makes a call pre-authorised, which is the opposite of the hook rule,
 because a hook is a command the user wrote and a server tool is a call the model
 invented against a schema a third party wrote.
 
+Anything that accepts a workspace-relative path shares one containment rule.
+`Path.is_absolute` is platform-dependent and answers the wrong question here: on
+Windows `/etc` is not absolute, and on POSIX `C:/Windows` is not absolute either,
+so each platform silently accepts the other's rooted paths. Configuration files
+are portable, so a path rooted under either convention is refused under both, and
+drive-relative forms like `C:Windows` are refused as well. Containment against the
+resolved project root still runs afterwards, because a purely relative `../..` is
+an escape that no syntactic check can catch.
+
 One server never affects another. Startup records a status per server, and a
 server that fails to start, times out, or resolves its working directory outside
 the workspace is reported and skipped while the rest of the application starts
@@ -1637,6 +1646,7 @@ Keep these invariants stable as the codebase grows:
 * strictness is claimed only for a schema this project authored
 * a server's output is data, and is labelled as data every time
 * one failing tool server never stops another, or the application
+* a path rooted under either platform convention is refused under both
 * a budget too small to hold one ordinary file makes the agent re-read forever
 * the system prompt teaches the agent to work, it does not describe the agent
 * an explicit backend or shell preference is never silently downgraded

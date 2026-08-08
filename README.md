@@ -146,6 +146,8 @@ TrueCoder/
 │   │   ├── changes.py                 # Working tree against a checkpoint tree
 │   │   └── service.py                 # Capture, list, prune, restore, compare
 │   │
+│   ├── workspace.py                   # One containment rule for workspace-relative paths
+│   │
 │   ├── jsonrpc/                       # Shared JSON-RPC over stdio
 │   │   ├── framing.py                 # Framing contract and neutral message builders
 │   │   └── transport.py               # Process lifecycle and request routing
@@ -358,11 +360,11 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **35,421** across 148 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Physical source lines      |                      **35,444** across 149 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
 | Execution subsystem share  |                    **19,435 lines**, 55% of src | The execution control plane, audit store, and platform backends. Tools are 3,985 lines, the TUI is 3,579, the agent is 2,592, MCP is 959, LSP is 951, checkpoints are 735, web is 655, sessions are 518, the client is 435, hooks are 405, JSON-RPC is 424, memory is 317, mutation is 281, and planning is 146. |
-| Test lines                 |                      **36,018** across 191 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.02 to 1.                                       |
-| Automated scenarios        |                      **1,918**, locally clean   | 1,689 unit, 146 integration, 41 contract, 20 end-to-end, and 22 sandbox scenarios. On Linux, 1,905 pass and 13 Windows-only scenarios skip.                     |
-| Unit suite                 |                  **1,689 passing in 10.8 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Test lines                 |                      **36,104** across 192 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.02 to 1.                                       |
+| Automated scenarios        |                      **1,927**, locally clean   | 1,698 unit, 146 integration, 41 contract, 20 end-to-end, and 22 sandbox scenarios. On Linux, 1,914 pass and 13 Windows-only scenarios skip.                     |
+| Unit suite                 |                  **1,698 passing in 10.9 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | End-to-end suite           |                                 **20 passing** | A scripted model drives a real agent with real tools against a real workspace, asserting what changed on disk, which backend ran, and that results reached the model intact. |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
