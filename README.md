@@ -9,7 +9,7 @@
 [![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](#testing)
 
 TrueCoder is a Python agent runtime that reads, searches, edits, and runs code inside one project.
-It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, fourteen approval-gated tools, a task planner, language-server code intelligence, workspace checkpoints, durable memory, user-configured hooks, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
+It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, fourteen approval-gated tools plus any MCP servers you configure, a task planner, language-server code intelligence, workspace checkpoints, durable memory, user-configured hooks, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
 Shell execution passes through policy evaluation, capability-based backend selection, an approval fingerprint, a durable audit admission, a resource launch gate, arbitrated terminal outcomes, and one immutable terminal audit record.
 Commands run on your machine by default, with the toolchain, virtual environments, and caches you already have, because the approval gate is the security boundary and an agent that cannot run your test suite is not useful.
 When a command must be isolated instead, the certified sandbox profile runs it in a digest-pinned, non-root, read-only, network-denied, capability-dropped Docker container that is proven against real Docker rather than assumed safe.
@@ -63,6 +63,7 @@ Coming soon...
 - **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
 - **Policy-evaluated execution** - ordered rules classify read-only, test, build, package, network, deletion, permission, Git, script, and unknown commands, and requested limits can only tighten the configured ceiling.
 - **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
+- **MCP servers, treated as untrusted** - configured servers contribute their tools through the same registry, approval fingerprint, and audit as everything else. Their schemas are bounded before the model ever sees them, their names are namespaced so nothing can shadow a built-in, and their output is labelled as third-party data the model must never take instructions from. A server that fails to start is reported and skipped; it never stops the others or the application.
 - **A system prompt that teaches the agent to work** - learn how the repository builds and tests itself before running anything, never install a tool to make a command succeed, treat a shortened result as an instruction to read a narrower range rather than the same one again, and remember that every call spends a human approval. Each rule is there because its absence was observed costing a turn.
 - **The agent knows what machine it is on** - the working directory, operating system, interpreter, and any workspace virtual environment are gathered at startup and stated in the system prompt, so the model runs your test suite through the right interpreter instead of probing for it or guessing.
 - **Useful by default, isolated on request** - shell commands run locally so the project's dependencies are actually present; asking for the container, for a non-host filesystem mode, or for no network opts into the sandbox instead. A request no backend can satisfy names the backend that refused it and why, rather than failing as a generic infrastructure error.
@@ -145,9 +146,21 @@ TrueCoder/
 │   │   ├── changes.py                 # Working tree against a checkpoint tree
 │   │   └── service.py                 # Capture, list, prune, restore, compare
 │   │
+│   ├── jsonrpc/                       # Shared JSON-RPC over stdio
+│   │   ├── framing.py                 # Framing contract and neutral message builders
+│   │   └── transport.py               # Process lifecycle and request routing
+│   │
+│   ├── mcp/                           # Model Context Protocol tool servers
+│   │   ├── protocol.py                # Newline framing and MCP method payloads
+│   │   ├── schema.py                  # Bounds an untrusted server's tool schema
+│   │   ├── models.py                  # Defensive parsing of listings and results
+│   │   ├── client.py                  # Handshake, tool listing, tool calls
+│   │   ├── tool.py                    # Namespaced registry adapter
+│   │   ├── configuration.py           # Strict mcp.json, fail-closed
+│   │   └── manager.py                 # One client per server, started at launch
+│   │
 │   ├── lsp/                           # Language server integration
-│   │   ├── protocol.py                # JSON-RPC framing over a byte stream
-│   │   ├── transport.py               # Process lifecycle and request routing
+│   │   ├── protocol.py                # Content-Length framing for language servers
 │   │   ├── client.py                  # Handshake, document sync, queries
 │   │   ├── discovery.py               # Servers on PATH, matched by language
 │   │   ├── manager.py                 # One server per language, started lazily
@@ -273,7 +286,9 @@ TrueCoder/
     │   ├── planning/                  # Plan and step invariants
     │   ├── mutation/                  # Diff hunks, bounds, and truncation
     │   ├── web/                       # URL policy, SSRF refusals, extraction
-    │   ├── lsp/                       # Framing, transport, client, discovery
+    │   ├── jsonrpc/                   # Transport lifecycle and request routing
+    │   ├── mcp/                       # Framing, schema bounds, client, adapter, manager
+    │   ├── lsp/                       # Framing, client, discovery
     │   ├── checkpoint/                # Snapshot, restore, prune, agent capture
     │   ├── memory/                    # Notes, scoping, pruning, projection
     │   ├── hooks/                     # Config parsing, runner, pre-authorisation
@@ -295,9 +310,10 @@ TrueCoder/
     │   │       └── test_windows_backend.py # Job cleanup, process limits, service audit
     │   ├── session/
     │   └── tui/
+    ├── e2e/                           # A scripted model driving real tools on a real workspace
     ├── sandbox/                       # Adversarial checks against real Docker
     ├── fakes/                         # Deterministic backend and service doubles
-    └── helpers/                       # Real child programs, including Windows Job probes
+    └── helpers/                       # Real child programs, including language and tool servers
 ```
 
 ### Where to make common changes
@@ -310,6 +326,8 @@ TrueCoder/
 | A new tool                            | `src/truecoder/tools/builtin`                     | `builtin/__init__.py`, registration in `agent.py`, and tool tests      |
 | Plan shape or invariants              | `src/truecoder/planning`                          | `builtin/plan.py`, `PlanCard`, plan projection in `context.py`         |
 | Code intelligence                     | `src/truecoder/lsp`                               | `builtin/code_intelligence.py` and the fake server in `tests/helpers`  |
+| MCP tool servers                      | `src/truecoder/mcp`                               | Schema bounds, the registry adapter, and the fake server in `tests/helpers` |
+| JSON-RPC transport or framing         | `src/truecoder/jsonrpc`                           | Both `lsp/protocol.py` and `mcp/protocol.py`, and their transport tests |
 | Context budgeting                     | `src/truecoder/agent/budget.py`                   | `context.py` assembly and `compaction.py` for long histories           |
 | Loop and stall behaviour              | `src/truecoder/agent/progress.py`                 | `_agentic_loop` in `agent.py` and the loop-detection tests             |
 | Checkpoints and restore               | `src/truecoder/checkpoint`                        | `tui/checkpoints.py` and capture in `agent.py`                         |
@@ -340,12 +358,13 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **34,026** across 137 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,443 lines**, 57% of src | The execution control plane, audit store, and platform backends. Tools are 3,944 lines, the TUI is 3,497, the agent is 2,366, LSP is 1,270, checkpoints are 732, web is 653, sessions are 518, the client is 440, hooks are 415, memory is 317, mutation is 281, and planning is 146. |
-| Test lines                 |                      **32,994** across 165 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 0.97 to 1.                                       |
-| Automated scenarios        |                      **1,711**, locally clean   | 1,515 unit, 133 integration, 41 contract, and 22 sandbox scenarios. On Linux, 1,698 pass and 13 Windows-only scenarios skip.                                 |
-| Unit suite                 |                  **1,515 passing in 9.3 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **35,421** across 148 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,435 lines**, 55% of src | The execution control plane, audit store, and platform backends. Tools are 3,985 lines, the TUI is 3,579, the agent is 2,592, MCP is 959, LSP is 951, checkpoints are 735, web is 655, sessions are 518, the client is 435, hooks are 405, JSON-RPC is 424, memory is 317, mutation is 281, and planning is 146. |
+| Test lines                 |                      **36,018** across 191 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.02 to 1.                                       |
+| Automated scenarios        |                      **1,918**, locally clean   | 1,689 unit, 146 integration, 41 contract, 20 end-to-end, and 22 sandbox scenarios. On Linux, 1,905 pass and 13 Windows-only scenarios skip.                     |
+| Unit suite                 |                  **1,689 passing in 10.8 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
+| End-to-end suite           |                                 **20 passing** | A scripted model drives a real agent with real tools against a real workspace, asserting what changed on disk, which backend ran, and that results reached the model intact. |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
 | Lint                       |                          **ruff check clean** | ruff 0.16.0 over `src`, `tests`, and `container`.                                                                                                            |
 | Certified sandbox profile  |         **Linux + Docker + one pinned image** | Podman and nerdctl are refused until their dialects pass the same tests. Non-Linux hosts report `container-platform-unsupported`.                             |
@@ -659,6 +678,45 @@ goes through the execution service, so it is policy-classified, bounded by its
 timeout and an output ceiling, and recorded in the durable audit. A hook that
 fails is reported and never blocks the turn.
 
+### Optional MCP tool servers
+
+The same config directory may contain `mcp.json`, which adds tools from Model
+Context Protocol servers:
+
+```json
+{
+  "version": 1,
+  "servers": [
+    {
+      "name": "files",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "."],
+      "environment": {"LOG_LEVEL": "warn"},
+      "startup_timeout_seconds": 30
+    }
+  ]
+}
+```
+
+Each server is started once at launch, asked for its tools, and its tools are
+registered as `mcp__<server>__<tool>`. The namespace is not decoration: a server
+that offers a tool called `read_file` cannot shadow the built-in one, and two
+servers offering the same name stay distinct.
+
+A server is third-party code, so nothing it sends is trusted. Its tool schemas
+are bounded before the model sees them, which caps nesting depth, property and
+enum counts, and description length, drops every keyword TrueCoder does not
+implement, and closes `additionalProperties` whatever the server asked for. A
+schema that cannot be bounded means that tool is skipped, not that the server is
+trusted to be sensible. Results are size-capped and returned to the model with a
+standing note that they are third-party data and never instructions, matching how
+`web_fetch` already treats a fetched page.
+
+Every server tool requires approval, exactly like a built-in one, and goes
+through the same fingerprint and audit. Parsing is strict and fail-closed like
+`hooks.json`. A server that fails to start, times out, or points its working
+directory outside the workspace is reported in a startup notification and
+skipped; the other servers and the application start normally.
+
 The same config directory may contain `trusted-commands.json`. Despite its
 name, a rule can only make policy stricter: it can require approval for a
 structured executable or deny it above a risk ceiling. It cannot waive an
@@ -721,6 +779,7 @@ Update `container/image.lock` in the same commit, because discovery refuses an i
 | `python -m unittest discover -s tests/unit -t .`     | Run the fast unit suite only                                    |
 | `python -m unittest discover -s tests/contract -t .` | Run the backend contract suite                                  |
 | `python -m unittest discover -s tests/integration -t .` | Run real-process, SQLite, and TUI integration scenarios      |
+| `python -m unittest discover -s tests/e2e -t .`      | Run the end-to-end task suite                                   |
 | `python -m unittest discover -s tests/sandbox -t .`  | Run the adversarial Docker sandbox suite                        |
 | `ruff check src tests container`                     | Lint source, tests, and the image entrypoint                    |
 | `docker build -t truecoder-exec:1 container/`        | Build the execution sandbox image                               |
@@ -784,6 +843,7 @@ Checkpoints are git objects and refs, so they live inside `.git` where the conte
 | Mutation audit      | `<user data dir>/truecoder/mutations.sqlite3`               | One immutable record per applied write or edit, with both digests  |
 | Memory              | `<user data dir>/truecoder/memory.sqlite3`                  | Durable notes, scoped by canonical workspace identity              |
 | Hooks               | `<user config dir>/truecoder/hooks.json`                    | Optional user-configured commands, strict and versioned            |
+| MCP servers         | `<user config dir>/truecoder/mcp.json`                      | Optional third-party tool servers, strict and versioned            |
 | Checkpoints         | `refs/truecoder/checkpoints/*` inside the repository        | Workspace snapshots as git objects, pruned to the newest 25        |
 | Execution policy    | `<user config dir>/truecoder/execution.json`                | Optional operator ceilings and backend settings                    |
 | Trusted rules       | `<user config dir>/truecoder/trusted-commands.json`         | Optional executable-specific restrictions                          |
