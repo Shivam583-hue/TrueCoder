@@ -24,7 +24,10 @@ Agent
      ├─ Web fetch adapter
      │   └─ URL policy, pinned client, extraction
      ├─ Code intelligence adapters
-     │   └─ LSP manager, client, transport
+     │   └─ LSP manager, client, header framing
+     ├─ Tool server adapters
+     │   └─ MCP manager, client, schema bounds, line framing
+     ├─ Shared JSON-RPC stdio transport
      └─ Shell adapter
 
 Shell adapter
@@ -126,9 +129,9 @@ machine the agent is on.
 
 Every tool bounds its own output, but nothing bounded those outputs against the
 conversation. One shell result may reach 32,769 tokens and one fetched page
-20,001, against a default budget of 12,000 for the entire request, so a single
-result could exceed the whole budget almost threefold and the budget was in
-practice advisory. Tool results are therefore shortened where the request is
+20,001, against what was then a default budget of 12,000 for the entire request,
+so a single result could exceed the whole budget almost threefold and the budget
+was in practice advisory. Tool results are therefore shortened where the request is
 assembled: a result over its share of the budget is replaced by a valid envelope
 carrying as much of the payload as fits, the original status, the number of
 characters dropped, and an instruction to request a narrower range.

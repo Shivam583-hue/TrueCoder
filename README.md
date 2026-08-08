@@ -361,7 +361,7 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Physical source lines      |                      **35,586** across 149 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,435 lines**, 55% of src | The execution control plane, audit store, and platform backends. Tools are 3,985 lines, the TUI is 3,579, the agent is 2,592, MCP is 959, LSP is 951, checkpoints are 735, web is 655, sessions are 518, the client is 435, hooks are 405, JSON-RPC is 424, memory is 407, mutation is 281, and planning is 146. |
+| Execution subsystem share  |                    **19,435 lines**, 55% of src | The execution control plane, audit store, and platform backends. Tools are 4,019 lines, the TUI is 3,579, the agent is 2,610, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, the client is 435, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, and planning is 146. |
 | Test lines                 |                      **36,684** across 196 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.02 to 1.                                       |
 | Automated scenarios        |                      **1,967**, locally clean   | 1,734 unit, 146 integration, 41 contract, 24 end-to-end, and 22 sandbox scenarios. On Linux, 1,954 pass and 13 Windows-only scenarios skip.                     |
 | Unit suite                 |                  **1,734 passing in 10.9 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
@@ -601,7 +601,7 @@ Copy `.env.example` and never commit the filled-in file.
 | `API_KEY`          | Yes      | Credential for the LLM endpoint. The client raises at first use if it is missing.                                    |
 | `MODEL`            | Yes      | Model identifier sent with every request and shown in the TUI header.                                               |
 | `BASE_URL`         | No       | OpenAI-compatible endpoint. Omit it to use the provider default.                                                    |
-| `MAX_INPUT_TOKENS` | No       | Context budget for the system prompt plus selected turns. Defaults to `12000`.                                       |
+| `MAX_INPUT_TOKENS` | No       | Context budget for the system prompt plus selected turns. Defaults to `64000`. Lower it if your model's window is smaller. |
 
 A suitable local `.env` starts with:
 
@@ -609,7 +609,7 @@ A suitable local `.env` starts with:
 BASE_URL="https://your-provider.example/v1"
 API_KEY="replace-with-your-key"
 MODEL="your-model-id"
-MAX_INPUT_TOKENS=12000
+MAX_INPUT_TOKENS=64000
 ```
 
 Note that the execution environment builder deliberately strips credential-shaped names from every child process environment.
