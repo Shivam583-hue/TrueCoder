@@ -209,6 +209,29 @@ workspace so repetition cannot accumulate, and the oldest are pruned past a
 fixed count. A store that cannot be read never blocks a request, because losing
 memory is a degraded reply while failing the turn is no reply at all.
 
+Uniqueness is decided by a key rather than by the note itself. Case and trailing
+punctuation are stripped from that key, so `Use tabs`, `use tabs` and `Use tabs.`
+are one note and not three competing for a fixed number of slots. The note is
+stored as written and shown as written; only the key is normalised. `forget`
+resolves through the same key, so dropping a note does not depend on reproducing
+its punctuation exactly.
+
+Correction is a first-class operation, because append-only memory degrades in a
+particular way. A note that has stopped being true cannot be fixed by recording
+the truth beside it: both survive, both are projected, and the model is told two
+contradictory things on every subsequent turn. `remember` therefore takes an
+optional `replaces`, and removes that note in the same transaction that records
+the new one, so a correction either happens completely or not at all.
+
+Failure to match is reported rather than swallowed. A `forget` that matches
+nothing returns the notes that do exist, so a model that misquoted can pick the
+right one instead of silently believing it succeeded.
+
+A schema migration carries existing stores forward. Version one had no key
+column and a unique index on the note text, so migrating backfills the key, keeps
+the newest note of each colliding group, and installs the new index. Other
+workspaces in the same database are untouched.
+
 ## Hooks
 
 A hook runs a command the user configured, around a turn.
@@ -1581,6 +1604,8 @@ Keep these invariants stable as the codebase grows:
 * a checkpoint round trip is byte exact, never normalised on the way through
 * memory is scoped by workspace and never crosses between repositories
 * what memory tells the model is exactly what the user can read and delete
+* a note is corrected in one step, never left contradicting its replacement
+* uniqueness is decided by a normalised key, and the note is stored as written
 * a durable change to future behaviour is approved, like a durable file change
 * unreadable memory degrades a reply rather than failing a turn
 * there is one path for running a command, and hooks use it
