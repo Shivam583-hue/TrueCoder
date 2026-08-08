@@ -115,7 +115,7 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
         ).port
         assert port is not None
         async with httpx.AsyncClient(timeout=2.0) as client:
-            with self.assertRaises(httpx.ConnectError):
+            with self.assertRaises(httpx.TransportError):
                 await client.get(f"http://127.0.0.1:{port}/callback")
 
 

@@ -484,6 +484,11 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
                 and app._pending_approval is not None,
                 description="the tool call to await approval",
             )
+            await wait_until(
+                pilot,
+                lambda: tool_cards(app)[-1].region.width <= 104,
+                description="the approval card to be laid out narrower",
+            )
 
             cards = list(app.query(ToolCallCard))
             self.assertEqual(len(cards), 1)
