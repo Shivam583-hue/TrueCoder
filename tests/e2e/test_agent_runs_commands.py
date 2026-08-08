@@ -50,6 +50,7 @@ class CommandExecutionTests(unittest.IsolatedAsyncioTestCase):
             return ApprovalResponse.approve(ApprovalScope.ONCE)
 
         agent.approval_handler = approve
+        self.addAsyncCleanup(agent.close)
         runtime = await agent.initialize_execution()
         if runtime is None or not runtime.shell_available:
             self.skipTest("shell execution is unavailable on this host")

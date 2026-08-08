@@ -113,6 +113,7 @@ class Agent:
         summarizer: TurnSummarizer | None = None,
         checkpoints: CheckpointService | None = None,
         memory_store: MemoryStore | None = None,
+        mutation_audit: MutationAudit | None = None,
         hooks: HookSuite | None = None,
         mcp_manager: McpManager | None = None,
     ) -> None:
@@ -151,6 +152,11 @@ class Agent:
             raise TypeError("checkpoints must be a CheckpointService.")
         if memory_store is not None and not isinstance(memory_store, MemoryStore):
             raise TypeError("memory_store must be a MemoryStore.")
+        if mutation_audit is not None and not isinstance(
+            mutation_audit,
+            MutationAudit,
+        ):
+            raise TypeError("mutation_audit must be a MutationAudit.")
         if hooks is not None and not isinstance(hooks, HookSuite):
             raise TypeError("hooks must be a HookSuite.")
 
@@ -178,6 +184,7 @@ class Agent:
         self.summarizer = summarizer
         self.checkpoints = checkpoints
         self.memory_store = memory_store
+        self.mutation_audit = mutation_audit
         self.hooks = hooks if hooks is not None else HookSuite()
         self.hook_outcomes: tuple[HookOutcome, ...] = ()
         self._pre_authorised_calls: set[str] = set()
@@ -697,6 +704,11 @@ class Agent:
                 self.memory_store.close()
             except Exception:  # noqa: BLE001 - shutdown continues past a bad store
                 self.close_failures += 1
+        if self.mutation_audit is not None:
+            try:
+                self.mutation_audit.close()
+            except Exception:  # noqa: BLE001 - shutdown continues past a bad audit
+                self.close_failures += 1
         await self.llm_client.close()
 
 
@@ -745,6 +757,7 @@ def run() -> None:
         plan_store=plan_store,
         checkpoints=checkpoints,
         memory_store=memory_store,
+        mutation_audit=mutation_audit,
         hooks=load_hooks(),
         mcp_manager=McpManager(load_mcp_servers(), project_root),
     )

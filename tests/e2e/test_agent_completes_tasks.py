@@ -53,10 +53,12 @@ class TaskCompletionTests(unittest.IsolatedAsyncioTestCase):
                 max_input_tokens=BUDGET,
                 token_counter=TokenCounter(),
             ),
+            mutation_audit=audit,
             execution_bootstrap_config=(
                 load_execution_config() if with_execution else None
             ),
         )
+        self.addAsyncCleanup(agent.close)
 
         async def approve(request):
             del request
