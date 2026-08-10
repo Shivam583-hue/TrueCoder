@@ -45,7 +45,7 @@ Coming soon...
 - **Turn-based conversation model** - only complete, valid turns enter history, so a tool call never survives without its result.
 - **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
 - **Fifteen approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, `get_diagnostics`, `remember`, `forget`, and `delegate`, each with its own validated schema and approval policy. `edit_file` takes a list of edits applied together, so a multi-site change costs one call and one approval and either lands whole or not at all. A tool call the model gets wrong comes back as an error it can read and retry, so a bad argument costs one call rather than the turn.
-- **A context budget that is actually enforced** - a single shell or fetch result can exceed the whole token budget, so oversized tool results are shortened where the request is assembled, into a valid envelope that says how much was dropped. The stored turn, the session record, and the audit keep the complete result.
+- **A context budget that is actually enforced** - a single shell or fetch result can exceed the whole token budget, so oversized tool results are shortened where the request is assembled, into a valid envelope that says how much was dropped. The stored turn and session record keep the complete tool result; the execution and mutation audits retain their independent bounded evidence.
 - **Memory you can read, correct, and delete** - `remember` records a durable fact about the project and `forget` drops one, both approval-gated because they change behaviour in future sessions. A note that stops being true is corrected in one step with `replaces`, so a correction never leaves the old version contradicting the new one on every later turn. Notes are keyed case- and punctuation-insensitively so trivial variants cannot crowd out real facts, they are scoped to one workspace, projected into every request, and `ctrl+n` shows exactly what the model is being told.
 - **Hooks that run inside the execution plane** - a versioned `hooks.json` can run your formatter or linter at turn start or after a turn that changed files. Because you wrote the config, a hook is pre-authorised rather than prompting, but it is still bounded, policy-checked, and written to the same durable audit as any other command.
 - **See what a turn actually changed** - `ctrl+d` diffs the workspace against the pre-turn checkpoint, so a turn's real effect on disk is visible even when files were changed by a shell command rather than by the reviewed edit tools. The mutation audit records what `write_file` and `edit_file` did; this records what happened.
@@ -67,7 +67,7 @@ Coming soon...
 - **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit`, `/e` leaves `exit`, and `/mo` leaves `models` and `model`. Tab completes to the longest prefix the remaining matches share: `/q` becomes `/quit` outright, `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
 - **It asks for what the model needs** - pick a model whose provider you have no credential for and TrueCoder asks for it there and then, instead of accepting the choice and failing on your next message. Providers with an OAuth client get the browser flow; the rest get a masked prompt for an API key, which is saved privately so you only type it once. `/login` runs whichever of the two your provider supports, and `/logout` forgets both.
 - **A sign-in you can complete anywhere** - the browser opens automatically, and the screen still shows the full link with a copy button (`c`) and an open-again button, so a headless box, a remote shell, or a machine with no default browser is not a dead end. The link is safe to show: only the PKCE challenge travels in it, never the verifier. Closing the screen cancels the attempt and releases the loopback port immediately.
-- **Provider-aware authentication** - API keys can come from the environment or the masked prompt, while providers configured with OAuth use authorization code with PKCE. The verifier never leaves the process, the callback listens only on loopback for a single request, and a mismatched `state` is refused. Keys and tokens are written privately in your config directory, `0600` on POSIX and ACL-restricted to your user on Windows, and are stripped from every child process environment by the same rule that strips any other credential.
+- **Provider-aware authentication** - API keys can come from the environment or the masked prompt, while providers configured with OAuth use authorization code with PKCE. The verifier never leaves the process, the callback listens only on loopback, only the first callback determines the result, and a mismatched `state` is refused. Keys and tokens are written privately in your config directory, `0600` on POSIX and ACL-restricted to your user and LocalSystem on Windows. Stored credentials are never inserted into child environments, and inherited credential-shaped variables are stripped.
 - **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. With nobody watching, what may proceed is a configured decision rather than an accident: `--autonomy read-only|edit|full` sets a risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
 - **Scored, not vibed** - `truecoder --eval` runs a fixed set of tasks in throwaway workspaces and reports how many passed, so "did that change help?" has an answer. Each task asserts an outcome on disk rather than which calls were made.
 - **Delegation with a hard boundary** - `delegate` hands a self-contained subtask to a fresh agent that shares the workspace but starts with an empty conversation. Only its final reply crosses back, never its transcript, it cannot delegate again, and it is approval-gated like any other tool.
@@ -510,6 +510,7 @@ flowchart TB
 user message
 → capture a workspace checkpoint
 → compact the oldest turns if history outgrew the budget
+→ run configured `turn_start` hooks through the execution service
 → start active turn
 → build context: system prompt + rolling summary + recent complete turns
   + full active turn + current plan, with oversized tool results shortened
@@ -518,8 +519,9 @@ user message
 → prepare each call once, approve, execute, record results in order
 → stop and answer if the same calls keep returning the same results
 → call model again after every tool batch resolves
-→ commit the complete pending group as one turn
+→ commit the complete pending group as one turn and clear active-turn state
 → append to the session store
+→ run configured `turn_end` hooks
 ```
 
 Only complete turns enter history.
@@ -748,8 +750,9 @@ With that in place, `/login` opens your browser and also displays the complete
 authorization link with controls to copy it or open it again. TrueCoder listens
 on a loopback port for the single redirect, verifies the `state` it issued,
 exchanges the code together with the PKCE verifier, and stores the result in
-`tokens.json` at mode `0600`. Closing the sign-in screen cancels the wait and
-releases the callback port immediately. Both endpoints must be `https`, and
+`tokens.json` at mode `0600` on POSIX and with a current-user-and-LocalSystem
+ACL on Windows. Closing the sign-in screen cancels the wait and releases the
+callback port immediately. Both endpoints must be `https`, and
 parsing is strict and fail-closed in the same way as `hooks.json` and `mcp.json`.
 
 Without an OAuth client, `/login` asks for the provider's API key in a masked
@@ -988,7 +991,7 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **Checkpoints require a git repository.** A workspace that is not a git repository, or a machine without git, reports checkpoints as unavailable rather than falling back to something weaker that looks the same.
 - **Checkpoints are byte exact.** Snapshot and restore run with git's line-ending conversion disabled, so a restore returns the exact bytes that were there rather than the platform-normalised version of them.
 - **A turn diff shows text, not everything.** Binary files and files over 1 MiB are named with their change kind but not diffed, at most 50 changed files are listed, and rendering is capped so one enormous turn cannot stall the interface. Paths ignored by `.gitignore` are neither checkpointed nor compared.
-- **Restore covers tracked content only.** Files the agent created without staging them survive a restore, because removing untracked files would risk deleting your own scratch work. Anything ignored by `.gitignore` is neither captured nor restored.
+- **Restore never deletes newly untracked files.** Files the agent created without staging them survive a restore, because removing untracked files would risk deleting your own scratch work. Anything ignored by `.gitignore` is neither captured nor restored.
 - **Restore rewinds staging too.** A restore returns the index to the checkpoint, so work you staged after the checkpoint is reverted with everything else. The safety checkpoint taken immediately beforehand is how you get it back.
 - **Loop detection compares calls, not intent.** A model that varies its arguments trivially on every attempt keeps its tools until the `max_iterations` cap. The detector deliberately errs toward letting real work continue, because interrupting genuine progress is worse than paying for a few extra turns.
 - **Compaction is not persisted.** A rolling summary lives in memory for the running session. Resuming a stored session replays its turns and re-compacts from scratch rather than restoring the previous summary.
