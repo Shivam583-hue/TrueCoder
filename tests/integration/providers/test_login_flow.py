@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
-from truecoder.providers.login import authorise
+from truecoder.providers.login import authorise, begin_login
 from truecoder.providers.oauth import OAuthClient, OAuthError
 
 CLIENT = OAuthClient(
@@ -117,6 +117,62 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(timeout=2.0) as client:
             with self.assertRaises(httpx.TransportError):
                 await client.get(f"http://127.0.0.1:{port}/callback")
+
+
+class PendingLoginTests(unittest.IsolatedAsyncioTestCase):
+    async def test_the_url_is_known_before_anyone_waits(self):
+        pending = await begin_login(CLIENT, provider="test")
+        self.addAsyncCleanup(pending.close)
+
+        query = parse_qs(urlparse(pending.url).query)
+
+        self.assertTrue(pending.url.startswith(CLIENT.authorize_url))
+        self.assertEqual(query["client_id"], ["client-123"])
+        self.assertEqual(query["code_challenge_method"], ["S256"])
+        self.assertIn("state", query)
+
+    async def test_the_verifier_never_appears_in_the_url_that_is_shown(self):
+        pending = await begin_login(CLIENT, provider="test")
+        self.addAsyncCleanup(pending.close)
+
+        self.assertNotIn(pending.verifier, pending.url)
+
+    async def test_the_callback_is_listening_as_soon_as_the_url_exists(self):
+        pending = await begin_login(CLIENT, provider="test")
+        self.addAsyncCleanup(pending.close)
+
+        redirect = parse_qs(urlparse(pending.url).query)["redirect_uri"][0]
+        state = parse_qs(urlparse(pending.url).query)["state"][0]
+
+        async def fake_post(client, body):
+            self.exchanged = body
+            return {"access_token": "at-1"}
+
+        def visit() -> None:
+            try:
+                httpx.get(f"{redirect}?code=auth-code-1&state={state}", timeout=5.0)
+            except httpx.HTTPError:
+                return
+
+        threading.Thread(target=visit, daemon=True).start()
+        with patch("truecoder.providers.login.post_token", side_effect=fake_post):
+            token = await pending.wait(timeout=10.0)
+
+        self.assertEqual(token.access_token, "at-1")
+        self.assertEqual(self.exchanged["code_verifier"], pending.verifier)
+
+    async def test_closing_without_waiting_releases_the_port(self):
+        pending = await begin_login(CLIENT, provider="test")
+        port = pending.server.port
+        await pending.close()
+
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            with self.assertRaises(httpx.TransportError):
+                await client.get(f"http://127.0.0.1:{port}/callback")
+
+    async def test_a_client_that_is_not_a_client_is_refused(self):
+        with self.assertRaises(OAuthError):
+            await begin_login("not a client", provider="test")
 
 
 if __name__ == "__main__":

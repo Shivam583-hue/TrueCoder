@@ -26,7 +26,13 @@ from truecoder.providers.keys import (
     save_keys,
     store_key,
 )
-from truecoder.providers.login import CallbackServer, authorise
+from truecoder.providers.login import (
+    CallbackServer,
+    PendingLogin,
+    authorise,
+    begin_login,
+    open_in_browser,
+)
 from truecoder.providers.models import (
     DEFAULT_PROVIDER_NAME,
     ApiKey,
@@ -81,6 +87,7 @@ __all__ = [
     "OAuthClient",
     "OAuthError",
     "OAuthToken",
+    "PendingLogin",
     "Provider",
     "ProviderConfigError",
     "SessionSettings",
@@ -88,6 +95,7 @@ __all__ = [
     "StoredSelection",
     "authorise",
     "authorization_url",
+    "begin_login",
     "decode_cache",
     "default_catalog_path",
     "default_keys_path",
@@ -108,6 +116,7 @@ __all__ = [
     "load_providers",
     "load_selection",
     "load_tokens",
+    "open_in_browser",
     "parse_keys",
     "parse_models",
     "parse_providers",

@@ -105,13 +105,38 @@ class CallbackServer:
             return
 
 
-async def authorise(
-    client: OAuthClient,
-    *,
-    provider: str = "",
-    open_browser=None,
-    timeout: float = CALLBACK_TIMEOUT_SECONDS,
-) -> OAuthToken:
+@dataclass(slots=True)
+class PendingLogin:
+    client: OAuthClient
+    provider: str
+    server: CallbackServer
+    verifier: str
+    url: str
+
+    async def wait(
+        self, *, timeout: float = CALLBACK_TIMEOUT_SECONDS
+    ) -> OAuthToken:
+        outcome = await self.server.wait(timeout=timeout)
+        if outcome.error is not None:
+            raise OAuthError(outcome.error)
+        assert outcome.code is not None
+
+        payload = await post_token(
+            self.client,
+            exchange_body(
+                self.client,
+                code=outcome.code,
+                redirect_uri=self.server.redirect_uri,
+                verifier=self.verifier,
+            ),
+        )
+        return parse_token_response(payload, provider=self.provider)
+
+    async def close(self) -> None:
+        await self.server.stop()
+
+
+async def begin_login(client: OAuthClient, *, provider: str = "") -> PendingLogin:
     if not isinstance(client, OAuthClient):
         raise OAuthError("client must be an OAuthClient")
 
@@ -121,36 +146,45 @@ async def authorise(
     await server.start()
 
     try:
-        target = authorization_url(
+        url = authorization_url(
             client,
             redirect_uri=server.redirect_uri,
             pkce=pkce,
             state=state,
         )
-        opener = open_browser or _open_browser
-        opener(target)
-
-        outcome = await server.wait(timeout=timeout)
-    finally:
+    except BaseException:
         await server.stop()
+        raise
 
-    if outcome.error is not None:
-        raise OAuthError(outcome.error)
-    assert outcome.code is not None
-
-    payload = await post_token(
-        client,
-        exchange_body(
-            client,
-            code=outcome.code,
-            redirect_uri=server.redirect_uri,
-            verifier=pkce.verifier,
-        ),
+    return PendingLogin(
+        client=client,
+        provider=provider,
+        server=server,
+        verifier=pkce.verifier,
+        url=url,
     )
-    return parse_token_response(payload, provider=provider)
 
 
-def _open_browser(target: str) -> None:
+async def authorise(
+    client: OAuthClient,
+    *,
+    provider: str = "",
+    open_browser=None,
+    timeout: float = CALLBACK_TIMEOUT_SECONDS,
+) -> OAuthToken:
+    pending = await begin_login(client, provider=provider)
+    try:
+        opener = open_browser or open_in_browser
+        opener(pending.url)
+        return await pending.wait(timeout=timeout)
+    finally:
+        await pending.close()
+
+
+def open_in_browser(target: str) -> bool:
     import webbrowser
 
-    webbrowser.open(target)
+    try:
+        return bool(webbrowser.open(target))
+    except Exception:  # noqa: BLE001 - a missing browser must not end the flow
+        return False
