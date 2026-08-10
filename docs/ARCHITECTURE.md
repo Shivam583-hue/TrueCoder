@@ -1752,6 +1752,29 @@ command message for free. A command is one word plus an optional argument, and a
 multi-line input is never a command, because a prompt that happens to start with a
 slash is far more likely than a command someone wrapped across lines.
 
+A registry is only useful if someone can find what is in it. Requiring the whole
+name to be typed correctly means the only way to learn a command is to already
+know it, and `/help` is itself a command you have to know. The composer therefore
+offers the matching commands as soon as a slash is typed and narrows them with
+every further character: `/` lists all of them, `/q` leaves `quit`, and `/mo`
+leaves `models` and `model`. The offer closes once a space is typed, because from
+that point the text is an argument rather than a name, and it closes on a prefix
+nothing matches, which is the same signal the unknown command message gives after
+submission but arrives before it.
+
+Tab completes to the longest prefix the remaining matches share, so `/q` becomes
+`/quit` outright while `/l` becomes `/log` and waits for the character that
+decides between `login` and `logout`. Completing to a shared prefix rather than
+cycling through candidates means the key never guesses: what it inserts is text
+the user was going to type regardless. When no command is being typed, tab keeps
+its ordinary meaning and moves focus.
+
+Filtering and completion are pure functions over the typed text, so both are
+decided without a widget, a screen, or a running application, and the interface
+layer only applies the result. `/quit` routes to the same application action as
+the keyboard shortcut rather than tearing down the interface itself, which is why
+a command and a keypress cannot drift into two different shutdown paths.
+
 ## Signing in with a browser
 
 An API key is a string the user already has. A browser sign-in is a protocol, and

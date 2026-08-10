@@ -63,7 +63,8 @@ Coming soon...
 - **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
 - **Policy-evaluated execution** - ordered rules classify read-only, test, build, package, network, deletion, permission, Git, script, and unknown commands, and requested limits can only tighten the configured ceiling.
 - **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
-- **Switch models without restarting** - type `/models` to pick from everything your provider lists, filtered as you type and annotated with context windows. The list comes from the provider's own `/v1/models`, bounded like any other untrusted response, and cached for six hours so it never costs a request at launch. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type.
+- **Switch models without restarting** - type `/models` to pick from everything your provider lists, filtered as you type and annotated with context windows. The list comes from the provider's own `/v1/models`, bounded like any other untrusted response, and cached for six hours so it never costs a request at launch. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type, and `/quit` closes TrueCoder exactly as `ctrl+q` does.
+- **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit` and `/mo` leaves `models` and `model`. Tab completes to the longest prefix the remaining matches share: `/q` becomes `/quit` outright, `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
 - **Two ways to authenticate** - an API key from the environment, or `/login` to authorise in your browser. The browser flow is OAuth 2.0 authorization code with PKCE, which is the correct grant for a program that cannot keep a secret: the verifier never leaves the process, the callback listens only on loopback for a single request, and a mismatched `state` is refused. Tokens are written privately in your config directory, `0600` on POSIX and ACL-restricted to your user on Windows, and are stripped from every child process environment by the same rule that strips any other credential.
 - **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. With nobody watching, what may proceed is a configured decision rather than an accident: `--autonomy read-only|edit|full` sets a risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
 - **Scored, not vibed** - `truecoder --eval` runs a fixed set of tasks in throwaway workspaces and reports how many passed, so "did that change help?" has an answer. Each task asserts an outcome on disk rather than which calls were made.
@@ -302,7 +303,7 @@ TrueCoder/
 │       ├── checkpoints.py             # Checkpoint browser and restore prompt
 │       ├── changes.py                 # What this turn changed on disk
 │       ├── memory.py                  # Memory browser and deletion
-│       ├── commands.py                # Slash-command parsing and the registry
+│       ├── commands.py                # Slash-command registry, prefix filtering, completion
 │       ├── model_picker.py            # Filterable model chooser
 │       └── styles.tcss                # Terminal stylesheet
 │
@@ -389,11 +390,11 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **38,172** across 167 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,435 lines**, 51% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 3,892, the agent is 2,883, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, providers are 1,377, the client is 460, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
-| Test lines                 |                      **39,427** across 214 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.03 to 1.                                       |
-| Automated scenarios        |                      **2,215**, locally clean   | 1,965 unit, 159 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,202 pass and 13 Windows-only scenarios skip.                     |
-| Unit suite                 |                  **1,965 passing in 18.9 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **38,284** across 167 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,435 lines**, 51% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 4,004, the agent is 2,883, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, providers are 1,377, the client is 460, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
+| Test lines                 |                      **39,784** across 215 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.04 to 1.                                       |
+| Automated scenarios        |                      **2,249**, locally clean   | 1,981 unit, 177 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,236 pass and 13 Windows-only scenarios skip.                     |
+| Unit suite                 |                  **1,981 passing in 16.7 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | End-to-end suite           |                                 **28 passing** | A scripted model drives a real agent with real tools against a real workspace, asserting what changed on disk, which backend ran, and that results reached the model intact. |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
@@ -610,7 +611,9 @@ See [Container sandbox image](#container-sandbox-image) for verification and the
 
 | Key      | Action                                            |
 | -------- | ------------------------------------------------- |
-| `ctrl+q` | Quit                                              |
+| `ctrl+q` | Quit, the same action `/quit` runs                 |
+| `/`      | List the commands, narrowing as you type           |
+| `tab`    | Complete the command being typed, otherwise move focus |
 | `ctrl+l` | Start a new chat                                  |
 | `ctrl+p` | Open the session browser                          |
 | `ctrl+a` | Open the workspace execution audit                |
