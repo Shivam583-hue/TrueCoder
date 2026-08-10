@@ -1733,6 +1733,16 @@ is parsed as strictly as every other configuration, and a corrupt one is ignored
 rather than repaired, because falling back to the environment is always safe while
 guessing at a damaged file is not.
 
+That fixed order has to be the only order. The composer used to read `MODEL` from
+the environment directly while the client resolved a remembered selection first,
+so the moment anyone picked a model with `/models` the status line named one model
+and the agent answered with another, and the interface stated the wrong fact
+confidently rather than saying nothing. Resolution order is not something a second
+reader may re-derive: the interface asks the client what it settled on, so there is
+one answer to the question and `/model` and the status line cannot disagree.
+A client that cannot resolve settings at all reports that plainly instead of
+falling back to a value that would be wrong for the same reason.
+
 A provider's model list is third-party JSON and is treated as such: the count is
 capped, identifiers and names are length-bounded, context windows outside a
 plausible range are dropped, and duplicates are collapsed. The result is cached to
@@ -1761,6 +1771,14 @@ leaves `models` and `model`. The offer closes once a space is typed, because fro
 that point the text is an argument rather than a name, and it closes on a prefix
 nothing matches, which is the same signal the unknown command message gives after
 submission but arrives before it.
+
+A command may answer to more than one spelling, because `/quit` and `/exit` are the
+same intent and guessing wrong should not be an error. An alias is a spelling of a
+command rather than a second command: it is offered, filtered, and completed like
+any other name, so `/e` narrows to `/exit` and completes to it, and every spelling
+appears in `/help`. Parsing resolves a spelling to the command that owns it, so the
+interface still dispatches on one name and adding an alias can never add a second
+code path that drifts from the first.
 
 Tab completes to the longest prefix the remaining matches share, so `/q` becomes
 `/quit` outright while `/l` becomes `/log` and waits for the character that
