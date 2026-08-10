@@ -354,7 +354,7 @@ class TrueCoderApp(App[None]):
             return
 
         if parsed.name == "login":
-            await self._authorise_provider()
+            self.run_worker(self._collect_credential(), exclusive=False)
             return
 
         if parsed.name == "logout":
@@ -528,13 +528,26 @@ class TrueCoderApp(App[None]):
         return None
 
     def _forget_authorisation(self) -> None:
+        from truecoder.providers.keys import forget_key
         from truecoder.providers.tokens import forget_token
 
-        name = self.agent.llm_client.settings.provider.name
-        if forget_token(name):
-            self.notify(f"Forgot the stored authorisation for {name!r}.")
-        else:
-            self.notify(f"No stored authorisation for {name!r}.", severity="warning")
+        settings = self.agent.llm_client.settings
+        name = settings.provider.name
+        forgotten = [
+            label
+            for label, gone in (
+                ("authorisation", forget_token(name)),
+                ("API key", forget_key(name)),
+            )
+            if gone
+        ]
+
+        if not forgotten:
+            self.notify(f"Nothing stored for {name!r}.", severity="warning")
+            return
+
+        settings.use(settings.provider, None)
+        self.notify(f"Forgot the stored {' and '.join(forgotten)} for {name!r}.")
 
     @on(ExecutionStageMessage)
     async def advance_execution_card(self, message: ExecutionStageMessage) -> None:

@@ -191,6 +191,68 @@ class ApiKeyPromptTests(_Base):
                 self.assertIn("•", rendered)
 
 
+class LoginCommandTests(_Base):
+    async def _run(self, app, pilot, command: str) -> None:
+        app.query_one(PromptInput).text = command
+        await pilot.press("enter")
+        await pilot.pause()
+
+    async def test_login_asks_for_a_key_when_the_provider_has_no_oauth(self):
+        app = self._app(_settings(credential=None))
+
+        with patch.dict(os.environ, {"MODEL": "acme/starter"}):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._run(app, pilot, "/login")
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ApiKeyScreen),
+                    description="the api key prompt",
+                )
+
+                self.assertEqual(app.screen.provider, "acme")
+                app.screen.dismiss(None)
+                await pilot.pause()
+
+    async def test_logout_forgets_a_stored_key_as_well_as_a_token(self):
+        from truecoder.providers.keys import load_keys, store_key
+
+        store_key("acme", ApiKey("sk-stored"), self.root / "keys.json")
+        app = self._app(_settings(credential=ApiKey("sk-stored")))
+        notices: list[str] = []
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch.object(
+                TrueCoderApp,
+                "notify",
+                lambda self, message, **kwargs: notices.append(str(message)),
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._run(app, pilot, "/logout")
+
+                self.assertEqual(load_keys(self.root / "keys.json"), {})
+                self.assertIsNone(app.agent.llm_client.settings.credential)
+                self.assertTrue(any("API key" in note for note in notices))
+
+    async def test_logout_with_nothing_stored_says_so(self):
+        app = self._app(_settings(credential=None))
+        notices: list[str] = []
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch.object(
+                TrueCoderApp,
+                "notify",
+                lambda self, message, **kwargs: notices.append(str(message)),
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._run(app, pilot, "/logout")
+
+                self.assertTrue(any("Nothing stored" in note for note in notices))
+
+
 class AuthorisationPromptTests(_Base):
     def _pending(self, url: str = "https://provider.invalid/oauth/authorize?x=1"):
         class _Pending:
