@@ -1,6 +1,8 @@
 # TrueCoder architecture
 
-TrueCoder is a small agent runtime around an LLM.
+TrueCoder is a terminal-native coding-agent runtime with auditable execution,
+semantic code intelligence, persistent project state, extensible tools, and
+both interactive and headless operation.
 
 A user message starts a turn. The model may answer directly or request tools. Tool results are added to the active turn, and the model is called again until it produces a final response.
 
@@ -11,6 +13,9 @@ UI
  ↓
 Agent
  ├─ Context and state
+ ├─ Provider selection and credentials
+ │   ├─ Configuration, model catalog, and private stores
+ │   └─ API-key and OAuth login flows
  ├─ LLM client
  ├─ Approval service
  ├─ Plan store
@@ -66,7 +71,9 @@ The UI handles presentation and user input.
 
 The agent owns orchestration.
 
-The LLM client translates provider responses into internal types.
+The provider layer owns configuration, credentials, model discovery, and the
+active selection. The LLM client receives that resolved selection and translates
+wire responses into internal types.
 
 Tools are independent units that validate arguments, perform work, and return structured results.
 
@@ -144,10 +151,13 @@ therefore sized so that a full default `read_file` window of dense source fits
 under one result's share, and the ceiling on a single command is sized for a real
 test suite rather than a single command.
 
-That shortening applies to the projection only. `AgentState`, the stored
-session, and the mutation audit keep the complete result, which is the same
-seam the plan uses: `build` returns a fresh list and never edits state. Only
-tool messages are shortened; a user's own words are never truncated.
+That shortening applies to the projection only. `AgentState` and the stored
+session keep the complete tool result. The execution and mutation audits remain
+independent of context projection and keep their own bounded evidence: raw byte
+counts and digests for command streams, and before/after file digests for
+mutations. This is the same seam the plan uses: `build` returns a fresh list and
+never edits state. Only tool messages are shortened; a user's own words are
+never truncated.
 
 Compaction handles the other half. When history outgrows half the budget, the
 oldest turns beyond the two most recent are summarised into a rolling summary
@@ -212,14 +222,18 @@ Model text is only committed once the response is complete. Request failures abo
 The detailed turn lifecycle is:
 
 1. The user sends a message.
-2. The agent starts an active turn and records the user message as pending.
-3. The context builder creates a model request.
-4. The model returns text, tool calls, or both.
-5. Requested tools are marked outstanding, executed, and recorded in order.
-6. The model is called again after every tool-call batch is resolved.
-7. A final assistant response completes the pending turn.
-8. The complete pending message group is committed as one turn.
-9. Active-turn state is cleared.
+2. Execution is initialized if needed, the workspace is checkpointed, old
+   history is compacted when necessary, and `turn_start` hooks run.
+3. The agent starts an active turn and records the user message as pending.
+4. The context builder creates a model request.
+5. The model returns text, tool calls, or both.
+6. Requested tools are marked outstanding, executed, and recorded in order.
+7. The model is called again after every tool-call batch is resolved.
+8. A final assistant response completes the pending turn.
+9. The complete pending message group is committed as one turn and active-turn
+   state is cleared.
+10. `turn_end` hooks run, with `files_changed` decided against the pre-turn
+    checkpoint.
 
 ## Memory
 
@@ -274,9 +288,11 @@ workspaces in the same database are untouched.
 A hook runs a command the user configured, around a turn.
 
 The tempting implementation is to spawn it directly, which would be simple and
-wrong: it would create a second path for running commands that skips policy,
-bounds, and the audit, next to a shell tool that has all three. The whole
-premise of the execution plane is that there is one such path.
+wrong: it would create a second path for running project commands that skips
+policy, bounds, and the audit, next to a shell tool that has all three. The whole
+premise of the execution plane is that model-requested project commands and
+configured hooks share that path. Protocol-server processes have a separate,
+bounded transport lifecycle and do not execute model-supplied command lines.
 
 Running a hook through the execution service raises the opposite problem. That
 path asks for approval, and prompting for a formatter forty times a session is
@@ -294,7 +310,7 @@ standing grant behind.
 Everything else the execution plane provides still applies: policy
 classification, a timeout, an output ceiling, and one immutable audit record.
 What a hook does not get is isolation. A hook exists to run the user's own
-toolchain, and a formatter is not installed in a digest-pinned distroless
+toolchain, and a formatter is not installed in the minimal digest-pinned
 sandbox, so hooks use the local backend with host access. That is the same trust
 level as a git hook, with bounds and evidence a git hook does not have, and it
 is stated plainly rather than implied.
@@ -321,8 +337,9 @@ index, working tree, branch, HEAD, and reflog are never touched. Each snapshot
 is a tree plus a commit that no branch points at, kept alive by a ref under
 `refs/truecoder/checkpoints`. Metadata travels in the commit message, so git is
 the single source of truth and there is no second database to fall out of sync
-with the objects it describes. Capture is skipped when the tree is unchanged, so
-an idle turn costs nothing, and the newest twenty-five are kept.
+with the objects it describes. When the tree is unchanged, capture reuses the
+newest checkpoint instead of creating a duplicate commit and ref. The newest
+twenty-five are kept.
 
 Restoring is itself a change, and the destructive part is easy to miss:
 restoring to a tree removes files that are tracked now and absent from that
@@ -502,8 +519,8 @@ the canonical project root:
 * `write_file` creates or completely replaces one UTF-8 text file, requires an
   existing parent directory, rejects symlinks and sensitive paths, and limits
   content to 32 KiB
-* `edit_file` replaces exact text in an existing UTF-8 file, either once when
-  the match is unique or everywhere when explicitly requested
+* `edit_file` applies an ordered list of exact replacements to an existing UTF-8
+  file and writes only when every edit succeeds
 * `list_dir` returns at most 500 immediate children of one directory without
   recursing
 * `glob` finds at most 500 files or directories with rooted `*` and recursive
@@ -525,12 +542,15 @@ result reports only the relative path, whether the file was created, and the
 UTF-8 byte count; the original content is not duplicated in the result.
 
 `edit_file` is deliberately an exact-text operation rather than a line-number
-patch. Its required arguments are `path`, `old_text`, `new_text`, and
-`replace_all`. With `replace_all=false`, the old text must appear exactly once;
-zero matches produce `text_not_found`, and multiple matches produce
-`ambiguous_match`. An empty `new_text` deletes the exact match. Both edit
-fragments are limited to 32 KiB, and the existing and resulting files are
-limited to 1 MiB.
+patch. Its required arguments are `path` and `edits`, where each item in the
+ordered list requires `old_text` and `new_text`; `replace_all` is optional and
+defaults to false. With `replace_all=false`, the old text must appear exactly
+once; zero matches produce `text_not_found`, and multiple matches produce
+`ambiguous_match`. An empty `new_text` deletes the exact match. A call may carry
+at most 32 edits, each edit fragment is limited to 32 KiB, and the existing and
+resulting files are limited to 1 MiB. Every edit applies to the in-memory result
+of the one before it, and a failure anywhere in the list leaves the file
+untouched.
 
 Before replacing an edited file, `edit_file` checks that the file still has the
 same device, inode, size, and modification timestamp it had when read. A
@@ -548,10 +568,12 @@ level, while `**` may cross levels.
 
 ## Outbound web access
 
-`web_fetch` is the sanctioned network egress path. It matters that it exists
-separately from `shell`: the certified sandbox denies network entirely, so a
-command cannot reach the internet from there, and smuggling requests through the
-shell would put egress outside every control described here.
+`web_fetch` is the bounded model-facing HTTP path. It matters that it exists
+separately from `shell`: an approved local command has the host's network access,
+while the certified sandbox denies network unless an isolated network was
+configured. Fetching through a dedicated tool gives ordinary page reads an
+address policy, redirect validation, response bounds, and an explicit untrusted
+content envelope that a general command cannot provide.
 
 The address rule is an allowlist, not a blocklist. Only publicly routable
 addresses are permitted, which is the same posture as everywhere else in this
@@ -677,10 +699,10 @@ third-party data. The prompt guidance says the same thing in the same terms as
 a result that tries to redirect the agent as an attempted attack worth naming.
 Non-text content blocks are named but not inlined.
 
-Every server tool requires approval, like every other tool. Nothing about being
-configured makes a call pre-authorised, which is the opposite of the hook rule,
-because a hook is a command the user wrote and a server tool is a call the model
-invented against a schema a third party wrote.
+Every server tool requires approval. Nothing about being configured makes a call
+pre-authorised, which is the opposite of the hook rule, because a hook is a
+command the user wrote and a server tool is a call the model invented against a
+schema a third party wrote.
 
 Anything that accepts a workspace-relative path shares one containment rule.
 `Path.is_absolute` is platform-dependent and answers the wrong question here: on
@@ -743,9 +765,10 @@ landed by the time a mutation could be recorded, so failing the call would tell
 the model the file did not change when it did. A storage failure therefore
 increments a counter on the store rather than fabricating a failed outcome.
 
-All shipped filesystem tools require the normal awaited approval interaction.
-Successful and failed calls remain part of the current turn and are persisted
-with that turn once the model produces its final response. The TUI renders
+All shipped filesystem tools use the normal approval policy, including exact
+session and workspace grants when one already exists. Successful and failed
+calls remain part of the current turn and are persisted with that turn once the
+model produces its final response. The TUI renders
 compact completed summaries such as `Listed src · 4 entries`,
 `Matched . · 12 matches`, `Searched src · 3 matches`, and
 `Edited src/app.py · 1 replacement`; the same summaries are reconstructed when
@@ -1019,8 +1042,10 @@ The shell tool consequently defaults to `filesystem_mode="host"` and
 `network_access=true`, so ordinary work reaches the machine the user is actually
 on, and asking for the container, a workspace filesystem mode, or no network is
 what opts into isolation.
-The approval gate, not the sandbox, is the boundary that protects the default
-path: every command is fingerprinted, previewed, and approved before it runs.
+The approval gate is the authorization boundary for the default local path:
+every command is fingerprinted, previewed, and approved before it runs. The
+local backend remains a process-management boundary rather than an isolation
+boundary.
 
 Policy keeps one lever over that default. A command whose risk reaches critical
 and that policy still permits has its filesystem and network isolation raised to
@@ -1168,9 +1193,13 @@ A retention failure leaves shell execution unavailable.
 
 ## Execution orchestration
 
+`ExecutionService` performs pure policy evaluation, trusted-rule application,
+backend selection, and exact preparation before handing an allowed request to
+the runner. Denials and selection failures take dedicated runner routes so they
+still receive durable terminal evidence.
+
 `ExecutionRunner` owns one execution from durable admission to one normalized
-result.
-It walks a fixed order: admission, policy, exact preparation, approval, active
+result. Its fixed lifecycle is admission, durable policy state, approval, active
 registration, resource-gated backend start, supervision, termination, drain,
 cleanup, and one durable finalization.
 
@@ -1806,13 +1835,14 @@ provider, so the value that proves the exchange never leaves the process. A rand
 `state` is issued and compared with `secrets.compare_digest` on return, and a
 mismatch is refused before the code is read, because a callback with someone else's
 state is the shape of a cross-site request forgery. The callback server binds
-loopback only, answers exactly one request, and closes.
+loopback only; the first callback fixes the result, and closing or completing the
+flow releases the listener.
 
 Tokens are stored per provider using the same permission discipline as the audit
-stores: mode `0600` on POSIX, and on Windows an explicit ACL granting only the
-current user, since mode bits express nothing there. The file is written to a
-temporary path inside the already-secured directory and moved into place, so it is
-never briefly readable while being written.
+stores: mode `0600` on POSIX, and on Windows an explicit ACL granting the current
+user and LocalSystem, since mode bits express nothing there. The file is written
+to a temporary path inside the already-secured directory and moved into place, so
+it is never briefly readable while being written.
 
 They are also token-shaped, which means the environment allowlist already strips
 them from every child process, so a stored credential cannot ride along into a
@@ -1857,8 +1887,9 @@ asked when a usable credential already exists, because a prompt that appears whe
 it is not needed teaches people to dismiss prompts.
 
 A typed key is a credential like any other, so it is stored with the same
-discipline as a token: `0600` on POSIX, an explicit ACL on Windows, written to a
-temporary path inside the secured directory and moved into place. Resolution order
+discipline as a token: `0600` on POSIX, an explicit current-user-and-LocalSystem
+ACL on Windows, written to a temporary path inside the secured directory and moved
+into place. Resolution order
 mirrors the model rule: a key typed into the interface outranks `API_KEY` from the
 environment, because a choice made deliberately in the application is more recent
 than a file written once. The input is masked, and a key is never rendered, logged,
@@ -1890,7 +1921,7 @@ Keep these invariants stable as the codebase grows:
 * uniqueness is decided by a normalised key, and the note is stored as written
 * a durable change to future behaviour is approved, like a durable file change
 * unreadable memory degrades a reply rather than failing a turn
-* there is one path for running a command, and hooks use it
+* model-requested project commands and configured hooks share one execution path
 * a hook is authorised by configuration, never by a per-call prompt
 * pre-authorisation names one execution and is released even on failure
 * a hook that fails is reported and never blocks the turn
@@ -1932,10 +1963,11 @@ Keep these invariants stable as the codebase grows:
 * the approval fingerprint covers the effect, never the rendered preview
 * rendered diffs stay bounded as the underlying change grows
 * an empty diff means identical text, never merely identical line content
-* every applied write and edit is recorded with both file digests
+* every mutation record carries both the before and after file digests
 * mutation records are insert-only evidence
 * a mutation that is already durable is never reported as failed
-* provider-specific behavior stays inside the client
+* provider configuration, credentials, and discovery stay in `providers`; wire
+  translation stays in `client`
 * tools do not depend on outer layers
 * the UI does not contain agent logic
 * approvals apply to exact fingerprints, never tool names alone
@@ -1980,15 +2012,22 @@ Keep these invariants stable as the codebase grows:
 * changing a model is free, changing a connection invalidates it
 * a provider's model list is bounded before it is shown or cached
 * a slash command is answered here, never sent to the model
-* a credential is a protocol, so how you authenticate never reaches the client
+* the client consumes the credential protocol and never branches on credential kind
 * a remembered choice outranks the environment, a broken file outranks nothing
+* choosing a model without a usable credential starts the flow that provider
+  supports, and never defers the failure to the next request
+* a key entered in the interface outranks the environment and is never rendered
+* logout removes every stored credential for the current provider
 * the PKCE verifier never leaves the process
+* a displayed authorization URL carries the challenge, never the verifier
 * a callback with the wrong state is refused before its code is read
-* a stored token is private on disk and stripped from every child process
+* dismissing browser sign-in closes its callback listener
+* every stored credential is private on disk and stripped from child processes
 * tests never write to the real configuration directory
 * an explicit backend or shell preference is never silently downgraded
 * execution cannot start before its pending audit evidence is durable
-* every admitted execution ends in one immutable terminal audit state
+* every admitted execution either reaches one immutable terminal audit state or
+  remains nonterminal for recovery
 * no backend re-resolves environment, shell, limits, or capabilities
 * a backend runs only when its descriptor still matches the prepared one
 * terminal outcomes are ranked by fixed priority, never by task scheduling
