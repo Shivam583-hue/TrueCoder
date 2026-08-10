@@ -1,4 +1,4 @@
-# TrueCoder
+<h1 align="center">TrueCoder</h1>
 
 > A terminal coding agent with an auditable execution plane: every command it runs is policy-checked, approved, bounded, sandboxable, and durably recorded before a single byte of project code executes.
 
