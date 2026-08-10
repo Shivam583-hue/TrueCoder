@@ -35,6 +35,7 @@ COMMANDS: Final = (
     SlashCommand("login", "Authorise this provider in your browser"),
     SlashCommand("logout", "Forget the stored authorisation"),
     SlashCommand("help", "List what you can type here"),
+    SlashCommand("quit", "Close TrueCoder"),
 )
 
 _BY_NAME: Final = {command.name: command for command in COMMANDS}
@@ -43,6 +44,47 @@ _BY_NAME: Final = {command.name: command for command in COMMANDS}
 def looks_like_command(text: str) -> bool:
     stripped = text.strip()
     return stripped.startswith(COMMAND_PREFIX) and "\n" not in stripped
+
+
+def command_prefix(text: str) -> str | None:
+    if "\n" in text:
+        return None
+
+    stripped = text.lstrip()
+    if not stripped.startswith(COMMAND_PREFIX):
+        return None
+
+    body = stripped[len(COMMAND_PREFIX) :]
+    if " " in body or len(body) > MAX_COMMAND_CHARACTERS:
+        return None
+    return body.casefold()
+
+
+def matching_commands(text: str) -> tuple[SlashCommand, ...]:
+    prefix = command_prefix(text)
+    if prefix is None:
+        return ()
+    return tuple(command for command in COMMANDS if command.name.startswith(prefix))
+
+
+def _shared_prefix(names: tuple[str, ...]) -> str:
+    shortest = min(names, key=len)
+    for index, character in enumerate(shortest):
+        if any(name[index] != character for name in names):
+            return shortest[:index]
+    return shortest
+
+
+def completion(text: str) -> str | None:
+    matches = matching_commands(text)
+    if not matches:
+        return None
+
+    typed = command_prefix(text) or ""
+    shared = _shared_prefix(tuple(command.name for command in matches))
+    if len(shared) <= len(typed):
+        return None
+    return f"{COMMAND_PREFIX}{shared}"
 
 
 def parse_command(text: str) -> ParsedCommand | None:
