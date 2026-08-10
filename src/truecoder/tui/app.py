@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextlib import suppress
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -45,6 +46,7 @@ from truecoder.tui.commands import (
     parse_command,
     unknown_command_message,
 )
+from truecoder.tui.credentials import ApiKeyScreen, AuthorisationScreen
 from truecoder.tui.execution_health import (
     ExecutionHealthScreen,
     health_failure_message,
@@ -395,7 +397,9 @@ class TrueCoderApp(App[None]):
         self._model_name = model
         self.query_one(Composer).set_model_name(model)
 
-        if save_selection(StoredSelection(model=model, provider=settings.provider.name)):
+        if save_selection(
+            StoredSelection(model=model, provider=settings.provider.name)
+        ):
             self.notify(f"Now answering with {model}")
         else:
             self.notify(
@@ -403,8 +407,55 @@ class TrueCoderApp(App[None]):
                 severity="warning",
             )
 
+        if not self.needs_credential():
+            return
+        self.run_worker(self._collect_credential(), exclusive=False)
+
+    def needs_credential(self) -> bool:
+        settings = self.agent.llm_client.settings
+        credential = settings.credential
+        return credential is None or not credential.is_usable
+
+    async def _collect_credential(self) -> None:
+        settings = self.agent.llm_client.settings
+        if settings.provider.oauth is not None:
+            await self._authorise_provider()
+            return
+        await self._ask_for_api_key()
+
+    async def _ask_for_api_key(self) -> None:
+        from truecoder.providers.keys import store_key
+        from truecoder.providers.models import ApiKey, CredentialError
+
+        settings = self.agent.llm_client.settings
+        typed = await self.push_screen_wait(
+            ApiKeyScreen(settings.provider.name, self._model_name)
+        )
+        if not typed:
+            self.notify(
+                f"{settings.provider.name} still has no key, so requests will fail.",
+                severity="warning",
+                timeout=10,
+            )
+            return
+
+        try:
+            key = ApiKey(typed)
+        except CredentialError as error:
+            self.notify(f"That key was refused: {error}", severity="error")
+            return
+
+        settings.use(settings.provider, key)
+        if store_key(settings.provider.name, key):
+            self.notify(f"Saved the key for {settings.provider.name}.")
+        else:
+            self.notify(
+                "The key works for this session, but it could not be saved.",
+                severity="warning",
+            )
+
     async def _authorise_provider(self) -> None:
-        from truecoder.providers.login import authorise
+        from truecoder.providers.login import begin_login, open_in_browser
         from truecoder.providers.oauth import OAuthError
         from truecoder.providers.tokens import store_token
 
@@ -412,26 +463,69 @@ class TrueCoderApp(App[None]):
         client = settings.provider.oauth
         if client is None:
             self.notify(
-                f"No OAuth client is configured for {settings.provider.name!r}.",
+                f"No OAuth client is configured for {settings.provider.name!r}. "
+                "Add one in providers.json, or set an API key instead.",
                 severity="warning",
+                timeout=12,
             )
             return
 
-        self.notify("Opening your browser to authorise.", timeout=8)
         try:
-            token = await authorise(client, provider=settings.provider.name)
+            pending = await begin_login(client, provider=settings.provider.name)
         except OAuthError as error:
             self.notify(f"Authorisation failed: {error}", severity="error", timeout=12)
             return
 
+        opened = open_in_browser(pending.url)
+        screen = AuthorisationScreen(
+            settings.provider.name,
+            pending.url,
+            browser_opened=opened,
+        )
+        waiting = asyncio.ensure_future(pending.wait())
+        cancelled = self.push_screen_wait(screen)
+
+        try:
+            token = await self._await_authorisation(waiting, cancelled, screen)
+        except OAuthError as error:
+            self.notify(f"Authorisation failed: {error}", severity="error", timeout=12)
+            return
+        finally:
+            await pending.close()
+
+        if token is None:
+            self.notify("Authorisation cancelled.", severity="warning")
+            return
+
         settings.use(settings.provider, token)
         if store_token(token):
-            self.notify("Authorised, and the token was saved.")
+            self.notify(f"Signed in to {settings.provider.name}.")
         else:
             self.notify(
-                "Authorised, but the token could not be saved.",
+                "Signed in, but the token could not be saved.",
                 severity="warning",
             )
+
+    async def _await_authorisation(self, waiting, cancelled, screen):
+        from truecoder.providers.oauth import OAuthError
+
+        dismissal = asyncio.ensure_future(cancelled)
+        done, _ = await asyncio.wait(
+            {waiting, dismissal},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if waiting in done:
+            if screen.is_running:
+                screen.dismiss(True)
+            with suppress(asyncio.CancelledError):
+                await dismissal
+            return waiting.result()
+
+        waiting.cancel()
+        with suppress(asyncio.CancelledError, OAuthError):
+            await waiting
+        return None
 
     def _forget_authorisation(self) -> None:
         from truecoder.providers.tokens import forget_token

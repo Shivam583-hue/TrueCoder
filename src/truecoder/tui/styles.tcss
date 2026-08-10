@@ -28,6 +28,8 @@ RenameSessionScreen,
 DeleteSessionScreen,
 AuditViewerScreen,
 ModelPickerScreen,
+ApiKeyScreen,
+AuthorisationScreen,
 ExecutionHealthScreen {
     align: center middle;
     background: #00000099;
@@ -1171,6 +1173,69 @@ ExecutionCard.expanded .execution-details {
 }
 
 .model-dialog-help {
+    color: $tc-text-muted;
+    margin-top: 1;
+}
+
+/* Credential dialogs */
+#api-key-dialog,
+#authorisation-dialog {
+    width: 74;
+    max-width: 92%;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $tc-surface;
+    border: round $tc-border;
+}
+
+.credential-title {
+    color: $tc-text;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.credential-body {
+    color: $tc-text-secondary;
+    margin-bottom: 1;
+}
+
+#api-key-input {
+    margin-bottom: 1;
+    background: $tc-surface-hover;
+    border: none;
+    height: 3;
+}
+
+.credential-note {
+    color: $tc-text-muted;
+}
+
+#authorisation-url {
+    width: 100%;
+    height: auto;
+    max-height: 4;
+    margin: 1 0;
+    padding: 0 1;
+    color: $tc-blue;
+    background: $tc-surface-raised;
+    border-left: solid $tc-blue;
+    overflow-y: auto;
+    scrollbar-size: 1 1;
+}
+
+#authorisation-actions {
+    width: 100%;
+    height: auto;
+}
+
+#authorisation-actions Button {
+    width: 14;
+    height: 3;
+    margin-right: 2;
+}
+
+.credential-help {
     color: $tc-text-muted;
     margin-top: 1;
 }
