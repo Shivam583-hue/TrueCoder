@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from truecoder.execution.audit.recovery import RecoveryDisposition
 from truecoder.execution.backends.base import BackendStartContext
 from truecoder.execution.backends.container import ContainerBackend
 from truecoder.execution.backends.container_models import (
+    LABEL_EXECUTION_ID,
     LABEL_MANAGED,
     ContainerBackendFacts,
 )
@@ -37,6 +39,7 @@ from truecoder.execution.preparation import PreparedExecution
 REPOSITORY = Path(__file__).resolve().parents[3]
 IMAGE_LOCK = REPOSITORY / "container" / "image.lock"
 HELPERS = Path(__file__).resolve().parent / "helpers"
+RUN_TOKEN = uuid.uuid4().hex[:12]
 
 
 def _docker() -> Path | None:
@@ -138,16 +141,23 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
                 str(self.executable),
                 "ps",
                 "--all",
-                "--quiet",
                 "--filter",
                 f"label={LABEL_MANAGED}=true",
+                "--format",
+                '{{.ID}} {{.Label "' + LABEL_EXECUTION_ID + '"}}',
             ],
             capture_output=True,
             timeout=60,
             check=False,
             text=True,
         )
-        self.assertEqual(probe.stdout.strip(), "")
+
+        ours = [
+            line
+            for line in probe.stdout.splitlines()
+            if line.strip().endswith(f"-{RUN_TOKEN}")
+        ]
+        self.assertEqual(ours, [])
 
     def request(
         self,
@@ -192,7 +202,7 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
         )
         context = BackendStartContext(
             execution=ExecutionContext(
-                execution_id=f"exec-{label}",
+                execution_id=f"exec-{label}-{RUN_TOKEN}",
                 tool_call_id=f"call-{label}",
                 session_id="session-sandbox",
                 turn_id="turn-sandbox",
@@ -351,7 +361,7 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_exceeding_memory_is_normalized_to_a_memory_limit(self):
         _stdout, _stderr, exit_status, _resource = await self.run_script(
-            "python3 -c \"a = bytearray(400 * 1024 * 1024)\"",
+            'python3 -c "a = bytearray(400 * 1024 * 1024)"',
             label="memory",
             memory_bytes=64 * 1024 * 1024,
         )
@@ -374,7 +384,7 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cpu_budget_terminates_a_busy_process_group(self):
         _stdout, _stderr, exit_status, _resource = await self.run_script(
-            "python3 -c \"while True: pass\"",
+            'python3 -c "while True: pass"',
             label="cpu",
             cpu_seconds=0.25,
         )
@@ -434,7 +444,7 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
         )
         context = BackendStartContext(
             execution=ExecutionContext(
-                execution_id="exec-terminate",
+                execution_id=f"exec-terminate-{RUN_TOKEN}",
                 tool_call_id="call-terminate",
                 session_id="session-sandbox",
                 turn_id="turn-sandbox",
@@ -481,7 +491,7 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
         )
         context = BackendStartContext(
             execution=ExecutionContext(
-                execution_id="exec-registrar",
+                execution_id=f"exec-registrar-{RUN_TOKEN}",
                 tool_call_id="call-registrar",
                 session_id="session-sandbox",
                 turn_id="turn-sandbox",
@@ -523,7 +533,7 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
         )
         context = BackendStartContext(
             execution=ExecutionContext(
-                execution_id="exec-gate",
+                execution_id=f"exec-gate-{RUN_TOKEN}",
                 tool_call_id="call-gate",
                 session_id="session-sandbox",
                 turn_id="turn-sandbox",
@@ -570,7 +580,7 @@ class ContainerSandboxTests(unittest.IsolatedAsyncioTestCase):
         )
         context = BackendStartContext(
             execution=ExecutionContext(
-                execution_id="exec-recovery",
+                execution_id=f"exec-recovery-{RUN_TOKEN}",
                 tool_call_id="call-recovery",
                 session_id="session-sandbox",
                 turn_id="turn-sandbox",
