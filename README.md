@@ -8,10 +8,10 @@
 [![Sandbox](https://img.shields.io/badge/sandbox-Linux%20%C2%B7%20Docker%20certified-2496ed?style=flat-square&logo=docker&logoColor=white)](#container-sandbox-image)
 [![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](#testing)
 
-TrueCoder is a Python agent runtime that reads, searches, edits, and runs code inside one project.
+TrueCoder is a terminal-native Python coding-agent runtime that reads, searches, edits, and runs code inside one project.
 It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, fifteen approval-gated tools plus any MCP servers you configure, a task planner, language-server code intelligence, workspace checkpoints, durable memory, user-configured hooks, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
 Shell execution passes through policy evaluation, capability-based backend selection, an approval fingerprint, a durable audit admission, a resource launch gate, arbitrated terminal outcomes, and one immutable terminal audit record.
-Commands run on your machine by default, with the toolchain, virtual environments, and caches you already have, because the approval gate is the security boundary and an agent that cannot run your test suite is not useful.
+Commands run on your machine by default, with the toolchain, virtual environments, and caches you already have, because the approval gate is the authorization boundary and an agent that cannot run your test suite is not useful.
 When a command must be isolated instead, the certified sandbox profile runs it in a digest-pinned, non-root, read-only, network-denied, capability-dropped Docker container that is proven against real Docker rather than assumed safe.
 
 ## Table of contents
@@ -44,7 +44,7 @@ Coming soon...
 - **Terminal-native agent** - a Textual TUI with streaming responses, live tool cards, inline approvals, cancellation, and token accounting.
 - **Turn-based conversation model** - only complete, valid turns enter history, so a tool call never survives without its result.
 - **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
-- **Fifteen approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, `get_diagnostics`, `remember`, `forget`, and `delegate`, each with its own validated schema and security boundary. `edit_file` takes a list of edits applied together, so a multi-site change costs one call and one approval and either lands whole or not at all. A tool call the model gets wrong comes back as an error it can read and retry, so a bad argument costs one call rather than the turn.
+- **Fifteen approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, `get_diagnostics`, `remember`, `forget`, and `delegate`, each with its own validated schema and approval policy. `edit_file` takes a list of edits applied together, so a multi-site change costs one call and one approval and either lands whole or not at all. A tool call the model gets wrong comes back as an error it can read and retry, so a bad argument costs one call rather than the turn.
 - **A context budget that is actually enforced** - a single shell or fetch result can exceed the whole token budget, so oversized tool results are shortened where the request is assembled, into a valid envelope that says how much was dropped. The stored turn, the session record, and the audit keep the complete result.
 - **Memory you can read, correct, and delete** - `remember` records a durable fact about the project and `forget` drops one, both approval-gated because they change behaviour in future sessions. A note that stops being true is corrected in one step with `replaces`, so a correction never leaves the old version contradicting the new one on every later turn. Notes are keyed case- and punctuation-insensitively so trivial variants cannot crowd out real facts, they are scoped to one workspace, projected into every request, and `ctrl+n` shows exactly what the model is being told.
 - **Hooks that run inside the execution plane** - a versioned `hooks.json` can run your formatter or linter at turn start or after a turn that changed files. Because you wrote the config, a hook is pre-authorised rather than prompting, but it is still bounded, policy-checked, and written to the same durable audit as any other command.
@@ -252,7 +252,7 @@ TrueCoder/
 │   │   ├── approval.py                # Execution approval gate and safe-scope rules
 │   │   ├── events.py                  # Bounded transient lifecycle publishing
 │   │   ├── bootstrap.py               # Composition root and health report
-│   │   ├── defaults.py                # Default limits: 120 s, 1 MiB output, 64 KiB return
+│   │   ├── defaults.py                # Default limits: 600 s, 1 MiB output, 64 KiB return
 │   │   ├── trusted_rules.py           # Versioned trusted-command rules that only tighten
 │   │   │
 │   │   ├── audit/                     # Durable evidence boundary
@@ -275,7 +275,7 @@ TrueCoder/
 │   │       ├── posix_protocol.py      # Versioned length-prefixed JSON frames
 │   │       ├── posix_plan.py          # Pure exec and shell launch planning
 │   │       ├── posix_cgroup.py        # Delegated cgroup v2 subtree handling
-│   │       ├── posix_limits.py        # cgroup hard limits and rlimit fallbacks
+│   │       ├── posix_limits.py        # Portable rlimit fallbacks and macOS exclusions
 │   │       ├── posix_platform.py      # Honest Linux and macOS capability differences
 │   │       ├── posix_identity.py      # Host, boot ID, and start-tick identity
 │   │       ├── posix_recovery.py      # Exact-match-only recovery
@@ -343,6 +343,7 @@ TrueCoder/
     │   ├── execution/
     │   │   └── backends/
     │   │       └── test_windows_backend.py # Job cleanup, process limits, service audit
+    │   ├── providers/               # OAuth loopback and credential lifecycle
     │   ├── session/
     │   └── tui/
     ├── e2e/                           # A scripted model driving real tools on a real workspace
@@ -357,7 +358,7 @@ TrueCoder/
 | ------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------- |
 | Terminal UI, transcript, or approvals | `src/truecoder/tui`                               | `styles.tcss`, agent events, and the TUI integration tests             |
 | Agent loop or turn lifecycle          | `src/truecoder/agent/agent.py` and `state.py`     | Context builder, session codec, and unit agent tests                   |
-| Provider behavior                     | `src/truecoder/client`                            | `response.py` event translation and client unit tests                  |
+| Providers, credentials, or models     | `src/truecoder/providers`                         | `client`, `tui/credentials.py`, and provider tests                     |
 | A new tool                            | `src/truecoder/tools/builtin`                     | `builtin/__init__.py`, registration in `agent.py`, and tool tests      |
 | Plan shape or invariants              | `src/truecoder/planning`                          | `builtin/plan.py`, `PlanCard`, plan projection in `context.py`         |
 | Code intelligence                     | `src/truecoder/lsp`                               | `builtin/code_intelligence.py` and the fake server in `tests/helpers`  |
@@ -378,7 +379,7 @@ TrueCoder/
 | Host detection                        | `src/truecoder/execution/discovery.py`            | `selection.py`, `bootstrap.py`, and discovery integration tests        |
 | Process lifecycle on POSIX            | `src/truecoder/execution/backends/posix*.py`      | The backend contract suite and POSIX integration tests                 |
 | Process lifecycle on Windows          | `src/truecoder/execution/backends/windows*.py`    | Native contract and integration suites on `windows-latest`             |
-| Sandbox flags or mounts               | `src/truecoder/execution/backends/container_plan` | `container_dialects.py`, `image.lock`, and the sandbox suite           |
+| Sandbox flags or mounts               | `src/truecoder/execution/backends/container_plan.py` | `container_dialects.py`, `image.lock`, and the sandbox suite         |
 | Audit schema or evidence              | `src/truecoder/execution/audit`                   | `schema.py` version, recovery handlers, and audit store tests          |
 | Operator execution policy             | `src/truecoder/execution/configuration.py`        | Defaults, bootstrap, trusted rules, health, and configuration tests    |
 | Startup wiring                        | `src/truecoder/execution/bootstrap.py`            | Health report, `prompts.py` shell guidance, and composition tests      |
@@ -394,20 +395,20 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **38,327** across 167 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,435 lines**, 51% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 4,047, the agent is 2,883, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, providers are 1,377, the client is 460, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
-| Test lines                 |                      **39,931** across 215 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.04 to 1.                                       |
-| Automated scenarios        |                      **2,261**, locally clean   | 1,989 unit, 181 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,248 pass and 13 Windows-only scenarios skip.                     |
-| Unit suite                 |                  **1,989 passing in 17.2 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **38,776** across 169 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,435 lines**, 50% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 4,284, the agent is 2,885, providers are 1,587, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, the client is 460, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
+| Test lines                 |                      **40,706** across 218 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.05 to 1.                                       |
+| Automated scenarios        |                      **2,309**, locally clean   | 2,013 unit, 205 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,296 pass and 13 Windows-only scenarios skip.                     |
+| Unit suite                 |                  **2,013 passing in 25.8 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | End-to-end suite           |                                 **28 passing** | A scripted model drives a real agent with real tools against a real workspace, asserting what changed on disk, which backend ran, and that results reached the model intact. |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
 | Lint                       |                          **ruff check clean** | ruff 0.16.0 over `src`, `tests`, and `container`.                                                                                                            |
 | Certified sandbox profile  |         **Linux + Docker + one pinned image** | Podman and nerdctl are refused until their dialects pass the same tests. Non-Linux hosts report `container-platform-unsupported`.                             |
-| Default execution ceiling  | **120 s, 1 MiB produced, 64 KiB returned** | Requests may tighten these values and can never widen them.                                                                                                  |
+| Default execution ceiling  | **600 s, 1 MiB produced, 64 KiB returned** | Requests may tighten these values and can never widen them.                                                                                                  |
 | Windows support            |                **Native contract + integration** | The `windows-latest` job exercises real Job Object output, termination, descendant cleanup, process limits, and durable service timeout finalization.          |
 | Fuzz scenarios             |               **10, deterministic seed** | Noisy Unicode and structural input driven through the terminal sanitizer, bounded byte stream, bounded preview, trusted-rules parser, and Windows quoter.     |
-| Continuous integration     |                   **4-platform job matrix** | Linux, adversarial Linux sandbox, macOS, and Windows jobs run the suites appropriate to their native boundaries.                                               |
+| Continuous integration     |             **4-job, 3-platform matrix** | Linux, adversarial Linux sandbox, macOS, and Windows jobs run the suites appropriate to their native boundaries.                                               |
 | Coverage percentage        |                        **Not measured** | No coverage tool is committed or installed. No coverage number is claimed until one is.                                                                       |
 
 ## Technical highlights
@@ -437,7 +438,7 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 TrueCoder separates an **agent plane** that decides what to do from an **execution plane** that decides whether and how it may happen.
 The agent plane owns the loop, context, tools, checkpoints, and presentation.
 The execution plane owns policy, approval, evidence, isolation, and process ownership.
-The shell tool is the only bridge between them, and it is a thin adapter that converts arguments and formats results.
+The shell tool is the model-facing bridge between them, and it is a thin adapter that converts arguments and formats results. User-configured hooks enter the same execution service directly as bounded, pre-authorised requests.
 
 ```mermaid
 flowchart TB
@@ -456,6 +457,7 @@ flowchart TB
         Web[Web fetch<br/>public addresses only]
         Code[Code intelligence<br/>symbols, definitions, diagnostics]
         Shell[Shell tool<br/>model boundary only]
+        Hooks[Configured hooks<br/>bounded and pre-authorised]
     end
 
     subgraph ExecPlane[Execution plane]
@@ -486,6 +488,7 @@ flowchart TB
     Tools --> Code
     Tools --> Shell
     Shell -->|one ExecutionRequest| Service
+    Agent --> Hooks -->|one ExecutionRequest| Service
     Discovery --> Service
     Service --> Runner
     Runner -->|admit, attach, finalize| Audit
@@ -551,13 +554,13 @@ No route escapes audit.
 | Checkpoints         | git plumbing                                | Workspace snapshots and restore, kept out of branches and history      |
 | Context budgeting   | tiktoken                                    | Token counting for turn-based context selection, loaded lazily and cached outside the temporary directory |
 | Schemas             | Pydantic 2                                  | Tool arguments, strict validation, and model-facing JSON schemas       |
-| Persistence         | SQLite via the standard library             | Sessions and the separate execution audit store, both WAL-journaled    |
+| Persistence         | SQLite via the standard library             | Separate WAL databases for sessions, memory, mutation evidence, and execution evidence |
 | Storage locations   | platformdirs 4                              | User data directories outside the repository                           |
 | Local execution     | POSIX process groups, cgroup v2, and Windows Job Objects | Cross-platform process-tree ownership, cancellation, cleanup, and Linux hard limits |
 | Sandboxed execution | Docker with a digest-pinned image           | Filesystem, network, capability, memory, and PID isolation             |
-| Configuration       | python-dotenv plus strict versioned JSON    | Provider settings and optional zero-default execution policy            |
+| Configuration       | python-dotenv plus strict versioned JSON    | Provider, hook, MCP, trusted-command, and execution settings            |
 | Lint                | ruff 0.16                                   | Static checks over source, tests, and the image entrypoint             |
-| Tests               | unittest, `IsolatedAsyncioTestCase`         | Unit, contract, integration, and adversarial sandbox suites            |
+| Tests               | unittest, `IsolatedAsyncioTestCase`         | Unit, contract, integration, end-to-end, and adversarial sandbox suites |
 
 ## Prerequisites
 
@@ -880,14 +883,14 @@ The suite is written in plain `unittest` with `IsolatedAsyncioTestCase`, so no t
 python -m unittest discover -s tests -t .
 ```
 
-Current inventory: **1,711 scenarios**.
-In the local Linux verification, 1,698 pass and 13 Windows-only scenarios skip;
+Current inventory: **2,309 scenarios**.
+In the local Linux verification, 2,296 pass and 13 Windows-only scenarios skip;
 the Windows job runs those native contract and integration cases on
 `windows-latest`.
 
-The four suites prove different classes of guarantee, and they are kept separate on purpose.
+The five suites prove different classes of guarantee, and they are kept separate on purpose.
 
-### Unit, 1,515 scenarios
+### Unit, 2,013 scenarios
 
 Mostly pure logic behind injected boundaries, plus narrowly scoped platform fixtures for filesystem and native-boundary behavior.
 `DiscoveryIO` is modeled rather than measured, so these scenarios describe Linux, macOS, Windows, and unknown hosts without depending on the machine running them.
@@ -900,13 +903,20 @@ It encodes the invariants that make backend ownership safe, including exact reso
 A backend must pass this suite before the execution service can register it.
 Host-specific adapters skip only when their operating-system boundary is unavailable; the CI matrix runs POSIX on Linux and macOS and the native Job Object contract on Windows.
 
-### Integration, 133 scenarios
+### Integration, 205 scenarios
 
 Real processes, real SQLite, and the real Textual application.
-This suite covers the POSIX supervisor's gate and lifetime pipe, termination escalation and first-reason preservation, environment filtering observed from inside a child, recovery against a live exact resource, audit routes for every terminal outcome, host discovery on the actual machine, the session store and manager, the TUI, and the shell tool driven through the agent boundary including outer cancellation.
+This suite covers the POSIX supervisor's gate and lifetime pipe, termination escalation and first-reason preservation, environment filtering observed from inside a child, recovery against a live exact resource, audit routes for every terminal outcome, host discovery on the actual machine, OAuth loopback and credential flows, the session store and manager, the TUI, and the shell tool driven through the agent boundary including outer cancellation.
 On Windows it also exercises real Job Object descendant cleanup and process
 limits, plus a full timeout through the execution service and durable audit.
 It also covers the reviewable-mutation diff in an approval card, the evolving plan card, and the checkpoint browser and its restore confirmation. It also asserts the interface lifecycle gate: a card evolves only from typed stages, stop cancels one execution by id rather than the turn, a second stop does not cancel twice, a rapid completion never leaves a card running, and shutdown resolves an awaited approval and cancels every active execution.
+
+### End-to-end, 28 scenarios
+
+A scripted model drives a real agent with real tools against throwaway
+workspaces. These scenarios assert the outcome on disk, the backend that ran,
+and that tool results reached the model intact rather than coupling the score to
+one exact sequence of calls.
 
 ### Sandbox, 22 scenarios
 
@@ -917,7 +927,7 @@ This suite requires Docker and the locally built image whose digest matches `con
 
 ### Continuous integration
 
-`.github/workflows/tests.yml` runs lint plus the unit, contract, and integration suites on Linux; builds and locks the sandbox image before running the adversarial suite; and runs the unit, contract, and integration suites on both `macos-latest` and `windows-latest`.
+`.github/workflows/tests.yml` runs lint plus the unit, contract, integration, and end-to-end suites on Linux; builds and locks the sandbox image before running the adversarial suite; and runs the same four non-sandbox suites on both `macos-latest` and `windows-latest`.
 
 ## Runtime data and storage
 
@@ -946,7 +956,7 @@ Checkpoints are git objects and refs, so they live inside `.git` where the conte
 The user data directory is resolved by platformdirs, so it follows the operating system's convention.
 The two cache entries are the only ones you can delete freely; they are rebuilt on demand, and they live in the cache directory rather than the system temporary directory so that a reboot does not make you pay for them again.
 
-Every database uses WAL journaling and full synchronous durability.
+Every database uses WAL journaling. The execution, mutation, and memory stores also request full synchronous durability; the session store uses SQLite's WAL defaults.
 The mutation audit is a separate database with its own schema version rather than a table inside the execution audit, because a file change has no lifecycle to arbitrate and no resource to recover, and because bumping the execution audit's schema version would make an existing installation report an unsupported database and lose shell execution entirely.
 The audit directory and files are private by construction: POSIX uses directory mode `0700` and file mode `0600` including SQLite sidecars, and Windows removes inherited ACLs and grants access only to the current user and LocalSystem.
 Failing to establish those restrictions makes audit storage unavailable rather than silently weakening it, which in turn removes `shell` from the tool schema.
@@ -1001,7 +1011,7 @@ It ends with the invariant list this codebase is built to hold, and a change tha
 The rules that matter most:
 
 - Dependencies point toward the core. Tools must not depend on the agent, client, or UI, and the UI must not contain agent logic.
-- Provider-specific behavior stays inside the client.
+- Provider configuration, credentials, and model discovery stay in `providers`; wire-format translation stays in `client`.
 - A new backend must pass the shared contract suite before it can be registered.
 - Anything that changes what a command may do must be reflected in policy, the approval fingerprint, and the audit record together.
 - Rebuilding the sandbox image and updating `container/image.lock` belong in the same commit.
