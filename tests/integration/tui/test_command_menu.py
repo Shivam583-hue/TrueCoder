@@ -10,7 +10,7 @@ from tests.helpers.tui import wait_until
 from tests.integration.tui.test_app import FixedTokenCounter, ScriptedLLMClient
 from truecoder.agent import Agent, ContextBuilder
 from truecoder.tui.app import TrueCoderApp
-from truecoder.tui.commands import COMMANDS
+from truecoder.tui.commands import SPELLINGS
 from truecoder.tui.widgets import ChatMessage, CommandMenu, PromptInput
 
 
@@ -42,10 +42,7 @@ class CommandMenuTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(120, 40)) as pilot:
                 await self._type(pilot, "/")
 
-                self.assertEqual(
-                    _offered(app),
-                    [command.name for command in COMMANDS],
-                )
+                self.assertEqual(_offered(app), list(SPELLINGS))
 
     async def test_every_offered_command_has_room_to_be_seen(self):
         app = _app()
@@ -62,9 +59,9 @@ class CommandMenuTests(unittest.IsolatedAsyncioTestCase):
 
                 heights = [row.region.height for row in menu.query(".command-menu-row")]
 
-                self.assertGreaterEqual(menu.region.height, len(COMMANDS))
-                self.assertEqual(len(heights), len(COMMANDS))
-                self.assertEqual(heights, [1] * len(COMMANDS))
+                self.assertGreaterEqual(menu.region.height, len(SPELLINGS))
+                self.assertEqual(len(heights), len(SPELLINGS))
+                self.assertEqual(heights, [1] * len(SPELLINGS))
 
     async def test_a_summary_too_wide_to_fit_is_ellipsised_not_chopped(self):
         app = _app()
@@ -243,6 +240,13 @@ class QuitCommandTests(unittest.IsolatedAsyncioTestCase):
                 )
 
                 return app.return_code, app.return_value
+
+    async def test_the_exit_command_exits_exactly_like_quit(self):
+        by_exit = await self._exit_state(*"/exit", "enter")
+        by_quit = await self._exit_state(*"/quit", "enter")
+
+        self.assertEqual(by_exit, by_quit)
+        self.assertEqual(by_exit, (0, None))
 
     async def test_the_quit_command_exits_exactly_like_the_shortcut(self):
         by_command = await self._exit_state(*"/quit", "enter")

@@ -11,16 +11,38 @@ MAX_COMMAND_CHARACTERS: Final = 64
 class SlashCommand:
     name: str
     summary: str
+    aliases: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.name.strip() or " " in self.name:
-            raise ValueError("a command name must be one word")
+        for spelling in self.names:
+            if not spelling.strip() or " " in spelling:
+                raise ValueError("a command name must be one word")
+        if len(set(self.names)) != len(self.names):
+            raise ValueError(f"command {self.name!r} repeats a spelling")
         if not self.summary.strip():
             raise ValueError(f"command {self.name!r} needs a summary")
 
     @property
+    def names(self) -> tuple[str, ...]:
+        return (self.name, *self.aliases)
+
+    @property
     def invocation(self) -> str:
         return f"{COMMAND_PREFIX}{self.name}"
+
+
+@dataclass(frozen=True, slots=True)
+class CommandMatch:
+    command: SlashCommand
+    spelling: str
+
+    @property
+    def invocation(self) -> str:
+        return f"{COMMAND_PREFIX}{self.spelling}"
+
+    @property
+    def summary(self) -> str:
+        return self.command.summary
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,10 +57,20 @@ COMMANDS: Final = (
     SlashCommand("login", "Authorise this provider in your browser"),
     SlashCommand("logout", "Forget the stored authorisation"),
     SlashCommand("help", "List what you can type here"),
-    SlashCommand("quit", "Close TrueCoder"),
+    SlashCommand("quit", "Close TrueCoder", aliases=("exit",)),
 )
 
-_BY_NAME: Final = {command.name: command for command in COMMANDS}
+_BY_NAME: Final = {
+    spelling: command for command in COMMANDS for spelling in command.names
+}
+
+SPELLINGS: Final = tuple(_BY_NAME)
+
+ALL_MATCHES: Final = tuple(
+    CommandMatch(command, spelling)
+    for command in COMMANDS
+    for spelling in command.names
+)
 
 
 def looks_like_command(text: str) -> bool:
@@ -60,17 +92,17 @@ def command_prefix(text: str) -> str | None:
     return body.casefold()
 
 
-def matching_commands(text: str) -> tuple[SlashCommand, ...]:
+def matching_commands(text: str) -> tuple[CommandMatch, ...]:
     prefix = command_prefix(text)
     if prefix is None:
         return ()
-    return tuple(command for command in COMMANDS if command.name.startswith(prefix))
+    return tuple(match for match in ALL_MATCHES if match.spelling.startswith(prefix))
 
 
-def _shared_prefix(names: tuple[str, ...]) -> str:
-    shortest = min(names, key=len)
+def _shared_prefix(spellings: tuple[str, ...]) -> str:
+    shortest = min(spellings, key=len)
     for index, character in enumerate(shortest):
-        if any(name[index] != character for name in names):
+        if any(spelling[index] != character for spelling in spellings):
             return shortest[:index]
     return shortest
 
@@ -81,7 +113,7 @@ def completion(text: str) -> str | None:
         return None
 
     typed = command_prefix(text) or ""
-    shared = _shared_prefix(tuple(command.name for command in matches))
+    shared = _shared_prefix(tuple(match.spelling for match in matches))
     if len(shared) <= len(typed):
         return None
     return f"{COMMAND_PREFIX}{shared}"
@@ -92,13 +124,15 @@ def parse_command(text: str) -> ParsedCommand | None:
         return None
 
     body = text.strip()[len(COMMAND_PREFIX) :]
-    name, _, argument = body.partition(" ")
-    name = name.strip().casefold()
-    if not name or len(name) > MAX_COMMAND_CHARACTERS:
+    spelling, _, argument = body.partition(" ")
+    spelling = spelling.strip().casefold()
+    if not spelling or len(spelling) > MAX_COMMAND_CHARACTERS:
         return None
-    if name not in _BY_NAME:
+
+    command = _BY_NAME.get(spelling)
+    if command is None:
         return None
-    return ParsedCommand(name=name, argument=argument.strip())
+    return ParsedCommand(name=command.name, argument=argument.strip())
 
 
 def unknown_command_message(text: str) -> str:
@@ -108,8 +142,8 @@ def unknown_command_message(text: str) -> str:
 
 
 def help_text() -> str:
-    widest = max(len(command.invocation) for command in COMMANDS)
+    widest = max(len(match.invocation) for match in ALL_MATCHES)
     lines = [
-        f"{command.invocation.ljust(widest)}  {command.summary}" for command in COMMANDS
+        f"{match.invocation.ljust(widest)}  {match.summary}" for match in ALL_MATCHES
     ]
     return "\n".join(lines)

@@ -6,6 +6,7 @@ import unittest
 
 from truecoder.tui.commands import (
     COMMANDS,
+    SPELLINGS,
     SlashCommand,
     command_prefix,
     completion,
@@ -18,7 +19,7 @@ from truecoder.tui.commands import (
 
 
 def _names(text: str) -> list[str]:
-    return [command.name for command in matching_commands(text)]
+    return [match.spelling for match in matching_commands(text)]
 
 
 class RecogniseTests(unittest.TestCase):
@@ -84,10 +85,11 @@ class MessageTests(unittest.TestCase):
 
 class FilterTests(unittest.TestCase):
     def test_a_bare_slash_offers_everything(self):
-        self.assertEqual(_names("/"), [command.name for command in COMMANDS])
+        self.assertEqual(_names("/"), list(SPELLINGS))
 
     def test_a_letter_narrows_to_that_letter(self):
         self.assertEqual(_names("/q"), ["quit"])
+        self.assertEqual(_names("/e"), ["exit"])
         self.assertEqual(_names("/m"), ["models", "model"])
         self.assertEqual(_names("/l"), ["login", "logout"])
 
@@ -152,11 +154,49 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(parsed.name, "quit")
 
 
+class AliasTests(unittest.TestCase):
+    def test_an_alias_resolves_to_the_command_it_names(self):
+        parsed = parse_command("/exit")
+
+        assert parsed is not None
+        self.assertEqual(parsed.name, "quit")
+
+    def test_an_alias_is_offered_like_any_other_spelling(self):
+        self.assertIn("exit", _names("/"))
+        self.assertEqual(_names("/ex"), ["exit"])
+
+    def test_an_alias_completes_to_itself(self):
+        self.assertEqual(completion("/ex"), "/exit")
+
+    def test_an_alias_carries_an_argument_like_a_name(self):
+        parsed = parse_command("/EXIT  now")
+
+        assert parsed is not None
+        self.assertEqual((parsed.name, parsed.argument), ("quit", "now"))
+
+    def test_help_lists_every_spelling(self):
+        text = help_text()
+
+        for spelling in SPELLINGS:
+            self.assertIn(f"/{spelling}", text)
+
+    def test_an_alias_may_not_collide_with_another_spelling(self):
+        with self.assertRaises(ValueError):
+            SlashCommand("thing", "does a thing", aliases=("thing",))
+
+    def test_an_alias_must_be_one_word(self):
+        with self.assertRaises(ValueError):
+            SlashCommand("thing", "does a thing", aliases=("two words",))
+
+
 class RegistryTests(unittest.TestCase):
     def test_names_are_unique(self):
         names = [command.name for command in COMMANDS]
 
         self.assertEqual(len(names), len(set(names)))
+
+    def test_every_spelling_across_commands_is_unique(self):
+        self.assertEqual(len(SPELLINGS), len(set(SPELLINGS)))
 
     def test_a_command_name_must_be_one_word(self):
         with self.assertRaises(ValueError):

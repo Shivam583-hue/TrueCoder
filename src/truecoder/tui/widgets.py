@@ -17,9 +17,9 @@ from truecoder.client.response import TokenUsage
 from truecoder.mutation import DIFF_LINE_PREFIXES, DiffLineKind, FileDiff
 from truecoder.planning import Plan, PlanStepStatus
 from truecoder.tui.commands import (
+    ALL_MATCHES,
     COMMAND_PREFIX,
-    COMMANDS,
-    SlashCommand,
+    CommandMatch,
     completion,
     matching_commands,
 )
@@ -157,11 +157,11 @@ def _display_target(value: object) -> str:
 _APPROVAL_SCOPES = frozenset({"once", "session", "workspace"})
 
 
-_COMMAND_COLUMN = max(len(command.invocation) for command in COMMANDS)
+_COMMAND_COLUMN = max(len(match.invocation) for match in ALL_MATCHES)
 
 
-def _command_row(command: SlashCommand) -> str:
-    return f"{command.invocation.ljust(_COMMAND_COLUMN)}  {command.summary}"
+def _command_row(match: CommandMatch) -> str:
+    return f"{match.invocation.ljust(_COMMAND_COLUMN)}  {match.summary}"
 
 
 class CommandMenu(Vertical):
@@ -170,12 +170,12 @@ class CommandMenu(Vertical):
     def __init__(self) -> None:
         super().__init__(id="command-menu")
         self._rows = {
-            command.name: Static(
-                _command_row(command),
+            match.spelling: Static(
+                _command_row(match),
                 classes="command-menu-row",
                 markup=False,
             )
-            for command in COMMANDS
+            for match in ALL_MATCHES
         }
         self.display = False
 
@@ -186,13 +186,13 @@ class CommandMenu(Vertical):
     def offered(self) -> tuple[str, ...]:
         if not self.display:
             return ()
-        return tuple(name for name, row in self._rows.items() if row.display)
+        return tuple(spelling for spelling, row in self._rows.items() if row.display)
 
-    def offer(self, text: str) -> tuple[SlashCommand, ...]:
+    def offer(self, text: str) -> tuple[CommandMatch, ...]:
         matches = matching_commands(text)
-        visible = {command.name for command in matches}
-        for name, row in self._rows.items():
-            row.display = name in visible
+        visible = {match.spelling for match in matches}
+        for spelling, row in self._rows.items():
+            row.display = spelling in visible
         self.display = bool(matches)
         return matches
 
