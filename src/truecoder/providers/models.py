@@ -171,6 +171,7 @@ def settings_from_environment(
 
 def resolve_settings() -> SessionSettings:
     from truecoder.providers.configuration import load_providers
+    from truecoder.providers.keys import load_keys
     from truecoder.providers.store import load_selection
     from truecoder.providers.tokens import load_tokens
 
@@ -181,6 +182,10 @@ def resolve_settings() -> SessionSettings:
     chosen = configured.get(stored.provider or settings.provider.name)
     if chosen is not None:
         settings.provider = chosen
+
+    key = load_keys().get(settings.provider.name)
+    if key is not None:
+        settings.credential = key
 
     tokens = load_tokens()
     token = tokens.get(settings.provider.name)
