@@ -533,6 +533,28 @@ ToolCallCard.expanded .tool-details {
     padding: 0 2;
 }
 
+#command-menu {
+    width: 100%;
+    height: auto;
+    max-height: 14;
+    padding: 1 2 0 2;
+    margin-bottom: 1;
+    background: $tc-surface-raised;
+    border-left: solid $tc-blue;
+}
+
+.command-menu-row {
+    width: 100%;
+    height: 1;
+    color: $tc-text-secondary;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.command-menu-row:last-of-type {
+    margin-bottom: 1;
+}
+
 #composer-shell {
     width: 100%;
     height: auto;

@@ -348,6 +348,10 @@ class TrueCoderApp(App[None]):
 
         if parsed.name == "logout":
             self._forget_authorisation()
+            return
+
+        if parsed.name == "quit":
+            await self.action_quit()
 
     async def _choose_model(self, *, refresh: bool = False) -> None:
         from truecoder.providers.catalog import CatalogError, load_models

@@ -16,6 +16,13 @@ from textual.widgets import Button, Markdown, Static, TextArea
 from truecoder.client.response import TokenUsage
 from truecoder.mutation import DIFF_LINE_PREFIXES, DiffLineKind, FileDiff
 from truecoder.planning import Plan, PlanStepStatus
+from truecoder.tui.commands import (
+    COMMAND_PREFIX,
+    COMMANDS,
+    SlashCommand,
+    completion,
+    matching_commands,
+)
 from truecoder.tui.execution_view import (
     EXECUTION_CARD_STATES,
     BoundedPreview,
@@ -69,8 +76,8 @@ def _session_metadata(
 
 def _launcher_shortcuts() -> Text:
     shortcuts = Text()
-    shortcuts.append("tab", style="#c8c8c8")
-    shortcuts.append(" agents    ", style="#707070")
+    shortcuts.append(COMMAND_PREFIX, style="#c8c8c8")
+    shortcuts.append(" commands    ", style="#707070")
     shortcuts.append("ctrl+p", style="#c8c8c8")
     shortcuts.append(" sessions    ", style="#707070")
     shortcuts.append("ctrl+q", style="#c8c8c8")
@@ -150,6 +157,46 @@ def _display_target(value: object) -> str:
 _APPROVAL_SCOPES = frozenset({"once", "session", "workspace"})
 
 
+_COMMAND_COLUMN = max(len(command.invocation) for command in COMMANDS)
+
+
+def _command_row(command: SlashCommand) -> str:
+    return f"{command.invocation.ljust(_COMMAND_COLUMN)}  {command.summary}"
+
+
+class CommandMenu(Vertical):
+    """Commands matching what has been typed so far, narrowing as it grows."""
+
+    def __init__(self) -> None:
+        super().__init__(id="command-menu")
+        self._rows = {
+            command.name: Static(
+                _command_row(command),
+                classes="command-menu-row",
+                markup=False,
+            )
+            for command in COMMANDS
+        }
+        self.display = False
+
+    def compose(self) -> ComposeResult:
+        yield from self._rows.values()
+
+    @property
+    def offered(self) -> tuple[str, ...]:
+        if not self.display:
+            return ()
+        return tuple(name for name, row in self._rows.items() if row.display)
+
+    def offer(self, text: str) -> tuple[SlashCommand, ...]:
+        matches = matching_commands(text)
+        visible = {command.name for command in matches}
+        for name, row in self._rows.items():
+            row.display = name in visible
+        self.display = bool(matches)
+        return matches
+
+
 class PromptInput(TextArea):
     """Multiline prompt input with chat-style submission."""
 
@@ -157,6 +204,7 @@ class PromptInput(TextArea):
         Binding("enter", "submit", show=False, priority=True),
         Binding("ctrl+enter", "submit", show=False, priority=True),
         Binding("shift+enter", "newline", show=False, priority=True),
+        Binding("tab", "complete_command", show=False),
     ]
 
     class Submitted(Message):
@@ -176,6 +224,14 @@ class PromptInput(TextArea):
 
     def action_newline(self) -> None:
         self.insert("\n")
+
+    def action_complete_command(self) -> None:
+        completed = completion(self.text)
+        if completed is None:
+            self.screen.focus_next()
+            return
+        self.text = completed
+        self.move_cursor(self.document.end)
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area is self:
@@ -200,6 +256,7 @@ class Composer(Vertical):
         super().__init__(id="composer")
 
     def compose(self) -> ComposeResult:
+        yield CommandMenu()
         with Vertical(id="composer-shell"):
             yield PromptInput(
                 id="prompt-input",
@@ -223,6 +280,15 @@ class Composer(Vertical):
 
     def set_busy(self, busy: bool) -> None:
         self.set_class(busy, "busy")
+
+    @on(TextArea.Changed)
+    def offer_commands(self, event: TextArea.Changed) -> None:
+        if not isinstance(event.text_area, PromptInput):
+            return
+        try:
+            self.query_one(CommandMenu).offer(event.text_area.text)
+        except NoMatches:
+            return
 
     def set_model_name(self, model_name: str) -> None:
         self.model_name = model_name
