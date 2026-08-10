@@ -158,7 +158,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(app.query_one("#launcher-shortcuts").display)
                 shortcuts = str(app.query_one("#launcher-shortcuts").content)
                 self.assertIn(
-                    "tab agents",
+                    "/ commands",
                     shortcuts,
                 )
                 self.assertIn(
