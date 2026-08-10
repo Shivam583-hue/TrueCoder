@@ -71,6 +71,7 @@ Coming soon...
 - **MCP servers, treated as untrusted** - configured servers contribute their tools through the same registry, approval fingerprint, and audit as everything else. Their schemas are bounded before the model ever sees them, their names are namespaced so nothing can shadow a built-in, and their output is labelled as third-party data the model must never take instructions from. A server that fails to start is reported and skipped; it never stops the others or the application.
 - **A system prompt that teaches the agent to work** - learn how the repository builds and tests itself before running anything, never install a tool to make a command succeed, treat a shortened result as an instruction to read a narrower range rather than the same one again, and remember that every call spends a human approval. Each rule is there because its absence was observed costing a turn.
 - **The agent knows what machine it is on** - the working directory, operating system, interpreter, and any workspace virtual environment are gathered at startup and stated in the system prompt, so the model runs your test suite through the right interpreter instead of probing for it or guessing.
+- **Nothing is downloaded between typing `truecoder` and seeing it** - the token encoding that context budgeting needs is a 3.6 MB fetch, so it is loaded on first use rather than at construction, warmed on a background thread while the interface paints, and cached in your cache directory instead of the temporary directory that a reboot clears. If it cannot be fetched at all, counting falls back to an estimate that over-counts rather than under-counts, so an offline launch degrades instead of failing.
 - **Useful by default, isolated on request** - shell commands run locally so the project's dependencies are actually present; asking for the container, for a non-host filesystem mode, or for no network opts into the sandbox instead. A request no backend can satisfy names the backend that refused it and why, rather than failing as a generic infrastructure error.
 - **Critical commands cannot run unprotected** - a command that reaches critical risk and is still permitted has its isolation raised beyond anything a local backend provides, so it is refused on the host and must be moved into the sandbox deliberately. Set `unknown_risk` to `critical` and every unrecognised command is held to that bar.
 - **Proven container sandbox** - non-root UID 65532, read-only root filesystem, approved tmpfs only, denied network, all capabilities dropped, no-new-privileges, and a digest-pinned image that launch never pulls.
@@ -121,6 +122,7 @@ TrueCoder/
 │   ├── agent/                         # Orchestration
 │   │   ├── agent.py                   # Agent loop, tool invocation contexts, and app launch
 │   │   ├── context.py                 # Turn-based context selection and token budgeting
+│   │   ├── tokenizer.py               # Lazy, durably cached tokenizer with an offline fallback
 │   │   ├── budget.py                  # Shortening oversized tool results to fit
 │   │   ├── progress.py                # Repeated-call and no-progress detection
 │   │   ├── compaction.py              # Rolling summary of evicted turns
@@ -357,6 +359,7 @@ TrueCoder/
 | MCP tool servers                      | `src/truecoder/mcp`                               | Schema bounds, the registry adapter, and the fake server in `tests/helpers` |
 | JSON-RPC transport or framing         | `src/truecoder/jsonrpc`                           | Both `lsp/protocol.py` and `mcp/protocol.py`, and their transport tests |
 | Context budgeting                     | `src/truecoder/agent/budget.py`                   | `context.py` assembly and `compaction.py` for long histories           |
+| Token counting or launch latency      | `src/truecoder/agent/tokenizer.py`                | `TiktokenTokenCounter` in `context.py` and `run_interactive` in `agent.py` |
 | Loop and stall behaviour              | `src/truecoder/agent/progress.py`                 | `_agentic_loop` in `agent.py` and the loop-detection tests             |
 | Checkpoints and restore               | `src/truecoder/checkpoint`                        | `tui/checkpoints.py` and capture in `agent.py`                         |
 | What a turn changed                   | `src/truecoder/checkpoint/changes.py`             | `tui/changes.py` and `turn_changes` in `agent.py`                      |
@@ -381,16 +384,16 @@ Tools never depend on the agent, client, or UI, and the UI never contains agent 
 
 ## Engineering scorecard
 
-Local figures below were measured on 7 August 2026 from this working tree, on Linux with Python 3.14.3 and Docker 29.3.0.
+Local figures below were measured on 10 August 2026 from this working tree, on Linux with Python 3.14.3 and Docker 29.3.0.
 Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macOS, and Windows.
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **38,072** across 166 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,435 lines**, 51% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 3,892, the agent is 2,783, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, providers are 1,377, the client is 460, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
-| Test lines                 |                      **39,172** across 213 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.02 to 1.                                       |
-| Automated scenarios        |                      **2,194**, locally clean   | 1,944 unit, 159 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,181 pass and 13 Windows-only scenarios skip.                     |
-| Unit suite                 |                  **1,944 passing in 12.1 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **38,172** across 167 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,435 lines**, 51% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 3,892, the agent is 2,883, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, providers are 1,377, the client is 460, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
+| Test lines                 |                      **39,427** across 214 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.03 to 1.                                       |
+| Automated scenarios        |                      **2,215**, locally clean   | 1,965 unit, 159 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,202 pass and 13 Windows-only scenarios skip.                     |
+| Unit suite                 |                  **1,965 passing in 18.9 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | End-to-end suite           |                                 **28 passing** | A scripted model drives a real agent with real tools against a real workspace, asserting what changed on disk, which backend ran, and that results reached the model intact. |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
@@ -541,7 +544,7 @@ No route escapes audit.
 | Outbound web        | httpx 0.27+                                 | Address-pinned, bounded fetching of public pages                       |
 | Code intelligence   | Language Server Protocol over stdio         | Symbols, definitions, references, and diagnostics from installed servers |
 | Checkpoints         | git plumbing                                | Workspace snapshots and restore, kept out of branches and history      |
-| Context budgeting   | tiktoken                                    | Token counting for turn-based context selection                        |
+| Context budgeting   | tiktoken                                    | Token counting for turn-based context selection, loaded lazily and cached outside the temporary directory |
 | Schemas             | Pydantic 2                                  | Tool arguments, strict validation, and model-facing JSON schemas       |
 | Persistence         | SQLite via the standard library             | Sessions and the separate execution audit store, both WAL-journaled    |
 | Storage locations   | platformdirs 4                              | User data directories outside the repository                           |
@@ -914,12 +917,15 @@ Checkpoints are git objects and refs, so they live inside `.git` where the conte
 | Providers           | `<user config dir>/truecoder/providers.json`                | Optional base URLs and OAuth clients, strict and versioned         |
 | Model selection     | `<user config dir>/truecoder/settings.json`                 | The model chosen with `/models`, remembered across restarts        |
 | Authorisation       | `<user config dir>/truecoder/tokens.json`                   | OAuth tokens, one per provider, private to your user               |
+| Model catalog       | `<user cache dir>/truecoder/models.json`                    | The provider's model list, refetched after six hours               |
+| Tokenizer           | `<user cache dir>/truecoder/tokenizers/`                    | The token encoding, downloaded once and reused for every launch    |
 | Checkpoints         | `refs/truecoder/checkpoints/*` inside the repository        | Workspace snapshots as git objects, pruned to the newest 25        |
 | Execution policy    | `<user config dir>/truecoder/execution.json`                | Optional operator ceilings and backend settings                    |
 | Trusted rules       | `<user config dir>/truecoder/trusted-commands.json`         | Optional executable-specific restrictions                          |
 | Project instructions | `AGENTS.md` and `AGENTS.override.md` in the repository      | Read only, never written                                           |
 
 The user data directory is resolved by platformdirs, so it follows the operating system's convention.
+The two cache entries are the only ones you can delete freely; they are rebuilt on demand, and they live in the cache directory rather than the system temporary directory so that a reboot does not make you pay for them again.
 
 Every database uses WAL journaling and full synchronous durability.
 The mutation audit is a separate database with its own schema version rather than a table inside the execution audit, because a file change has no lifecycle to arbitrate and no resource to recover, and because bumping the execution audit's schema version would make an existing installation report an unsupported database and lose shell execution entirely.

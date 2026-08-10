@@ -159,6 +159,40 @@ above. A failed summary leaves history untouched rather than losing a turn.
 
 The plan is not part of history. It is rendered fresh from the plan store on every build and appended after the active turn, so it is always the most recent thing the model sees and can never be evicted by trimming. It is counted against the token budget before history selection begins, so adding a plan tightens how much history fits instead of silently overflowing the limit.
 
+Everything above depends on counting tokens, and counting them requires a
+tokenizer that `tiktoken` fetches over the network the first time it is asked
+for one.
+Building the counter used to load that tokenizer immediately, which put a 3.6 MB
+download on the path between typing `truecoder` and seeing anything at all: on a
+slow link the terminal stayed blank for half a minute, and with no route to the
+network the launch ended in a stack trace rather than an interface.
+The counter is therefore constructed empty and loads on first use, so composing
+a session touches nothing remote and the interface paints immediately.
+Loading happens at most once per process, under a lock so concurrent counting
+cannot start two downloads, and the loaded flag is set in a `finally` so a
+loader that throws degrades once instead of retrying on every message.
+
+Where that download is kept matters as much as when it happens. The library's
+default is the system temporary directory, which several platforms clear on
+reboot, so the cost was not paid once but once per boot. It is redirected to the
+user cache directory alongside the model catalog, and an explicit
+`TIKTOKEN_CACHE_DIR` or `DATA_GYM_CACHE_DIR` is left untouched because an
+operator who set one has already made this decision.
+
+A tokenizer that cannot be loaded at all is not fatal. Counting falls back to an
+estimate from UTF-8 length, chosen to over-count rather than under-count, since
+over-counting shortens a tool result early and under-counting overflows the
+model's window. The failure modes are named rather than caught blind: every
+`requests` exception descends from `OSError`, a corrupt download raises
+`ValueError`, and an absent library raises `ImportError`.
+
+Deferring the load moves the wait to the first message instead of removing it,
+so the interactive entry point starts the load on a daemon thread immediately
+after composing the session. The interface paints while the download runs, and
+by the time a first message is submitted the tokenizer is usually ready. This is
+the same rule the model catalog follows: work that is not needed to draw the
+first frame does not happen at launch or on a keystroke.
+
 ## Agent loop
 
 ```text
