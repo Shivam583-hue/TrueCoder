@@ -13,6 +13,7 @@ from truecoder.client.response import (
     TextDelta,
     TokenUsage,
 )
+from truecoder.providers import SessionSettings, settings_from_environment
 from truecoder.tools import ToolApproval, ToolArguments, ToolCall, ToolRegistry
 from truecoder.tools.base import BaseTool
 from truecoder.tui.app import TrueCoderApp
@@ -26,11 +27,22 @@ from truecoder.tui.widgets import (
 )
 
 
+def environment_settings() -> SessionSettings:
+    return settings_from_environment()
+
+
 class FakeLLMClient:
     def __init__(self, events: list[StreamEvent]) -> None:
         self.events = events
         self.calls: list[tuple[list[dict], bool]] = []
         self.closed = False
+        self._settings: SessionSettings | None = None
+
+    @property
+    def settings(self) -> SessionSettings:
+        if self._settings is None:
+            self._settings = environment_settings()
+        return self._settings
 
     async def chat_completion(self, messages, stream=True, tools=None):
         self.calls.append((messages, stream))

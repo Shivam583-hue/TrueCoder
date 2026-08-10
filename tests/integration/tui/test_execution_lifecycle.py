@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 from tests.helpers.tui import wait_until
+from tests.integration.tui.test_app import environment_settings
 from truecoder.agent import Agent, ContextBuilder
 from truecoder.agent.approval import (
     ApprovalDecision,
@@ -63,6 +64,10 @@ class FixedTokenCounter:
 class IdleLLMClient:
     def __init__(self) -> None:
         self.closed = False
+
+    @property
+    def settings(self):
+        return environment_settings()
 
     async def chat_completion(self, messages, stream=True, tools=None):
         del messages, stream, tools

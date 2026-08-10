@@ -14,7 +14,9 @@ from tests.integration.tui.test_app import (
     ScriptedLLMClient,
 )
 from truecoder.agent import Agent, ContextBuilder
+from truecoder.client.llm_client import LLMClient
 from truecoder.providers import ApiKey, ModelInfo, Provider, SessionSettings
+from truecoder.providers.store import StoredSelection
 from truecoder.tui.app import TrueCoderApp
 from truecoder.tui.model_picker import ModelPickerScreen
 from truecoder.tui.widgets import ChatMessage, PromptInput
@@ -29,7 +31,7 @@ CATALOG = (
 class _Client(ScriptedLLMClient):
     def __init__(self) -> None:
         super().__init__([])
-        self.settings = SessionSettings(
+        self._settings = SessionSettings(
             provider=Provider(name="test", base_url="https://x.invalid/v1"),
             credential=ApiKey("sk-test"),
             model="anthropic/claude-opus-5",
@@ -167,6 +169,86 @@ class ModelCommandTests(unittest.IsolatedAsyncioTestCase):
                 )
 
                 self.assertIn("401", str(app.screen.unavailable_reason))
+
+
+class DisplayedModelTests(unittest.IsolatedAsyncioTestCase):
+    def _app(self) -> TrueCoderApp:
+        agent = Agent(
+            llm_client=LLMClient(),
+            context_builder=ContextBuilder(
+                system_prompt="test system",
+                max_input_tokens=1000,
+                token_counter=FixedTokenCounter(),
+            ),
+        )
+        return TrueCoderApp(agent)
+
+    def setUp(self) -> None:
+        self._directory = tempfile.TemporaryDirectory()
+        self.root = Path(self._directory.name).resolve()
+        self.addCleanup(self._directory.cleanup)
+
+    def _isolate(self, stored: str | None):
+        selection = StoredSelection(model=stored) if stored else StoredSelection()
+        return (
+            patch("truecoder.providers.store.load_selection", return_value=selection),
+            patch(
+                "truecoder.providers.configuration.load_providers", return_value=()
+            ),
+            patch("truecoder.providers.tokens.load_tokens", return_value={}),
+        )
+
+    async def _shown(self, *, environment: str, stored: str | None) -> str:
+        app = self._app()
+        patches = self._isolate(stored)
+
+        with patch.dict(os.environ, {"MODEL": environment, "API_KEY": "sk-test"}):
+            for active in patches:
+                active.start()
+                self.addCleanup(active.stop)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                return str(app.query_one("#composer-metadata").content)
+
+    async def test_the_composer_shows_the_remembered_model_not_the_environment(self):
+        shown = await self._shown(
+            environment="cohere/north-mini-code:free",
+            stored="moonshotai/kimi-k2.6",
+        )
+
+        self.assertIn("moonshotai/kimi-k2.6", shown)
+        self.assertNotIn("cohere/north-mini-code:free", shown)
+
+    async def test_the_composer_falls_back_to_the_environment_when_nothing_is_stored(
+        self,
+    ):
+        shown = await self._shown(
+            environment="cohere/north-mini-code:free",
+            stored=None,
+        )
+
+        self.assertIn("cohere/north-mini-code:free", shown)
+
+    async def test_the_composer_and_the_model_command_never_disagree(self):
+        app = self._app()
+        patches = self._isolate("moonshotai/kimi-k2.6")
+
+        with patch.dict(
+            os.environ,
+            {"MODEL": "cohere/north-mini-code:free", "API_KEY": "sk-test"},
+        ):
+            for active in patches:
+                active.start()
+                self.addCleanup(active.stop)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                metadata = str(app.query_one("#composer-metadata").content)
+
+                self.assertIn(app._resolved_model_name(), metadata)
+                self.assertEqual(
+                    app._resolved_model_name(),
+                    app.agent.llm_client.settings.model,
+                )
 
 
 class PickerFilterTests(unittest.IsolatedAsyncioTestCase):

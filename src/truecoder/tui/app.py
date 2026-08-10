@@ -74,6 +74,7 @@ from truecoder.tui.widgets import (
 )
 
 SHUTDOWN_DRAIN_SECONDS: Final = 5.0
+MODEL_NOT_CONFIGURED: Final = "model not configured"
 
 
 @dataclass
@@ -194,7 +195,7 @@ class TrueCoderApp(App[None]):
         self._execution_cards: dict[str, ExecutionCard] = {}
         self._plan_card: PlanCard | None = None
         self._plan_calls: dict[str, str] = {}
-        self._model_name = "model not configured"
+        self._model_name = MODEL_NOT_CONFIGURED
         self.agent.set_execution_sinks(
             event_sink=_AppEventSink(self),
             preview_sink=_AppPreviewSink(self),
@@ -205,8 +206,16 @@ class TrueCoderApp(App[None]):
         """Expose conversation history for UI state inspection."""
         return self.agent.messages
 
+    def _resolved_model_name(self) -> str:
+        from truecoder.providers.models import CredentialError
+
+        try:
+            return self.agent.llm_client.settings.model
+        except (RuntimeError, CredentialError):
+            return MODEL_NOT_CONFIGURED
+
     def compose(self) -> ComposeResult:
-        self._model_name = os.getenv("MODEL") or "model not configured"
+        self._model_name = self._resolved_model_name()
         workspace = os.getcwd()
 
         with Vertical(id="main"):
@@ -335,7 +344,7 @@ class TrueCoderApp(App[None]):
             return
 
         if parsed.name == "model":
-            self.notify(f"Answering with {self.agent.llm_client.settings.model}")
+            self.notify(f"Answering with {self._resolved_model_name()}")
             return
 
         if parsed.name == "models":

@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from tests.helpers.tui import wait_until
-from tests.integration.tui.test_app import FixedTokenCounter
+from tests.integration.tui.test_app import FixedTokenCounter, environment_settings
 from truecoder.agent import Agent, ContextBuilder
 from truecoder.client.response import EventType, StreamEvent, TextDelta
 from truecoder.tui.app import TrueCoderApp
@@ -14,6 +14,10 @@ from truecoder.tui.widgets import PromptInput
 
 
 class _SlowLLMClient:
+    @property
+    def settings(self):
+        return environment_settings()
+
     async def chat_completion(self, messages, stream=True, tools=None):
         yield StreamEvent(type=EventType.TEXT_DELTA, text_delta=TextDelta("thinking"))
         await asyncio.sleep(30)
