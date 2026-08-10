@@ -631,7 +631,7 @@ Copy `.env.example` and never commit the filled-in file.
 | Variable           | Required | Purpose                                                                                                             |
 | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- |
 | `API_KEY`          | Yes      | Credential for the LLM endpoint. The client raises at first use if it is missing.                                    |
-| `MODEL`            | Yes      | Model to start with. A model chosen with `/models` is remembered and outranks this, so the TUI may correctly show a different one. |
+| `MODEL`            | Until you pick one | Model to start with. A model chosen with `/models` is remembered and outranks this, so the TUI may correctly show a different one. Once a choice is stored, launching works with `MODEL` unset. |
 | `BASE_URL`         | No       | OpenAI-compatible endpoint. Omit it to use the provider default.                                                    |
 | `MAX_INPUT_TOKENS` | No       | Context budget for the system prompt plus selected turns. Defaults to `64000`. Lower it if your model's window is smaller. |
 

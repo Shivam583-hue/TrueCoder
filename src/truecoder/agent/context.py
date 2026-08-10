@@ -1,7 +1,7 @@
 import os
 import threading
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 from dotenv import load_dotenv
 
@@ -27,6 +27,8 @@ from truecoder.planning import PlanStore
 
 if TYPE_CHECKING:
     from truecoder.agent.state import AgentState
+
+DEFAULT_MAX_INPUT_TOKENS: Final = 64000
 
 
 class TokenCounter(Protocol):
@@ -186,7 +188,7 @@ class ContextBuilder:
         if model is None or not model.strip():
             raise ValueError("The MODEL environment variable is required.")
 
-        raw_max_tokens = os.getenv("MAX_INPUT_TOKENS", "64000")
+        raw_max_tokens = os.getenv("MAX_INPUT_TOKENS", str(DEFAULT_MAX_INPUT_TOKENS))
 
         try:
             max_input_tokens = int(raw_max_tokens)
