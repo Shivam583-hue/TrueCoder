@@ -10,6 +10,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
 from truecoder.providers.keys import MAX_KEY_CHARACTERS
+from truecoder.providers.models import DEFAULT_PROVIDER_NAME
 
 WAITING_MESSAGE: Final = "Waiting for you to finish in the browser..."
 COPIED_MESSAGE: Final = "Link copied to the clipboard."
@@ -45,9 +46,14 @@ class ApiKeyScreen(ModalScreen[str | None]):
             yield Static("enter save   esc skip", classes="credential-help")
 
     def _explanation(self) -> str:
-        if self.model:
+        named = self.provider != DEFAULT_PROVIDER_NAME
+        if self.model and named:
             return f"{self.model} needs a key for {self.provider} before it can answer."
-        return f"{self.provider} needs an API key before it can answer."
+        if self.model:
+            return f"{self.model} needs an API key before it can answer."
+        if named:
+            return f"{self.provider} needs an API key before it can answer."
+        return "This provider needs an API key before it can answer."
 
     def on_mount(self) -> None:
         self.query_one("#api-key-input", Input).focus()

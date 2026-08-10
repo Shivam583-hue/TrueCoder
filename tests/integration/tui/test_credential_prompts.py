@@ -171,6 +171,19 @@ class ApiKeyPromptTests(_Base):
                 self.assertIsNone(app.agent.llm_client.settings.credential)
                 self.assertFalse((self.root / "keys.json").exists())
 
+    async def test_the_prompt_never_calls_the_unnamed_provider_default(self):
+        screen = ApiKeyScreen("default", "moonshotai/kimi-k2.6")
+
+        explanation = screen._explanation()
+
+        self.assertNotIn("default", explanation)
+        self.assertIn("moonshotai/kimi-k2.6", explanation)
+
+    async def test_a_named_provider_is_named_in_the_prompt(self):
+        screen = ApiKeyScreen("openrouter", "moonshotai/kimi-k2.6")
+
+        self.assertIn("openrouter", screen._explanation())
+
     async def test_the_key_is_never_echoed_to_the_screen(self):
         screen = ApiKeyScreen("acme", "acme/starter")
         app = self._app(_settings(credential=None))
