@@ -855,9 +855,11 @@ def build_eval_agent(project_root: Path, *, max_iterations: int = 12) -> Agent:
 
 
 def run_interactive() -> None:
+    from truecoder.agent.tokenizer import warm_tokenizer
     from truecoder.tui.app import TrueCoderApp
 
     session = build_session()
+    warm_tokenizer(session.agent.context_builder.token_counter)
     TrueCoderApp(session.agent, session_manager=session.session_manager).run()
 
 

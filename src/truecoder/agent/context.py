@@ -1,8 +1,8 @@
 import os
+import threading
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
-import tiktoken
 from dotenv import load_dotenv
 
 from truecoder.agent.budget import fit_tool_messages, tool_result_ceiling
@@ -21,6 +21,7 @@ from truecoder.agent.prompts import (
     add_web_fetch_tool_guidance,
     build_system_prompt,
 )
+from truecoder.agent.tokenizer import Encoding, approximate_tokens, load_encoding
 from truecoder.memory import MemoryStore
 from truecoder.planning import PlanStore
 
@@ -37,10 +38,32 @@ class TiktokenTokenCounter:
     _VALID_ROLES = frozenset({"system", "user", "assistant", "tool"})
 
     def __init__(self, model: str) -> None:
-        try:
-            self.__encoding = tiktoken.encoding_for_model(model)
-        except KeyError:
-            self.__encoding = tiktoken.get_encoding("o200k_base")
+        self.__model = model
+        self.__encoding: Encoding | None = None
+        self.__loaded = False
+        self.__lock = threading.Lock()
+
+    @property
+    def is_approximate(self) -> bool:
+        self.prepare()
+        return self.__encoding is None
+
+    def prepare(self) -> None:
+        if self.__loaded:
+            return
+        with self.__lock:
+            if self.__loaded:
+                return
+            try:
+                self.__encoding = load_encoding(self.__model)
+            finally:
+                self.__loaded = True
+
+    def _count_text(self, text: str) -> int:
+        self.prepare()
+        if self.__encoding is None:
+            return approximate_tokens(text)
+        return len(self.__encoding.encode(text))
 
     def count_message(self, message: Mapping[str, Any]) -> int:
         self._validate_message(message)
@@ -48,7 +71,7 @@ class TiktokenTokenCounter:
 
     def _count_string_values(self, value: Any) -> int:
         if isinstance(value, str):
-            return len(self.__encoding.encode(value))
+            return self._count_text(value)
 
         if value is None:
             return 0

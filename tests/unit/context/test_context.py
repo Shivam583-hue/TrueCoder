@@ -531,30 +531,22 @@ class TiktokenTokenCounterTests(unittest.TestCase):
         encoding.encode.side_effect = lambda value: list(value)
 
         with (
-            patch(
-                "truecoder.agent.context.tiktoken.encoding_for_model",
-                side_effect=KeyError,
-            ),
-            patch(
-                "truecoder.agent.context.tiktoken.get_encoding",
-                return_value=encoding,
-            ) as get_encoding,
+            patch("tiktoken.encoding_for_model", side_effect=KeyError),
+            patch("tiktoken.get_encoding", return_value=encoding) as get_encoding,
         ):
             counter = TiktokenTokenCounter("custom-model")
 
-        self.assertEqual(
-            counter.count_message({"role": "user", "content": "hi"}),
-            10,
-        )
+            self.assertEqual(
+                counter.count_message({"role": "user", "content": "hi"}),
+                10,
+            )
+
         get_encoding.assert_called_once_with("o200k_base")
 
     def test_count_message_rejects_invalid_role_or_content(self):
         encoding = Mock()
 
-        with patch(
-            "truecoder.agent.context.tiktoken.encoding_for_model",
-            return_value=encoding,
-        ):
+        with patch("tiktoken.encoding_for_model", return_value=encoding):
             counter = TiktokenTokenCounter("test-model")
 
         invalid_messages = [
@@ -571,33 +563,30 @@ class TiktokenTokenCounterTests(unittest.TestCase):
         encoding = Mock()
         encoding.encode.side_effect = lambda value: list(value)
 
-        with patch(
-            "truecoder.agent.context.tiktoken.encoding_for_model",
-            return_value=encoding,
-        ):
+        with patch("tiktoken.encoding_for_model", return_value=encoding):
             counter = TiktokenTokenCounter("test-model")
 
-        tool_call_message = {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": "c1",
-                    "type": "function",
-                    "function": {"name": "rf", "arguments": "ARGS"},
-                }
-            ],
-        }
-        # Leaves: assistant(9) + c1(2) + function(8) + rf(2) + ARGS(4) = 25, plus 4 overhead.
-        self.assertEqual(counter.count_message(tool_call_message), 25 + 4)
+            tool_call_message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "rf", "arguments": "ARGS"},
+                    }
+                ],
+            }
+            # Leaves: assistant(9) + c1(2) + function(8) + rf(2) + ARGS(4) = 25, plus 4 overhead.
+            self.assertEqual(counter.count_message(tool_call_message), 25 + 4)
 
-        tool_result_message = {
-            "role": "tool",
-            "tool_call_id": "c1",
-            "content": "RESULT",
-        }
-        # Leaves: tool(4) + c1(2) + RESULT(6) = 12, plus 4 overhead.
-        self.assertEqual(counter.count_message(tool_result_message), 12 + 4)
+            tool_result_message = {
+                "role": "tool",
+                "tool_call_id": "c1",
+                "content": "RESULT",
+            }
+            # Leaves: tool(4) + c1(2) + RESULT(6) = 12, plus 4 overhead.
+            self.assertEqual(counter.count_message(tool_result_message), 12 + 4)
 
 
 if __name__ == "__main__":
