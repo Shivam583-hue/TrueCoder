@@ -340,6 +340,11 @@ class AuthorisationPromptTests(_Base):
                     lambda: isinstance(app.screen, AuthorisationScreen),
                     description="the authorisation screen",
                 )
+                await wait_until(
+                    pilot,
+                    lambda: bool(app.screen._compositor.render_strips()),
+                    description="the authorisation screen to render",
+                )
 
                 rendered = "".join(
                     "".join(segment.text for segment in strip)
@@ -348,6 +353,7 @@ class AuthorisationPromptTests(_Base):
 
                 self.assertFalse(app.screen.browser_opened)
                 self.assertIn(BROWSER_REFUSED[:24], rendered)
+                self.assertIn(pending.url, rendered)
 
                 app.screen.dismiss(False)
                 await pilot.pause()
