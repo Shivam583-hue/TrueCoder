@@ -65,7 +65,9 @@ Coming soon...
 - **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
 - **Switch models without restarting** - type `/models` to pick from everything your provider lists, filtered as you type and annotated with context windows. The list comes from the provider's own `/v1/models`, bounded like any other untrusted response, and cached for six hours so it never costs a request at launch. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type, and `/quit` (or `/exit`) closes TrueCoder exactly as `ctrl+q` does. The status line always names the model that will actually answer, not whatever `MODEL` happens to say in your `.env`.
 - **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit`, `/e` leaves `exit`, and `/mo` leaves `models` and `model`. Tab completes to the longest prefix the remaining matches share: `/q` becomes `/quit` outright, `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
-- **Two ways to authenticate** - an API key from the environment, or `/login` to authorise in your browser. The browser flow is OAuth 2.0 authorization code with PKCE, which is the correct grant for a program that cannot keep a secret: the verifier never leaves the process, the callback listens only on loopback for a single request, and a mismatched `state` is refused. Tokens are written privately in your config directory, `0600` on POSIX and ACL-restricted to your user on Windows, and are stripped from every child process environment by the same rule that strips any other credential.
+- **It asks for what the model needs** - pick a model whose provider you have no credential for and TrueCoder asks for it there and then, instead of accepting the choice and failing on your next message. Providers with an OAuth client get the browser flow; the rest get a masked prompt for an API key, which is saved privately so you only type it once. `/login` runs whichever of the two your provider supports, and `/logout` forgets both.
+- **A sign-in you can complete anywhere** - the browser opens automatically, and the screen still shows the full link with a copy button (`c`) and an open-again button, so a headless box, a remote shell, or a machine with no default browser is not a dead end. The link is safe to show: only the PKCE challenge travels in it, never the verifier. Closing the screen cancels the attempt and releases the loopback port immediately.
+- **Provider-aware authentication** - API keys can come from the environment or the masked prompt, while providers configured with OAuth use authorization code with PKCE. The verifier never leaves the process, the callback listens only on loopback for a single request, and a mismatched `state` is refused. Keys and tokens are written privately in your config directory, `0600` on POSIX and ACL-restricted to your user on Windows, and are stripped from every child process environment by the same rule that strips any other credential.
 - **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. With nobody watching, what may proceed is a configured decision rather than an accident: `--autonomy read-only|edit|full` sets a risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
 - **Scored, not vibed** - `truecoder --eval` runs a fixed set of tasks in throwaway workspaces and reports how many passed, so "did that change help?" has an answer. Each task asserts an outcome on disk rather than which calls were made.
 - **Delegation with a hard boundary** - `delegate` hands a self-contained subtask to a fresh agent that shares the workspace but starts with an empty conversation. Only its final reply crosses back, never its transcript, it cannot delegate again, and it is approval-gated like any other tool.
@@ -164,6 +166,7 @@ TrueCoder/
 │   │   ├── oauth.py                   # PKCE, the callback contract, and token lifetime
 │   │   ├── login.py                   # Loopback callback server and the browser round trip
 │   │   ├── store.py                   # The remembered model selection
+│   │   ├── keys.py                    # Private API key storage, one entry per provider
 │   │   └── tokens.py                  # Private token storage, one entry per provider
 │   ├── workspace.py                   # One containment rule for workspace-relative paths
 │   │
@@ -305,6 +308,7 @@ TrueCoder/
 │       ├── memory.py                  # Memory browser and deletion
 │       ├── commands.py                # Slash-command registry, prefix filtering, completion
 │       ├── model_picker.py            # Filterable model chooser
+│       ├── credentials.py             # Masked API key prompt and cancellable browser sign-in
 │       └── styles.tcss                # Terminal stylesheet
 │
 └── tests/
@@ -559,7 +563,7 @@ No route escapes audit.
 
 - **Python 3.10 or newer.** The current development environment uses 3.14.3.
 - **Git.** Project root discovery walks up to the nearest ancestor containing `.git`, and that root scopes both sessions and every filesystem tool. Git is also what backs workspace checkpoints; without it, checkpoints report themselves unavailable and everything else still works.
-- **An OpenAI-compatible LLM endpoint** with a base URL, API key, and model name.
+- **An OpenAI-compatible LLM endpoint** with a model name and either an API key or a configured OAuth client. Set a base URL when the provider default is not the endpoint you need.
 - **Linux, macOS, or Windows** for local shell execution. POSIX hosts use process groups and sessions; Windows uses a Job Object backend.
 - **A language server on `PATH`** only if you want code intelligence. TrueCoder discovers pyright, pylsp, jedi, typescript-language-server, rust-analyzer, gopls, and clangd; it installs none of them, and the tools refuse with `no_server` when none matches a file.
 - **Docker** only if you want the container sandbox or intend to run the sandbox test suite. Docker 29.3.0 is the version currently verified.
@@ -586,7 +590,9 @@ Create your provider configuration:
 cp .env.example .env
 ```
 
-Fill in `BASE_URL`, `API_KEY`, and `MODEL`, then launch:
+Fill in `MODEL` and, when needed, `BASE_URL`. You can set `API_KEY` now, or
+leave it empty and use `/login` in the interface to enter a key or start the
+configured browser flow. Then launch:
 
 ```bash
 truecoder
@@ -630,7 +636,7 @@ Copy `.env.example` and never commit the filled-in file.
 
 | Variable           | Required | Purpose                                                                                                             |
 | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- |
-| `API_KEY`          | Yes      | Credential for the LLM endpoint. The client raises at first use if it is missing.                                    |
+| `API_KEY`          | No       | Initial API credential for the LLM endpoint. A key saved through the interface outranks this value; leave it empty to enter one with `/login` or use a configured OAuth client. |
 | `MODEL`            | Until you pick one | Model to start with. A model chosen with `/models` is remembered and outranks this, so the TUI may correctly show a different one. Once a choice is stored, launching works with `MODEL` unset. |
 | `BASE_URL`         | No       | OpenAI-compatible endpoint. Omit it to use the provider default.                                                    |
 | `MAX_INPUT_TOKENS` | No       | Context budget for the system prompt plus selected turns. Defaults to `64000`. Lower it if your model's window is smaller. |
@@ -735,11 +741,19 @@ comes from and, when the provider publishes one, how to sign in with a browser:
 }
 ```
 
-With that in place, `/login` opens your browser, TrueCoder listens on a loopback
-port for the single redirect, verifies the `state` it issued, exchanges the code
-together with the PKCE verifier, and stores the result in `tokens.json` at mode
-`0600`. `/logout` forgets it. Both endpoints must be `https`, and parsing is strict
-and fail-closed in the same way as `hooks.json` and `mcp.json`.
+With that in place, `/login` opens your browser and also displays the complete
+authorization link with controls to copy it or open it again. TrueCoder listens
+on a loopback port for the single redirect, verifies the `state` it issued,
+exchanges the code together with the PKCE verifier, and stores the result in
+`tokens.json` at mode `0600`. Closing the sign-in screen cancels the wait and
+releases the callback port immediately. Both endpoints must be `https`, and
+parsing is strict and fail-closed in the same way as `hooks.json` and `mcp.json`.
+
+Without an OAuth client, `/login` asks for the provider's API key in a masked
+prompt and stores it privately in `keys.json`; choosing a model does the same
+whenever its provider has no usable credential. A stored key outranks `API_KEY`
+from the environment. `/logout` forgets both the stored token and stored key for
+the current provider.
 
 The `client_id` is yours to supply. TrueCoder ships no registered client for any
 provider, because whether a given provider permits a third-party client to use a
@@ -851,8 +865,9 @@ Update `container/image.lock` in the same commit, because discovery refuses an i
 | `truecoder -p "..."`                                 | Run one prompt without the interface                            |
 | `truecoder -p "..." --autonomy edit`                 | Allow file changes and medium-risk commands unattended          |
 | `truecoder --eval`                                   | Score the agent on the shipped tasks                            |
-| `/models` in the composer                            | Choose which model answers                                      |
-| `/login` in the composer                             | Authorise the current provider in your browser                  |
+| `/models` in the composer                            | Choose a model and collect its provider credential if needed    |
+| `/login` in the composer                             | Enter a key or authorise in a browser, as the provider requires |
+| `/logout` in the composer                            | Forget the current provider's stored key and OAuth token        |
 | `python -m unittest discover -s tests/sandbox -t .`  | Run the adversarial Docker sandbox suite                        |
 | `ruff check src tests container`                     | Lint source, tests, and the image entrypoint                    |
 | `docker build -t truecoder-exec:1 container/`        | Build the execution sandbox image                               |
@@ -920,6 +935,7 @@ Checkpoints are git objects and refs, so they live inside `.git` where the conte
 | Providers           | `<user config dir>/truecoder/providers.json`                | Optional base URLs and OAuth clients, strict and versioned         |
 | Model selection     | `<user config dir>/truecoder/settings.json`                 | The model chosen with `/models`, remembered across restarts        |
 | Authorisation       | `<user config dir>/truecoder/tokens.json`                   | OAuth tokens, one per provider, private to your user               |
+| API keys            | `<user config dir>/truecoder/keys.json`                     | Keys typed into the interface, one per provider, private to your user |
 | Model catalog       | `<user cache dir>/truecoder/models.json`                    | The provider's model list, refetched after six hours               |
 | Tokenizer           | `<user cache dir>/truecoder/tokenizers/`                    | The token encoding, downloaded once and reused for every launch    |
 | Checkpoints         | `refs/truecoder/checkpoints/*` inside the repository        | Workspace snapshots as git objects, pruned to the newest 25        |

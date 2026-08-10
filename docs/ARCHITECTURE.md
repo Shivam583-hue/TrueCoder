@@ -1825,6 +1825,50 @@ come from configuration, which keeps the mechanism general and leaves the questi
 of which providers permit a third-party client where it belongs, with the person
 reading that provider's terms.
 
+Opening a browser and waiting used to be one indivisible call, which meant the
+authorization URL existed only inside a function nobody could see into. That is
+fine until the browser does not open: a headless host, a remote shell, a sandboxed
+desktop, or simply a machine with no default handler leaves the user staring at a
+frozen interface with no way to reach the link they need. Starting the flow and
+finishing it are therefore separate steps. Beginning it binds the callback server
+and returns the URL; waiting on it is a second call. The interface can then show
+the link, offer to copy it, and offer to open it again, while the same callback
+server it already bound goes on listening.
+
+Showing the link makes cancellation a real state rather than a hang, so the wait
+and the dismissal race each other and whichever finishes first decides. A user who
+walks away closes the screen and the callback server is released immediately
+rather than holding a loopback port until it times out. The URL is safe to display
+because the verifier is not in it; only the challenge travels, which is exactly the
+property PKCE was designed to give.
+
+## Asking for what a model needs
+
+Choosing a model that cannot answer is a dead end the interface used to allow.
+Selection and credentials were independent, so picking a model from a provider you
+had never authenticated to succeeded quietly and failed on the next request, at
+which point the error came from the provider and named nothing the user could act
+on.
+
+Selection now asks. When the chosen provider has no usable credential, the flow
+that runs is the one that provider actually supports: a browser sign-in when an
+OAuth client is configured, and a prompt for an API key otherwise. Nothing is
+asked when a usable credential already exists, because a prompt that appears when
+it is not needed teaches people to dismiss prompts.
+
+A typed key is a credential like any other, so it is stored with the same
+discipline as a token: `0600` on POSIX, an explicit ACL on Windows, written to a
+temporary path inside the secured directory and moved into place. Resolution order
+mirrors the model rule: a key typed into the interface outranks `API_KEY` from the
+environment, because a choice made deliberately in the application is more recent
+than a file written once. The input is masked, and a key is never rendered, logged,
+or copied into an error message.
+
+`/login` and choosing a model reach the same code, so there is one answer to what
+this provider needs rather than two that can drift. `/logout` forgets every stored
+credential for the provider rather than only the token, because a "log out" that
+leaves a working key behind is not one.
+
 ## Design rules
 
 Keep these invariants stable as the codebase grows:
