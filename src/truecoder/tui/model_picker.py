@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import ClassVar, Final
 
 from textual import on
@@ -16,6 +17,34 @@ IDENTIFIER_COLUMN: Final = 38
 PROVIDER_COLUMN: Final = 14
 CONTEXT_COLUMN: Final = 6
 GAP: Final = "  "
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderInvite:
+    provider: str
+    oauth: bool = False
+
+    @property
+    def label(self) -> str:
+        verb = "Sign in to" if self.oauth else "Add a key for"
+        return f"  {verb} {self.provider} to list its models"
+
+    def matches(self, query: str) -> bool:
+        needle = query.strip().casefold()
+        return all(part in self.provider.casefold() for part in needle.split())
+
+
+class InviteListItem(ListItem):
+    def __init__(self, invitation: ProviderInvite) -> None:
+        self.invitation = invitation
+        super().__init__(classes="model-item invite")
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            self.invitation.label,
+            classes="model-item-line invite-line",
+            markup=False,
+        )
 
 
 class ModelListItem(ListItem):
@@ -44,7 +73,7 @@ class ModelListItem(ListItem):
         yield Static(self.line(), classes="model-item-line", markup=False)
 
 
-class ModelPickerScreen(ModalScreen[ModelInfo | None]):
+class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("escape", "cancel", "Close", show=False),
     ]
@@ -55,11 +84,13 @@ class ModelPickerScreen(ModalScreen[ModelInfo | None]):
         active_model: str,
         *,
         active_provider: str = "",
+        invitations: tuple[ProviderInvite, ...] = (),
         unavailable_reason: str | None = None,
     ) -> None:
         self.models = models
         self.active_model = active_model
         self.active_provider = active_provider
+        self.invitations = invitations
         self.unavailable_reason = unavailable_reason
         super().__init__()
 
@@ -74,6 +105,10 @@ class ModelPickerScreen(ModalScreen[ModelInfo | None]):
             return True
         return model.provider == self.active_provider
 
+    @property
+    def has_list(self) -> bool:
+        return bool(self.models or self.invitations)
+
     def compose(self) -> ComposeResult:
         with Vertical(id="model-picker-dialog"):
             yield Static("Models", classes="model-dialog-title")
@@ -83,9 +118,12 @@ class ModelPickerScreen(ModalScreen[ModelInfo | None]):
                     classes="model-dialog-empty",
                     markup=False,
                 )
-            else:
+            if self.has_list:
                 yield Input(placeholder="Filter", id="model-filter")
-                yield ListView(*self._items(self.models), id="model-list")
+                yield ListView(
+                    *self._items(self.models, self.invitations),
+                    id="model-list",
+                )
             yield Static(
                 "enter select   esc close",
                 classes="model-dialog-help",
@@ -104,9 +142,13 @@ class ModelPickerScreen(ModalScreen[ModelInfo | None]):
         )
         return identifiers, providers
 
-    def _items(self, models: tuple[ModelInfo, ...]) -> list[ModelListItem]:
+    def _items(
+        self,
+        models: tuple[ModelInfo, ...],
+        invitations: tuple[ProviderInvite, ...] = (),
+    ) -> list[ListItem]:
         identifiers, providers = self.columns()
-        return [
+        rows: list[ListItem] = [
             ModelListItem(
                 model,
                 active=self.is_active(model),
@@ -115,9 +157,11 @@ class ModelPickerScreen(ModalScreen[ModelInfo | None]):
             )
             for model in models[:MAX_VISIBLE_MODELS]
         ]
+        rows.extend(InviteListItem(invitation) for invitation in invitations)
+        return rows
 
     def on_mount(self) -> None:
-        if self.unavailable_reason is not None:
+        if not self.has_list:
             return
         model_list = self.query_one("#model-list", ListView)
         active_index = next(
@@ -134,25 +178,39 @@ class ModelPickerScreen(ModalScreen[ModelInfo | None]):
     def visible_models(self, query: str) -> tuple[ModelInfo, ...]:
         return tuple(model for model in self.models if model.matches(query))
 
+    def visible_invitations(self, query: str) -> tuple[ProviderInvite, ...]:
+        return tuple(
+            invitation
+            for invitation in self.invitations
+            if invitation.matches(query)
+        )
+
     @on(Input.Changed, "#model-filter")
     async def filter_models(self, event: Input.Changed) -> None:
         model_list = self.query_one("#model-list", ListView)
         await model_list.clear()
         matches = self.visible_models(event.value)
-        for item in self._items(matches):
+        rows = self._items(matches, self.visible_invitations(event.value))
+        for item in rows:
             await model_list.append(item)
-        model_list.index = 0 if matches else None
+        model_list.index = 0 if rows else None
 
     @on(Input.Submitted, "#model-filter")
     def choose_first_match(self, event: Input.Submitted) -> None:
         matches = self.visible_models(event.value)
         if matches:
             self.dismiss(matches[0])
+            return
+        invitations = self.visible_invitations(event.value)
+        if invitations:
+            self.dismiss(invitations[0])
 
     @on(ListView.Selected)
     def choose_model(self, event: ListView.Selected) -> None:
         if isinstance(event.item, ModelListItem):
             self.dismiss(event.item.model)
+        elif isinstance(event.item, InviteListItem):
+            self.dismiss(event.item.invitation)
 
     def action_cancel(self) -> None:
         self.dismiss(None)

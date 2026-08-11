@@ -1189,6 +1189,11 @@ ExecutionCard.expanded .execution-details {
     text-style: bold;
 }
 
+.invite-line {
+    color: $tc-text-muted;
+    text-style: italic;
+}
+
 .model-item-line {
     width: 100%;
     color: $tc-text-secondary;

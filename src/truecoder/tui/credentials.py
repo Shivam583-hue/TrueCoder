@@ -15,7 +15,7 @@ from truecoder.providers.models import DEFAULT_PROVIDER_NAME
 WAITING_MESSAGE: Final = "Waiting for you to finish in the browser..."
 COPIED_MESSAGE: Final = "Link copied to the clipboard."
 BROWSER_OPENED: Final = "A browser tab should have opened."
-BROWSER_REFUSED: Final = "No browser could be opened, so use the link above."
+BROWSER_REFUSED: Final = "No browser could be opened, so copy the link instead."
 NOTE_WITH_BROWSER: Final = (
     "A browser tab should have opened; this link works from any browser."
 )

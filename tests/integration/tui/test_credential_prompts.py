@@ -101,7 +101,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         )
         return TrueCoderApp(agent)
 
-    async def _pick(self, app, pilot, model: ModelInfo | None = None) -> None:
+    async def _pick(self, app, pilot, model=None) -> None:
         app.query_one(PromptInput).text = "/models"
         await pilot.press("enter")
         await wait_until(
@@ -328,6 +328,93 @@ class CrossProviderTests(_Base):
                 self.assertEqual(settings.provider.name, "brio")
                 self.assertEqual(settings.credential, ApiKey("sk-brio"))
                 self.assertNotIsInstance(app.screen, ApiKeyScreen)
+
+    async def test_a_provider_that_cannot_list_anything_still_offers_a_sign_in(self):
+        from truecoder.providers.catalog import CatalogError
+
+        self._configure(brio_oauth=True)
+        app = self._app(_settings(credential=ApiKey("sk-acme")))
+
+        async def listing(provider, credential, *, refresh=False):
+            if provider.name == "brio":
+                raise CatalogError("the provider returned 401")
+            return (ModelInfo(identifier="acme/starter", provider="acme"),)
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch(
+                "truecoder.providers.catalog.load_models",
+                side_effect=listing,
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                app.query_one(PromptInput).text = "/models"
+                await pilot.press("enter")
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ModelPickerScreen),
+                    description="the model picker",
+                )
+
+                invitations = app.screen.invitations
+                self.assertEqual([invite.provider for invite in invitations], ["brio"])
+                self.assertTrue(invitations[0].oauth)
+                self.assertIn("Sign in to brio", invitations[0].label)
+
+                app.screen.dismiss(None)
+                await pilot.pause()
+
+    async def test_accepting_an_invitation_signs_in_and_reopens_the_picker(self):
+        from truecoder.providers.catalog import CatalogError
+        from truecoder.tui.model_picker import ProviderInvite
+
+        self._configure(brio_oauth=True)
+        app = self._app(_settings(credential=ApiKey("sk-acme")))
+        pending = _pending_login()
+        signed_in = False
+
+        async def listing(provider, credential, *, refresh=False):
+            if provider.name == "brio":
+                if not signed_in:
+                    raise CatalogError("the provider returned 401")
+                return (ModelInfo(identifier="brio/large", provider="brio"),)
+            return (ModelInfo(identifier="acme/starter", provider="acme"),)
+
+        async def begin(client, *, provider=""):
+            return pending
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", side_effect=listing),
+            patch("truecoder.providers.login.begin_login", side_effect=begin),
+            patch("truecoder.providers.login.open_in_browser", return_value=True),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot, ProviderInvite("brio", oauth=True))
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, AuthorisationScreen),
+                    description="the authorisation screen",
+                )
+
+                self.assertEqual(app.agent.llm_client.settings.provider.name, "brio")
+
+                signed_in = True
+                pending.token.set_result(
+                    OAuthToken(access_token="at-brio", provider="brio")
+                )
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ModelPickerScreen),
+                    description="the picker to reopen",
+                )
+
+                listed = [model.identifier for model in app.screen.models]
+                self.assertIn("brio/large", listed)
+                self.assertEqual(app.screen.invitations, ())
+
+                app.screen.dismiss(None)
+                await pilot.pause()
 
     async def test_an_oauth_provider_starts_a_sign_in_rather_than_a_key_prompt(self):
         self._configure(brio_oauth=True)

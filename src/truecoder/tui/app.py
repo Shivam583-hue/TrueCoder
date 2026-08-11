@@ -57,7 +57,7 @@ from truecoder.tui.execution_view import (
     is_terminal_stage,
 )
 from truecoder.tui.memory import MemoryAction, MemoryBrowserScreen
-from truecoder.tui.model_picker import ModelPickerScreen
+from truecoder.tui.model_picker import ModelPickerScreen, ProviderInvite
 from truecoder.tui.sessions import (
     DeleteSessionScreen,
     RenameSessionScreen,
@@ -131,6 +131,10 @@ def _package_version() -> str:
         return version("truecoder")
     except PackageNotFoundError:
         return "0.1.0"
+
+
+def _usable(credential) -> bool:
+    return credential is not None and credential.is_usable
 
 
 def _git_branch(workspace: str) -> str | None:
@@ -391,9 +395,14 @@ class TrueCoderApp(App[None]):
 
         slices = await load_catalog(providers, credentials, refresh=refresh)
         models = merge_models(slices)
-        reason = catalog_problem(slices)
+        invitations = self._invitations(slices, credentials)
+        invited = {invitation.provider for invitation in invitations}
 
-        silent = [entry.provider.name for entry in slices if entry.reason is not None]
+        silent = [
+            entry.provider.name
+            for entry in slices
+            if entry.reason is not None and entry.provider.name not in invited
+        ]
         if models and silent:
             self.notify(
                 f"No models listed for {', '.join(silent)}.",
@@ -406,9 +415,25 @@ class TrueCoderApp(App[None]):
                 models,
                 settings.model,
                 active_provider=settings.provider.name,
-                unavailable_reason=reason,
+                invitations=invitations,
+                unavailable_reason=catalog_problem(slices),
             ),
             self._apply_model_choice,
+        )
+
+    @staticmethod
+    def _invitations(slices, credentials) -> tuple[ProviderInvite, ...]:
+        missing = [
+            entry
+            for entry in slices
+            if not entry.models and not _usable(credentials.get(entry.provider.name))
+        ]
+        return tuple(
+            ProviderInvite(
+                entry.provider.name,
+                oauth=entry.provider.oauth is not None,
+            )
+            for entry in missing
         )
 
     def _provider_named(self, name: str):
@@ -427,8 +452,11 @@ class TrueCoderApp(App[None]):
             current,
         )
 
-    def _apply_model_choice(self, choice: ModelInfo | None) -> None:
+    def _apply_model_choice(self, choice: ModelInfo | ProviderInvite | None) -> None:
         if choice is None:
+            return
+        if isinstance(choice, ProviderInvite):
+            self.run_worker(self._accept_invitation(choice), exclusive=False)
             return
         from truecoder.providers.models import stored_credential
         from truecoder.providers.store import StoredSelection, save_selection
@@ -460,18 +488,26 @@ class TrueCoderApp(App[None]):
         self.run_worker(self._collect_credential(), exclusive=False)
 
     def needs_credential(self) -> bool:
-        settings = self.agent.llm_client.settings
-        credential = settings.credential
-        return credential is None or not credential.is_usable
+        return not _usable(self.agent.llm_client.settings.credential)
 
-    async def _collect_credential(self) -> None:
+    async def _accept_invitation(self, invitation: ProviderInvite) -> None:
+        from truecoder.providers.models import stored_credential
+
+        settings = self.agent.llm_client.settings
+        provider = self._provider_named(invitation.provider)
+        if provider.name != settings.provider.name:
+            settings.use(provider, stored_credential(provider.name))
+        if not await self._collect_credential():
+            return
+        await self._choose_model(refresh=True)
+
+    async def _collect_credential(self) -> bool:
         settings = self.agent.llm_client.settings
         if settings.provider.oauth is not None:
-            await self._authorise_provider()
-            return
-        await self._ask_for_api_key()
+            return await self._authorise_provider()
+        return await self._ask_for_api_key()
 
-    async def _ask_for_api_key(self) -> None:
+    async def _ask_for_api_key(self) -> bool:
         from truecoder.providers.keys import store_key
         from truecoder.providers.models import ApiKey, CredentialError
 
@@ -485,13 +521,13 @@ class TrueCoderApp(App[None]):
                 severity="warning",
                 timeout=10,
             )
-            return
+            return False
 
         try:
             key = ApiKey(typed)
         except CredentialError as error:
             self.notify(f"That key was refused: {error}", severity="error")
-            return
+            return False
 
         settings.use(settings.provider, key)
         if store_key(settings.provider.name, key):
@@ -501,8 +537,9 @@ class TrueCoderApp(App[None]):
                 "The key works for this session, but it could not be saved.",
                 severity="warning",
             )
+        return True
 
-    async def _authorise_provider(self) -> None:
+    async def _authorise_provider(self) -> bool:
         from truecoder.providers.login import begin_login, open_in_browser
         from truecoder.providers.oauth import OAuthError
         from truecoder.providers.tokens import store_token
@@ -516,13 +553,13 @@ class TrueCoderApp(App[None]):
                 severity="warning",
                 timeout=12,
             )
-            return
+            return False
 
         try:
             pending = await begin_login(client, provider=settings.provider.name)
         except OAuthError as error:
             self.notify(f"Authorisation failed: {error}", severity="error", timeout=12)
-            return
+            return False
 
         opened = open_in_browser(pending.url)
         await self._note_sign_in(settings.provider.name, pending.url, opened=opened)
@@ -538,13 +575,13 @@ class TrueCoderApp(App[None]):
             token = await self._await_authorisation(waiting, cancelled, screen)
         except OAuthError as error:
             self.notify(f"Authorisation failed: {error}", severity="error", timeout=12)
-            return
+            return False
         finally:
             await pending.close()
 
         if token is None:
             self.notify("Authorisation cancelled.", severity="warning")
-            return
+            return False
 
         settings.use(settings.provider, token)
         if store_token(token):
@@ -554,6 +591,7 @@ class TrueCoderApp(App[None]):
                 "Signed in, but the token could not be saved.",
                 severity="warning",
             )
+        return True
 
     async def _note_sign_in(self, provider: str, url: str, *, opened: bool) -> None:
         from truecoder.tui.credentials import (
