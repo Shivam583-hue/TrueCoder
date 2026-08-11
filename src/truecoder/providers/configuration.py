@@ -80,6 +80,16 @@ def load_providers(path: Path | None = None) -> tuple[Provider, ...]:
         return ()
 
 
+def selectable_providers(
+    current: Provider,
+    path: Path | None = None,
+) -> tuple[Provider, ...]:
+    configured = load_providers(path)
+    if any(provider.name == current.name for provider in configured):
+        return configured
+    return (current, *configured)
+
+
 def _provider(entry: object) -> Provider:
     if not isinstance(entry, dict):
         raise ProviderConfigError("each provider must be a JSON object")

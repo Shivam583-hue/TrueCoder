@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
@@ -10,6 +13,7 @@ from platformdirs import user_cache_path
 from truecoder.providers.models import (
     MAX_MODEL_ID_CHARACTERS,
     MAX_MODEL_NAME_CHARACTERS,
+    Credential,
     ModelInfo,
     Provider,
 )
@@ -18,6 +22,8 @@ MAX_MODELS: Final = 1000
 MAX_RESPONSE_BYTES: Final = 4 * 1024 * 1024
 CACHE_TTL_SECONDS: Final = 6 * 60 * 60
 REQUEST_TIMEOUT_SECONDS: Final = 20.0
+MAX_SLUG_CHARACTERS: Final = 40
+EMPTY_CATALOG_REASON: Final = "the provider listed no models"
 
 _CONTEXT_KEYS: Final = (
     "context_length",
@@ -31,8 +37,18 @@ class CatalogError(RuntimeError):
     pass
 
 
-def default_catalog_path() -> Path:
-    return user_cache_path("truecoder", appauthor=False) / "models.json"
+def catalog_slug(provider: str) -> str:
+    readable = "".join(
+        character if character.isalnum() or character in "-_" else "-"
+        for character in provider.strip()
+    )
+    digest = hashlib.sha256(provider.encode("utf-8")).hexdigest()[:8]
+    return f"{readable[:MAX_SLUG_CHARACTERS]}-{digest}"
+
+
+def catalog_path_for(provider: str) -> Path:
+    root = user_cache_path("truecoder", appauthor=False) / "models"
+    return root / f"{catalog_slug(provider)}.json"
 
 
 def _bounded(value: object, limit: int) -> str:
@@ -173,6 +189,14 @@ def write_cache(
         return
 
 
+def bearer_token(credential: Credential | None) -> str:
+    if credential is None:
+        return ""
+    options = credential.client_options()
+    secret = options.get("api_key", "") if isinstance(options, dict) else ""
+    return secret if isinstance(secret, str) else ""
+
+
 async def fetch_models(
     provider: Provider,
     credential,
@@ -182,8 +206,9 @@ async def fetch_models(
     import httpx
 
     headers = {"Accept": "application/json"}
-    if credential is not None:
-        headers["Authorization"] = f"Bearer {credential.value}"
+    secret = bearer_token(credential)
+    if secret:
+        headers["Authorization"] = f"Bearer {secret}"
 
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
@@ -212,7 +237,7 @@ async def load_models(
     path: Path | None = None,
     refresh: bool = False,
 ) -> tuple[ModelInfo, ...]:
-    target = path or default_catalog_path()
+    target = path or catalog_path_for(provider.name)
 
     if not refresh:
         cached = read_cache(target)
@@ -223,3 +248,58 @@ async def load_models(
     if models:
         write_cache(target, models)
     return models
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSlice:
+    provider: Provider
+    models: tuple[ModelInfo, ...] = ()
+    reason: str | None = None
+
+
+async def _slice_for(
+    provider: Provider,
+    credential: Credential | None,
+    *,
+    refresh: bool,
+) -> CatalogSlice:
+    try:
+        models = await load_models(provider, credential, refresh=refresh)
+    except CatalogError as error:
+        return CatalogSlice(provider, (), str(error))
+    if not models:
+        return CatalogSlice(provider, (), EMPTY_CATALOG_REASON)
+    return CatalogSlice(provider, models)
+
+
+async def load_catalog(
+    providers: tuple[Provider, ...],
+    credentials: dict[str, Credential | None],
+    *,
+    refresh: bool = False,
+) -> tuple[CatalogSlice, ...]:
+    gathered = await asyncio.gather(
+        *(
+            _slice_for(provider, credentials.get(provider.name), refresh=refresh)
+            for provider in providers
+        )
+    )
+    return tuple(gathered)
+
+
+def merge_models(slices: tuple[CatalogSlice, ...]) -> tuple[ModelInfo, ...]:
+    listed = [model for entry in slices for model in entry.models]
+    return tuple(
+        sorted(listed, key=lambda model: (model.provider, model.identifier))
+    )
+
+
+def catalog_problem(slices: tuple[CatalogSlice, ...]) -> str | None:
+    if any(entry.models for entry in slices):
+        return None
+    reasons = [entry for entry in slices if entry.reason is not None]
+    if not reasons:
+        return EMPTY_CATALOG_REASON
+    if len(reasons) == 1:
+        return reasons[0].reason
+    return "; ".join(f"{entry.provider.name}: {entry.reason}" for entry in reasons)

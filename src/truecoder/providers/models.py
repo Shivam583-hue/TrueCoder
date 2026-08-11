@@ -99,7 +99,7 @@ class ModelInfo:
         needle = query.strip().casefold()
         if not needle:
             return True
-        haystack = f"{self.identifier} {self.display_name}".casefold()
+        haystack = f"{self.identifier} {self.display_name} {self.provider}".casefold()
         return all(part in haystack for part in needle.split())
 
 
@@ -169,11 +169,19 @@ def settings_from_environment(
     )
 
 
+def stored_credential(provider: str) -> Credential | None:
+    from truecoder.providers.keys import load_keys
+    from truecoder.providers.tokens import load_tokens
+
+    token = load_tokens().get(provider)
+    if token is not None and token.is_usable:
+        return token
+    return load_keys().get(provider)
+
+
 def resolve_settings() -> SessionSettings:
     from truecoder.providers.configuration import load_providers
-    from truecoder.providers.keys import load_keys
     from truecoder.providers.store import load_selection
-    from truecoder.providers.tokens import load_tokens
 
     stored = load_selection()
     settings = settings_from_environment(stored_model=stored.model)
@@ -183,12 +191,7 @@ def resolve_settings() -> SessionSettings:
     if chosen is not None:
         settings.provider = chosen
 
-    key = load_keys().get(settings.provider.name)
-    if key is not None:
-        settings.credential = key
-
-    tokens = load_tokens()
-    token = tokens.get(settings.provider.name)
-    if token is not None and token.is_usable:
-        settings.credential = token
+    remembered = stored_credential(settings.provider.name)
+    if remembered is not None:
+        settings.credential = remembered
     return settings
