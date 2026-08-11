@@ -1779,6 +1779,29 @@ disk with a timestamp and a six-hour lifetime, because this is a network call an
 it must not happen at launch or on a keystroke. A cache that is corrupt, truncated,
 or stale is ignored rather than repaired.
 
+A list covering one provider can only ever offer one provider's models, which
+makes the picker a list of names rather than a place to decide where an answer
+comes from. Every configured provider is asked instead, each with its own stored
+credential, and the answers are merged and labelled. One provider failing is that
+provider failing, not the list failing: its reason stays beside its own entry, the
+providers that answered are still shown, and only a list empty everywhere reports
+why. Caches are per provider for the same reason, since a single shared file would
+mean refreshing one discards the rest.
+
+A chosen model therefore carries the provider it came from. Selecting it switches
+to that provider, adopts whatever credential is already stored for it, and records
+both, which is what the stored selection format always allowed and nothing yet
+wrote. Two providers may offer the same identifier, so the active row is the one
+whose provider matches as well; without that the marker lands on the wrong row the
+moment two catalogs overlap.
+
+The provider column appears only when more than one provider contributed, because
+a column repeating the same value on every row is noise. Rows are padded to widths
+computed from the data rather than joined with fixed spacing, so identifiers,
+providers, and context windows line up down the list. A row too wide for a narrow
+terminal is clipped with an ellipsis rather than wrapped, since a wrapped row turns
+a list into paragraphs and costs more than the character it saves.
+
 ## Commands typed into the composer
 
 Anything beginning with a slash is intercepted before it reaches the agent. That
@@ -1872,6 +1895,13 @@ rather than holding a loopback port until it times out. The URL is safe to displ
 because the verifier is not in it; only the challenge travels, which is exactly the
 property PKCE was designed to give.
 
+The link also lands in the transcript, not only in the dialog. A modal is the right
+place to wait and the wrong place to keep something: dismissing it, or finishing in
+the browser, takes the URL with it, and anyone who meant to open it on a different
+machine would have to restart the flow just to read it again. The note stays in the
+scrollback where it can be selected with the mouse, and a new conversation clears
+it along with everything else.
+
 ## Asking for what a model needs
 
 Choosing a model that cannot answer is a dead end the interface used to allow.
@@ -1899,6 +1929,16 @@ or copied into an error message.
 this provider needs rather than two that can drift. `/logout` forgets every stored
 credential for the provider rather than only the token, because a "log out" that
 leaves a working key behind is not one.
+
+Most providers will not list their models to an anonymous request, which makes the
+obvious design circular: no model can be picked before signing in, and signing in
+is reached by picking a model. A provider that returned nothing and holds no usable
+credential is therefore offered as a row of its own, so the step that is missing is
+the thing that can be selected. Accepting it switches to that provider, runs the
+flow that provider supports, and reopens the list, which is populated by then. A
+provider that returned nothing while holding a usable credential is a different
+fact and is reported as a warning instead, because that is a failure rather than a
+missing step, and offering to sign in again would not fix it.
 
 ## Design rules
 

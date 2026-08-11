@@ -63,10 +63,10 @@ Coming soon...
 - **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
 - **Policy-evaluated execution** - ordered rules classify read-only, test, build, package, network, deletion, permission, Git, script, and unknown commands, and requested limits can only tighten the configured ceiling.
 - **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
-- **Switch models without restarting** - type `/models` to pick from everything your provider lists, filtered as you type and annotated with context windows. The list comes from the provider's own `/v1/models`, bounded like any other untrusted response, and cached for six hours so it never costs a request at launch. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type, and `/quit` (or `/exit`) closes TrueCoder exactly as `ctrl+q` does. The status line always names the model that will actually answer, not whatever `MODEL` happens to say in your `.env`.
+- **Switch models without restarting** - type `/models` to pick from everything your providers list, filtered as you type and annotated with context windows. Every configured provider is asked with its own credential and the results are merged into one aligned list, so choosing a model also chooses where it comes from; a provider that is unreachable takes only its own rows with it. The lists come from each provider's own `/v1/models`, bounded like any other untrusted response, and cached per provider for six hours so they never cost a request at launch. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type, and `/quit` (or `/exit`) closes TrueCoder exactly as `ctrl+q` does. The status line always names the model that will actually answer, not whatever `MODEL` happens to say in your `.env`.
 - **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit`, `/e` leaves `exit`, and `/mo` leaves `models` and `model`. Tab completes to the longest prefix the remaining matches share: `/q` becomes `/quit` outright, `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
-- **It asks for what the model needs** - pick a model whose provider you have no credential for and TrueCoder asks for it there and then, instead of accepting the choice and failing on your next message. Providers with an OAuth client get the browser flow; the rest get a masked prompt for an API key, which is saved privately so you only type it once. `/login` runs whichever of the two your provider supports, and `/logout` forgets both.
-- **A sign-in you can complete anywhere** - the browser opens automatically, and the screen still shows the full link with a copy button (`c`) and an open-again button, so a headless box, a remote shell, or a machine with no default browser is not a dead end. The link is safe to show: only the PKCE challenge travels in it, never the verifier. Closing the screen cancels the attempt and releases the loopback port immediately.
+- **It asks for what the model needs** - pick a model whose provider you have no credential for and TrueCoder asks for it there and then, instead of accepting the choice and failing on your next message. Providers with an OAuth client get the browser flow; the rest get a masked prompt for an API key, which is saved privately so you only type it once. A provider that will not list its models until you authenticate appears in `/models` as a row of its own, so signing in is something you can select rather than something you had to already know. `/login` runs whichever of the two your provider supports, and `/logout` forgets both.
+- **A sign-in you can complete anywhere** - the browser opens automatically, and the screen still shows the full link with a copy button (`c`) and an open-again button, so a headless box, a remote shell, or a machine with no default browser is not a dead end. The link is also written into the transcript, where it stays selectable after the dialog closes. The link is safe to show: only the PKCE challenge travels in it, never the verifier. Closing the screen cancels the attempt and releases the loopback port immediately.
 - **Provider-aware authentication** - API keys can come from the environment or the masked prompt, while providers configured with OAuth use authorization code with PKCE. The verifier never leaves the process, the callback listens only on loopback, only the first callback determines the result, and a mismatched `state` is refused. Keys and tokens are written privately in your config directory, `0600` on POSIX and ACL-restricted to your user and LocalSystem on Windows. Stored credentials are never inserted into child environments, and inherited credential-shaped variables are stripped.
 - **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. With nobody watching, what may proceed is a configured decision rather than an accident: `--autonomy read-only|edit|full` sets a risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
 - **Scored, not vibed** - `truecoder --eval` runs a fixed set of tasks in throwaway workspaces and reports how many passed, so "did that change help?" has an answer. Each task asserts an outcome on disk rather than which calls were made.
@@ -161,7 +161,7 @@ TrueCoder/
 │   │
 │   ├── providers/                     # Where a model and its credentials come from
 │   │   ├── models.py                  # Credentials, providers, and the active selection
-│   │   ├── catalog.py                 # Bounded model discovery with a cached TTL
+│   │   ├── catalog.py                 # Bounded model discovery across providers, cached per provider
 │   │   ├── configuration.py           # Strict providers.json, fail-closed
 │   │   ├── oauth.py                   # PKCE, the callback contract, and token lifetime
 │   │   ├── login.py                   # Loopback callback server and the browser round trip
@@ -307,7 +307,7 @@ TrueCoder/
 │       ├── changes.py                 # What this turn changed on disk
 │       ├── memory.py                  # Memory browser and deletion
 │       ├── commands.py                # Slash-command registry, prefix filtering, completion
-│       ├── model_picker.py            # Filterable model chooser
+│       ├── model_picker.py            # Filterable chooser across providers, with sign-in rows
 │       ├── credentials.py             # Masked API key prompt and cancellable browser sign-in
 │       └── styles.tcss                # Terminal stylesheet
 │
@@ -390,16 +390,16 @@ Tools never depend on the agent, client, or UI, and the UI never contains agent 
 
 ## Engineering scorecard
 
-Local figures below were measured on 10 August 2026 from this working tree, on Linux with Python 3.14.3 and Docker 29.3.0.
+Local figures below were measured on 11 August 2026 from this working tree, on Linux with Python 3.14.3 and Docker 29.3.0.
 Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macOS, and Windows.
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **38,776** across 169 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,435 lines**, 50% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 4,284, the agent is 2,885, providers are 1,587, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, the client is 460, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
-| Test lines                 |                      **40,706** across 218 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.05 to 1.                                       |
-| Automated scenarios        |                      **2,309**, locally clean   | 2,013 unit, 205 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,296 pass and 13 Windows-only scenarios skip.                     |
-| Unit suite                 |                  **2,013 passing in 25.8 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **39,111** across 169 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,435 lines**, 50% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 4,508, the agent is 2,885, providers are 1,698, MCP is 957, LSP is 951, checkpoints are 735, web is 655, sessions are 518, the client is 460, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
+| Test lines                 |                      **41,308** across 219 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.06 to 1.                                       |
+| Automated scenarios        |                      **2,339**, locally clean   | 2,031 unit, 217 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,329 pass and 13 Windows-only scenarios skip.                     |
+| Unit suite                 |                  **2,031 passing in 23.7 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | End-to-end suite           |                                 **28 passing** | A scripted model drives a real agent with real tools against a real workspace, asserting what changed on disk, which backend ran, and that results reached the model intact. |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
@@ -761,6 +761,12 @@ whenever its provider has no usable credential. A stored key outranks `API_KEY`
 from the environment. `/logout` forgets both the stored token and stored key for
 the current provider.
 
+Every provider listed here is offered in `/models`, each queried with its own
+stored credential, so choosing a model also chooses where it comes from. A
+provider that will not list its models until you authenticate is not a dead end:
+it appears as a row of its own, and selecting it signs you in and reopens the list
+with its models in it.
+
 The `client_id` is yours to supply. TrueCoder ships no registered client for any
 provider, because whether a given provider permits a third-party client to use a
 given account is that provider's decision and worth reading their terms for. API
@@ -949,7 +955,7 @@ Checkpoints are git objects and refs, so they live inside `.git` where the conte
 | Model selection     | `<user config dir>/truecoder/settings.json`                 | The model chosen with `/models`, remembered across restarts        |
 | Authorisation       | `<user config dir>/truecoder/tokens.json`                   | OAuth tokens, one per provider, private to your user               |
 | API keys            | `<user config dir>/truecoder/keys.json`                     | Keys typed into the interface, one per provider, private to your user |
-| Model catalog       | `<user cache dir>/truecoder/models.json`                    | The provider's model list, refetched after six hours               |
+| Model catalog       | `<user cache dir>/truecoder/models/<provider>.json`         | One model list per provider, refetched after six hours             |
 | Tokenizer           | `<user cache dir>/truecoder/tokenizers/`                    | The token encoding, downloaded once and reused for every launch    |
 | Checkpoints         | `refs/truecoder/checkpoints/*` inside the repository        | Workspace snapshots as git objects, pruned to the newest 25        |
 | Execution policy    | `<user config dir>/truecoder/execution.json`                | Optional operator ceilings and backend settings                    |
