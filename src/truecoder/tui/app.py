@@ -507,13 +507,17 @@ class TrueCoderApp(App[None]):
             return await self._authorise_provider(target)
         return await self._ask_for_api_key(target)
 
-    async def _ask_for_api_key(self, provider=None) -> bool:
+    async def _ask_for_api_key(self, provider=None, *, reason: str = "") -> bool:
         from truecoder.providers.keys import store_key
         from truecoder.providers.models import ApiKey, CredentialError
 
         target = provider or self.agent.llm_client.settings.provider
         typed = await self.push_screen_wait(
-            ApiKeyScreen(target.name, "" if provider is not None else self._model_name)
+            ApiKeyScreen(
+                target.name,
+                "" if provider is not None else self._model_name,
+                reason,
+            )
         )
         if not typed:
             self.notify(
@@ -785,6 +789,7 @@ class TrueCoderApp(App[None]):
         finish_reason: str | None = None
         completed = False
         outcome = "ready"
+        repair = ""
 
         try:
             async for event in self.agent.run(prompt):
@@ -873,12 +878,18 @@ class TrueCoderApp(App[None]):
                                 severity="error",
                             )
                 elif event.type == AgentEventType.AGENT_ERROR:
-                    await assistant_message.show_error(
-                        str(
-                            event.data.get("error")
-                            or "The request failed without an error message."
-                        )
+                    reported = str(
+                        event.data.get("error")
+                        or "The request failed without an error message."
                     )
+                    details = event.data.get("details")
+                    kind = str(
+                        details.get("kind", "") if isinstance(details, dict) else ""
+                    )
+                    await assistant_message.show_error(
+                        self._explained_failure(reported, kind)
+                    )
+                    repair = kind
                     outcome = "error"
                     break
 
@@ -908,6 +919,37 @@ class TrueCoderApp(App[None]):
             self._set_busy(False)
             self._scroll_to_latest()
             self.query_one(PromptInput).focus()
+            self._repair_credential(repair)
+
+    def _provider_uses_oauth(self) -> bool:
+        from truecoder.providers.models import CredentialError
+
+        try:
+            return self.agent.llm_client.settings.provider.oauth is not None
+        except (RuntimeError, CredentialError):
+            return False
+
+    def _explained_failure(self, reported: str, kind: str) -> str:
+        from truecoder.client.failures import remedy
+
+        advice = remedy(kind, oauth=self._provider_uses_oauth())
+        return f"{reported}\n\n{advice}" if advice else reported
+
+    def _repair_credential(self, kind: str) -> None:
+        from truecoder.client.failures import CREDENTIAL
+
+        if kind != CREDENTIAL or self._provider_uses_oauth():
+            return
+        self.run_worker(self._replace_rejected_key(), exclusive=False)
+
+    async def _replace_rejected_key(self) -> None:
+        from truecoder.client.failures import named
+
+        provider = self.agent.llm_client.settings.provider
+        await self._ask_for_api_key(
+            provider,
+            reason=f"{named(provider.name)} rejected the key in use. Enter another.",
+        )
 
     async def _request_tool_approval(
         self,

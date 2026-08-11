@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from truecoder.client.failures import ProviderFailure
 from truecoder.tools.base import ToolCall
 
 
@@ -54,3 +55,4 @@ class StreamEvent:
     tool_calls: tuple[ToolCall, ...] = ()
     finish_reason: str | None = None
     usage: TokenUsage | None = None
+    failure: ProviderFailure | None = None

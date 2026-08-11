@@ -15,6 +15,12 @@ from openai import (
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.completion_usage import CompletionUsage
 
+from truecoder.client.failures import (
+    ProviderFailure,
+    classify_exception,
+    timed_out,
+    unreachable,
+)
 from truecoder.client.response import (
     EventType,
     StreamEvent,
@@ -131,62 +137,60 @@ class LLMClient:
                     yield await self._non_stream_response(client, request)
                 return
             except RateLimitError as error:
-                if stream_started:
-                    yield StreamEvent(
-                        type=EventType.ERROR,
-                        error=f"Rate limit error while streaming: {error}",
-                    )
-                    return
-
-                if attempt < self._max_retries:
+                if not stream_started and attempt < self._max_retries:
                     await asyncio.sleep(2**attempt)
                     continue
-
-                yield StreamEvent(
-                    type=EventType.ERROR,
-                    error=f"Rate limit exceeded: {error}",
-                )
+                yield self._failure_event(error, partial=stream_started)
                 return
-            except APITimeoutError as error:
-                if stream_started:
-                    yield StreamEvent(
-                        type=EventType.ERROR,
-                        error=f"Request timed out while streaming: {error}",
-                    )
-                    return
-
-                if attempt < self._max_retries:
+            except APITimeoutError:
+                if not stream_started and attempt < self._max_retries:
                     await asyncio.sleep(2**attempt)
                     continue
-
-                yield StreamEvent(
-                    type=EventType.ERROR,
-                    error=f"Request timed out: {error}",
-                )
+                yield self._reported(timed_out(self._provider_name(), partial=stream_started))
                 return
             except APIConnectionError as error:
-                if stream_started:
-                    yield StreamEvent(
-                        type=EventType.ERROR,
-                        error=f"Connection error while streaming: {error}",
-                    )
-                    return
-
-                if attempt < self._max_retries:
+                if not stream_started and attempt < self._max_retries:
                     await asyncio.sleep(2**attempt)
                     continue
-
-                yield StreamEvent(
-                    type=EventType.ERROR,
-                    error=f"Connection error: {error}",
+                yield self._reported(
+                    unreachable(
+                        self._provider_name(),
+                        str(error),
+                        partial=stream_started,
+                    )
                 )
                 return
             except APIError as error:
-                yield StreamEvent(
-                    type=EventType.ERROR,
-                    error=f"API error: {error}",
-                )
+                yield self._failure_event(error, partial=stream_started)
                 return
+
+    def _provider_name(self) -> str:
+        try:
+            return self.settings.provider.name
+        except (RuntimeError, CredentialError):
+            return ""
+
+    def _failure_event(self, error: object, *, partial: bool) -> StreamEvent:
+        try:
+            model = self.settings.model
+        except (RuntimeError, CredentialError):
+            model = ""
+        return self._reported(
+            classify_exception(
+                error,
+                provider=self._provider_name(),
+                model=model,
+                partial=partial,
+            )
+        )
+
+    @staticmethod
+    def _reported(failure: ProviderFailure) -> StreamEvent:
+        return StreamEvent(
+            type=EventType.ERROR,
+            error=failure.message,
+            failure=failure,
+        )
 
     async def _stream_response(
         self,

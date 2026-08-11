@@ -407,8 +407,12 @@ class Agent:
                     tool_calls = event.tool_calls
                     completed = True
                 elif event.type == EventType.ERROR:
+                    failure = event.failure
                     yield AgentEvent.agent_error(
-                        event.error or "The request failed without an error message."
+                        event.error or "The request failed without an error message.",
+                        None
+                        if failure is None
+                        else {"kind": failure.kind, "status": failure.status},
                     )
                     return
 

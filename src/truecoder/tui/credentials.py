@@ -27,9 +27,10 @@ class ApiKeyScreen(ModalScreen[str | None]):
         Binding("escape", "cancel", "Close", show=False),
     ]
 
-    def __init__(self, provider: str, model: str = "") -> None:
+    def __init__(self, provider: str, model: str = "", reason: str = "") -> None:
         self.provider = provider
         self.model = model
+        self.reason = reason
         super().__init__()
 
     def compose(self) -> ComposeResult:
@@ -50,6 +51,8 @@ class ApiKeyScreen(ModalScreen[str | None]):
             yield Static("enter save   esc skip", classes="credential-help")
 
     def _explanation(self) -> str:
+        if self.reason:
+            return self.reason
         named = self.provider != DEFAULT_PROVIDER_NAME
         if self.model and named:
             return f"{self.model} needs a key for {self.provider} before it can answer."

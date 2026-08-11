@@ -26,6 +26,12 @@ from openai.types.chat.chat_completion_message_function_tool_call import (
 )
 from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
+from truecoder.client.failures import (
+    PARTIAL_NOTICE,
+    PROVIDER,
+    RATE_LIMIT,
+    TIMEOUT,
+)
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType
 from truecoder.providers.models import settings_from_environment
@@ -490,7 +496,8 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
         sleep.assert_has_awaits([call(1), call(2), call(4)])
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].type, EventType.ERROR)
-        self.assertIn("Rate limit exceeded", events[0].error)
+        self.assertEqual(events[0].failure.kind, RATE_LIMIT)
+        self.assertIn("rate limiting", events[0].error)
 
     async def test_connection_error_retries_and_can_recover(self):
         request = httpx.Request(
@@ -537,7 +544,8 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
 
         create.assert_awaited_once()
         self.assertEqual(events[0].type, EventType.ERROR)
-        self.assertIn("Request timed out", events[0].error)
+        self.assertEqual(events[0].failure.kind, TIMEOUT)
+        self.assertIn("did not answer in time", events[0].error)
 
     async def test_api_error_is_returned_without_retrying(self):
         request = httpx.Request(
@@ -561,7 +569,8 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
         create.assert_awaited_once()
         sleep.assert_not_awaited()
         self.assertEqual(events[0].type, EventType.ERROR)
-        self.assertIn("API error", events[0].error)
+        self.assertEqual(events[0].failure.kind, PROVIDER)
+        self.assertIn("did not complete the request", events[0].error)
 
     async def test_stream_error_after_a_delta_does_not_retry(self):
         stream = FakeStream(
@@ -588,7 +597,7 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
             [event.type for event in events],
             [EventType.TEXT_DELTA, EventType.ERROR],
         )
-        self.assertIn("while streaming", events[1].error)
+        self.assertIn(PARTIAL_NOTICE, events[1].error)
 
     async def test_unexpected_errors_are_not_hidden(self):
         sdk_client, create = make_client(None)
