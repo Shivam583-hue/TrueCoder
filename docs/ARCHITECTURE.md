@@ -480,6 +480,15 @@ An invalid tool call is treated the same way: arguments that fail validation
 become an error result the model reads and retries, so a schema mistake costs a
 tool call rather than the turn.
 
+Textual's padding longhands are not CSS's. `padding-top` writes the whole box and
+zeroes the other three sides rather than editing one edge, so a rule that set only
+the vertical padding of an assistant message silently removed its horizontal
+padding, and every model reply sat flush against its border while every user
+message was indented. Nothing errors, nothing warns, and the result reads as a
+design choice. Padding is written as the shorthand for that reason, and a test
+asserts that every transcript entry shares one left edge rather than trusting
+anyone to remember why.
+
 The interface is sized for a terminal that can be any width, so anything that
 cannot fit is dropped at a boundary the reader can see rather than cut wherever
 the edge happens to fall.
@@ -1939,6 +1948,43 @@ flow that provider supports, and reopens the list, which is populated by then. A
 provider that returned nothing while holding a usable credential is a different
 fact and is reported as a warning instead, because that is a failure rather than a
 missing step, and offering to sign in again would not fix it.
+
+Signing in to another provider does not move the session to it. The flow takes the
+provider it is authorising as an argument rather than reading the active one, and
+the result is adopted into the session only when the two are the same. Switching
+first and asking second would leave anyone who pressed escape on a provider they
+hold no credential for, still pointed at a model that provider does not serve, and
+the next message would fail for a reason nothing on screen explained.
+
+## When the provider refuses
+
+An exception's `str()` is its wire format. Rendering it put a status line, a
+nested error object, its metadata, an array of previous errors, and an account
+identifier into the transcript, none of which answers the only question the reader
+has, which is what to do now.
+
+Failures are therefore classified where the exception still exists, before
+anything is rendered. A status becomes a kind and the provider's own sentence is
+lifted out of its envelope, whitespace-collapsed and length-bounded like every
+other piece of text the application did not write. The kinds are separated by what
+they imply rather than by how they look: `401` and `403` mean the credential,
+`402` means money, `429` means pace, `404` means the model. Those are one paragraph
+apart in a log and a completely different next step for the person reading them.
+
+The kind travels with the message rather than being re-derived from it. Deciding
+what to offer by matching against rendered prose would mean two parsers for one
+fact, and the second one drifts the first time the wording is improved.
+
+The remedy depends on something the client cannot know: whether this provider
+signs in with a browser. A rejected key is answered with a prompt for another key,
+because typing one is the fix and the prompt is the place to type it. A rejected
+token is answered with `/login`, because there is nothing to type. Running out of
+credit is answered with neither, since a new credential buys nothing; that
+suggestion would send someone to replace a key that was working.
+
+A failure that does not classify gets no advice at all. Inventing a next step for
+an unrecognised status is worse than silence, because it sends people to change
+something that was not the problem.
 
 ## Design rules
 
