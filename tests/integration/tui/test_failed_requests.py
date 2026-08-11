@@ -58,7 +58,7 @@ def _settings(*, oauth=None) -> SessionSettings:
     )
 
 
-class FailedRequestTests(unittest.IsolatedAsyncioTestCase):
+class _Base(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._directory = tempfile.TemporaryDirectory()
         self.root = Path(self._directory.name).resolve()
@@ -101,6 +101,8 @@ class FailedRequestTests(unittest.IsolatedAsyncioTestCase):
             if "Request failed" in message.content_text
         )
 
+
+class FailedRequestTests(_Base):
     async def test_a_billing_refusal_reads_as_a_sentence(self):
         failure = classify(
             status=402,
@@ -211,6 +213,37 @@ class FailedRequestTests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertFalse(app._busy)
                 self.assertTrue(app.query_one(PromptInput).has_focus)
+
+
+class TranscriptAlignmentTests(_Base):
+    async def test_a_failure_keeps_the_left_edge_every_other_entry_has(self):
+        app = self._app(classify(status=402, provider="acme"))
+
+        with patch.dict(os.environ, {"MODEL": "acme/starter"}):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._send(app, pilot)
+                await pilot.pause()
+
+                edges = {
+                    message.styles.padding.left for message in app.query(ChatMessage)
+                }
+
+                self.assertEqual(len(edges), 1)
+                self.assertGreater(edges.pop(), 0)
+
+    async def test_a_narrow_terminal_keeps_room_above_and_below(self):
+        app = self._app(classify(status=402, provider="acme"))
+
+        with patch.dict(os.environ, {"MODEL": "acme/starter"}):
+            async with app.run_test(size=(40, 24)) as pilot:
+                await self._send(app, pilot)
+                await pilot.pause()
+
+                for message in app.query(ChatMessage):
+                    padding = message.styles.padding
+                    self.assertGreater(padding.top, 0)
+                    self.assertGreater(padding.bottom, 0)
+                    self.assertGreater(padding.left, 0)
 
 
 if __name__ == "__main__":
