@@ -1925,6 +1925,16 @@ OAuth client is configured, and a prompt for an API key otherwise. Nothing is
 asked when a usable credential already exists, because a prompt that appears when
 it is not needed teaches people to dismiss prompts.
 
+Configuring an OAuth client used to decide the question rather than widen it. The
+same providers that publish one also sell keys, and the two are not
+interchangeable: a browser sign-in draws on a subscription while a key bills the
+account it belongs to, so which one to use is a decision about money and access
+that only the person at the keyboard can make. Taking the browser silently because
+it happened to be configured also made the key unreachable, since nothing else in
+the interface asks for one. A provider that accepts both is therefore asked about
+rather than assumed, and a provider that accepts one is not, because a question
+with a single answer is a keystroke charged for nothing.
+
 A typed key is a credential like any other, so it is stored with the same
 discipline as a token: `0600` on POSIX, an explicit current-user-and-LocalSystem
 ACL on Windows, written to a temporary path inside the secured directory and moved
@@ -1975,12 +1985,12 @@ The kind travels with the message rather than being re-derived from it. Deciding
 what to offer by matching against rendered prose would mean two parsers for one
 fact, and the second one drifts the first time the wording is improved.
 
-The remedy depends on something the client cannot know: whether this provider
-signs in with a browser. A rejected key is answered with a prompt for another key,
-because typing one is the fix and the prompt is the place to type it. A rejected
-token is answered with `/login`, because there is nothing to type. Running out of
-credit is answered with neither, since a new credential buys nothing; that
-suggestion would send someone to replace a key that was working.
+The remedy depends on something the client cannot know: what this provider accepts.
+A rejected credential opens the way to replace it, which is the key prompt for a
+provider that only takes keys and the same choice between the two for a provider
+that takes both, since the credential that failed is not necessarily the kind
+worth trying next. Running out of credit opens nothing, because a new credential
+buys nothing; that suggestion would send someone to replace a key that was working.
 
 A failure that does not classify gets no advice at all. Inventing a next step for
 an unrecognised status is worse than silence, because it sends people to change
