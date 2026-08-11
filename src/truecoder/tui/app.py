@@ -491,33 +491,33 @@ class TrueCoderApp(App[None]):
         return not _usable(self.agent.llm_client.settings.credential)
 
     async def _accept_invitation(self, invitation: ProviderInvite) -> None:
-        from truecoder.providers.models import stored_credential
-
-        settings = self.agent.llm_client.settings
         provider = self._provider_named(invitation.provider)
-        if provider.name != settings.provider.name:
-            settings.use(provider, stored_credential(provider.name))
-        if not await self._collect_credential():
+        if not await self._collect_credential(provider):
             return
         await self._choose_model(refresh=True)
 
-    async def _collect_credential(self) -> bool:
+    def _adopt(self, provider, credential) -> None:
         settings = self.agent.llm_client.settings
-        if settings.provider.oauth is not None:
-            return await self._authorise_provider()
-        return await self._ask_for_api_key()
+        if provider.name == settings.provider.name:
+            settings.use(provider, credential)
 
-    async def _ask_for_api_key(self) -> bool:
+    async def _collect_credential(self, provider=None) -> bool:
+        target = provider or self.agent.llm_client.settings.provider
+        if target.oauth is not None:
+            return await self._authorise_provider(target)
+        return await self._ask_for_api_key(target)
+
+    async def _ask_for_api_key(self, provider=None) -> bool:
         from truecoder.providers.keys import store_key
         from truecoder.providers.models import ApiKey, CredentialError
 
-        settings = self.agent.llm_client.settings
+        target = provider or self.agent.llm_client.settings.provider
         typed = await self.push_screen_wait(
-            ApiKeyScreen(settings.provider.name, self._model_name)
+            ApiKeyScreen(target.name, "" if provider is not None else self._model_name)
         )
         if not typed:
             self.notify(
-                f"{settings.provider.name} still has no key, so requests will fail.",
+                f"{target.name} still has no key, so requests will fail.",
                 severity="warning",
                 timeout=10,
             )
@@ -529,9 +529,9 @@ class TrueCoderApp(App[None]):
             self.notify(f"That key was refused: {error}", severity="error")
             return False
 
-        settings.use(settings.provider, key)
-        if store_key(settings.provider.name, key):
-            self.notify(f"Saved the key for {settings.provider.name}.")
+        self._adopt(target, key)
+        if store_key(target.name, key):
+            self.notify(f"Saved the key for {target.name}.")
         else:
             self.notify(
                 "The key works for this session, but it could not be saved.",
@@ -539,16 +539,16 @@ class TrueCoderApp(App[None]):
             )
         return True
 
-    async def _authorise_provider(self) -> bool:
+    async def _authorise_provider(self, provider=None) -> bool:
         from truecoder.providers.login import begin_login, open_in_browser
         from truecoder.providers.oauth import OAuthError
         from truecoder.providers.tokens import store_token
 
-        settings = self.agent.llm_client.settings
-        client = settings.provider.oauth
+        target = provider or self.agent.llm_client.settings.provider
+        client = target.oauth
         if client is None:
             self.notify(
-                f"No OAuth client is configured for {settings.provider.name!r}. "
+                f"No OAuth client is configured for {target.name!r}. "
                 "Add one in providers.json, or set an API key instead.",
                 severity="warning",
                 timeout=12,
@@ -556,18 +556,14 @@ class TrueCoderApp(App[None]):
             return False
 
         try:
-            pending = await begin_login(client, provider=settings.provider.name)
+            pending = await begin_login(client, provider=target.name)
         except OAuthError as error:
             self.notify(f"Authorisation failed: {error}", severity="error", timeout=12)
             return False
 
         opened = open_in_browser(pending.url)
-        await self._note_sign_in(settings.provider.name, pending.url, opened=opened)
-        screen = AuthorisationScreen(
-            settings.provider.name,
-            pending.url,
-            browser_opened=opened,
-        )
+        await self._note_sign_in(target.name, pending.url, opened=opened)
+        screen = AuthorisationScreen(target.name, pending.url, browser_opened=opened)
         waiting = asyncio.ensure_future(pending.wait())
         cancelled = self.push_screen_wait(screen)
 
@@ -583,9 +579,9 @@ class TrueCoderApp(App[None]):
             self.notify("Authorisation cancelled.", severity="warning")
             return False
 
-        settings.use(settings.provider, token)
+        self._adopt(target, token)
         if store_token(token):
-            self.notify(f"Signed in to {settings.provider.name}.")
+            self.notify(f"Signed in to {target.name}.")
         else:
             self.notify(
                 "Signed in, but the token could not be saved.",

@@ -397,7 +397,9 @@ class CrossProviderTests(_Base):
                     description="the authorisation screen",
                 )
 
-                self.assertEqual(app.agent.llm_client.settings.provider.name, "brio")
+                self.assertEqual(app.screen.provider, "brio")
+                self.assertEqual(app.agent.llm_client.settings.provider.name, "acme")
+                self.assertEqual(app.agent.llm_client.settings.credential, ApiKey("sk-acme"))
 
                 signed_in = True
                 pending.token.set_result(
@@ -415,6 +417,48 @@ class CrossProviderTests(_Base):
 
                 app.screen.dismiss(None)
                 await pilot.pause()
+
+    async def test_abandoning_an_invitation_leaves_the_session_where_it_was(self):
+        from truecoder.providers.catalog import CatalogError
+        from truecoder.tui.model_picker import ProviderInvite
+
+        self._configure(brio_oauth=True)
+        app = self._app(_settings(credential=ApiKey("sk-acme")))
+        pending = _pending_login()
+
+        async def listing(provider, credential, *, refresh=False):
+            if provider.name == "brio":
+                raise CatalogError("the provider returned 401")
+            return (ModelInfo(identifier="acme/starter", provider="acme"),)
+
+        async def begin(client, *, provider=""):
+            return pending
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", side_effect=listing),
+            patch("truecoder.providers.login.begin_login", side_effect=begin),
+            patch("truecoder.providers.login.open_in_browser", return_value=True),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot, ProviderInvite("brio", oauth=True))
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, AuthorisationScreen),
+                    description="the authorisation screen",
+                )
+
+                app.screen.dismiss(False)
+                await wait_until(
+                    pilot,
+                    lambda: pending.closed,
+                    description="the callback server to be closed",
+                )
+
+                settings = app.agent.llm_client.settings
+                self.assertEqual(settings.provider.name, "acme")
+                self.assertEqual(settings.credential, ApiKey("sk-acme"))
+                self.assertEqual(settings.model, "acme/starter")
 
     async def test_an_oauth_provider_starts_a_sign_in_rather_than_a_key_prompt(self):
         self._configure(brio_oauth=True)

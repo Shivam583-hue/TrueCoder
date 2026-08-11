@@ -389,8 +389,6 @@ class ChatMessage(Vertical):
 
 
 class SystemNote(Vertical):
-    """A durable transcript entry the agent never wrote, such as a sign-in link."""
-
     def __init__(self, heading: str, message: str, detail: str = "") -> None:
         self.heading = heading
         self.message = message
