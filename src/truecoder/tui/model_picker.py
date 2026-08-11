@@ -26,7 +26,7 @@ class ProviderInvite:
 
     @property
     def label(self) -> str:
-        verb = "Sign in to" if self.oauth else "Add a key for"
+        verb = "Connect to" if self.oauth else "Add a key for"
         return f"  {verb} {self.provider} to list its models"
 
     def matches(self, query: str) -> bool:

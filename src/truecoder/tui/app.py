@@ -46,7 +46,12 @@ from truecoder.tui.commands import (
     parse_command,
     unknown_command_message,
 )
-from truecoder.tui.credentials import ApiKeyScreen, AuthorisationScreen
+from truecoder.tui.credentials import (
+    OAUTH_CHOICE,
+    ApiKeyScreen,
+    AuthorisationScreen,
+    CredentialChoiceScreen,
+)
 from truecoder.tui.execution_health import (
     ExecutionHealthScreen,
     health_failure_message,
@@ -503,9 +508,26 @@ class TrueCoderApp(App[None]):
 
     async def _collect_credential(self, provider=None) -> bool:
         target = provider or self.agent.llm_client.settings.provider
-        if target.oauth is not None:
+        if target.oauth is None:
+            return await self._ask_for_api_key(target)
+
+        chosen = await self.push_screen_wait(
+            CredentialChoiceScreen(target.name, self._model_for(target))
+        )
+        if chosen is None:
+            self.notify(
+                f"{target.name} is still not connected, so requests will fail.",
+                severity="warning",
+                timeout=10,
+            )
+            return False
+        if chosen == OAUTH_CHOICE:
             return await self._authorise_provider(target)
         return await self._ask_for_api_key(target)
+
+    def _model_for(self, provider) -> str:
+        settings = self.agent.llm_client.settings
+        return self._model_name if provider.name == settings.provider.name else ""
 
     async def _ask_for_api_key(self, provider=None, *, reason: str = "") -> bool:
         from truecoder.providers.keys import store_key
@@ -513,11 +535,7 @@ class TrueCoderApp(App[None]):
 
         target = provider or self.agent.llm_client.settings.provider
         typed = await self.push_screen_wait(
-            ApiKeyScreen(
-                target.name,
-                "" if provider is not None else self._model_name,
-                reason,
-            )
+            ApiKeyScreen(target.name, self._model_for(target), reason)
         )
         if not typed:
             self.notify(
@@ -938,18 +956,35 @@ class TrueCoderApp(App[None]):
     def _repair_credential(self, kind: str) -> None:
         from truecoder.client.failures import CREDENTIAL
 
-        if kind != CREDENTIAL or self._provider_uses_oauth():
+        if kind != CREDENTIAL:
             return
-        self.run_worker(self._replace_rejected_key(), exclusive=False)
+        self.run_worker(self._replace_rejected_credential(), exclusive=False)
 
-    async def _replace_rejected_key(self) -> None:
+    async def _replace_rejected_credential(self) -> None:
         from truecoder.client.failures import named
+        from truecoder.tui.credentials import KEY_CHOICE
 
         provider = self.agent.llm_client.settings.provider
-        await self._ask_for_api_key(
-            provider,
-            reason=f"{named(provider.name)} rejected the key in use. Enter another.",
+        rejected = f"{named(provider.name)} rejected the credential in use."
+        if provider.oauth is None:
+            await self._ask_for_api_key(
+                provider,
+                reason=f"{rejected} Enter another key.",
+            )
+            return
+
+        chosen = await self.push_screen_wait(
+            CredentialChoiceScreen(provider.name, self._model_name)
         )
+        if chosen is None:
+            return
+        if chosen == KEY_CHOICE:
+            await self._ask_for_api_key(
+                provider,
+                reason=f"{rejected} Enter another key.",
+            )
+            return
+        await self._authorise_provider(provider)
 
     async def _request_tool_approval(
         self,

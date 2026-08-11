@@ -1212,6 +1212,7 @@ ExecutionCard.expanded .execution-details {
 
 /* Credential dialogs */
 #api-key-dialog,
+#credential-choice-dialog,
 #authorisation-dialog {
     width: 74;
     max-width: 92%;
@@ -1258,9 +1259,16 @@ ExecutionCard.expanded .execution-details {
     scrollbar-size: 1 1;
 }
 
-#authorisation-actions {
+#authorisation-actions,
+#credential-choice-actions {
     width: 100%;
     height: auto;
+}
+
+#credential-choice-actions Button {
+    width: auto;
+    height: 3;
+    margin: 0 2 1 0;
 }
 
 #authorisation-actions Button {

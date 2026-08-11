@@ -20,8 +20,11 @@ from truecoder.tui.credentials import (
     BROWSER_OPENED,
     BROWSER_REFUSED,
     COPIED_MESSAGE,
+    KEY_CHOICE,
+    OAUTH_CHOICE,
     ApiKeyScreen,
     AuthorisationScreen,
+    CredentialChoiceScreen,
 )
 from truecoder.tui.model_picker import ModelPickerScreen
 from truecoder.tui.widgets import PromptInput, SystemNote
@@ -110,6 +113,15 @@ class _Base(unittest.IsolatedAsyncioTestCase):
             description="the model picker",
         )
         app.screen.dismiss(model or CATALOG[0])
+        await pilot.pause()
+
+    async def _connect(self, app, pilot, choice: str | None = OAUTH_CHOICE) -> None:
+        await wait_until(
+            pilot,
+            lambda: isinstance(app.screen, CredentialChoiceScreen),
+            description="the connection choice",
+        )
+        app.screen.dismiss(choice)
         await pilot.pause()
 
 
@@ -359,7 +371,7 @@ class CrossProviderTests(_Base):
                 invitations = app.screen.invitations
                 self.assertEqual([invite.provider for invite in invitations], ["brio"])
                 self.assertTrue(invitations[0].oauth)
-                self.assertIn("Sign in to brio", invitations[0].label)
+                self.assertIn("Connect to brio", invitations[0].label)
 
                 app.screen.dismiss(None)
                 await pilot.pause()
@@ -391,6 +403,7 @@ class CrossProviderTests(_Base):
         ):
             async with app.run_test(size=(120, 40)) as pilot:
                 await self._pick(app, pilot, ProviderInvite("brio", oauth=True))
+                await self._connect(app, pilot)
                 await wait_until(
                     pilot,
                     lambda: isinstance(app.screen, AuthorisationScreen),
@@ -442,6 +455,7 @@ class CrossProviderTests(_Base):
         ):
             async with app.run_test(size=(120, 40)) as pilot:
                 await self._pick(app, pilot, ProviderInvite("brio", oauth=True))
+                await self._connect(app, pilot)
                 await wait_until(
                     pilot,
                     lambda: isinstance(app.screen, AuthorisationScreen),
@@ -484,6 +498,7 @@ class CrossProviderTests(_Base):
                     pilot,
                     ModelInfo(identifier="brio/large", provider="brio"),
                 )
+                await self._connect(app, pilot)
                 await wait_until(
                     pilot,
                     lambda: isinstance(app.screen, AuthorisationScreen),
@@ -495,6 +510,177 @@ class CrossProviderTests(_Base):
 
                 app.screen.dismiss(False)
                 await pilot.pause()
+
+
+class CredentialChoiceTests(_Base):
+    async def test_a_provider_with_both_ways_asks_which_one(self):
+        app = self._app(_settings(credential=None, oauth=OAUTH))
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", return_value=CATALOG),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, CredentialChoiceScreen),
+                    description="the connection choice",
+                )
+
+                self.assertEqual(app.screen.provider, "acme")
+                self.assertIn("openai/gpt-5", app.screen._explanation())
+
+                app.screen.dismiss(None)
+                await pilot.pause()
+
+    async def test_choosing_the_key_never_opens_a_browser(self):
+        app = self._app(_settings(credential=None, oauth=OAUTH))
+        opened: list[str] = []
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", return_value=CATALOG),
+            patch(
+                "truecoder.providers.login.open_in_browser",
+                side_effect=lambda target: (opened.append(target), True)[1],
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot)
+                await self._connect(app, pilot, KEY_CHOICE)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ApiKeyScreen),
+                    description="the api key prompt",
+                )
+                app.screen.dismiss("sk-chosen")
+                await wait_until(
+                    pilot,
+                    lambda: app.agent.llm_client.settings.credential is not None,
+                    description="the key to be adopted",
+                )
+
+                self.assertEqual(opened, [])
+                self.assertEqual(
+                    app.agent.llm_client.settings.credential,
+                    ApiKey("sk-chosen"),
+                )
+                self.assertIn("sk-chosen", (self.root / "keys.json").read_text())
+
+    async def test_choosing_the_browser_starts_the_sign_in(self):
+        app = self._app(_settings(credential=None, oauth=OAUTH))
+        pending = _pending_login()
+        opened: list[str] = []
+
+        async def begin(client, *, provider=""):
+            return pending
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", return_value=CATALOG),
+            patch("truecoder.providers.login.begin_login", side_effect=begin),
+            patch(
+                "truecoder.providers.login.open_in_browser",
+                side_effect=lambda target: (opened.append(target), True)[1],
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot)
+                await self._connect(app, pilot, OAUTH_CHOICE)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, AuthorisationScreen),
+                    description="the authorisation screen",
+                )
+
+                self.assertEqual(opened, [pending.url])
+
+                app.screen.dismiss(False)
+                await pilot.pause()
+
+    async def test_a_provider_with_only_a_key_is_never_asked_to_choose(self):
+        app = self._app(_settings(credential=None))
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", return_value=CATALOG),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ApiKeyScreen),
+                    description="the api key prompt",
+                )
+
+                self.assertNotIsInstance(app.screen, CredentialChoiceScreen)
+
+    async def test_abandoning_the_choice_leaves_the_credential_alone(self):
+        app = self._app(_settings(credential=None, oauth=OAUTH))
+        notices: list[str] = []
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", return_value=CATALOG),
+            patch.object(
+                TrueCoderApp,
+                "notify",
+                lambda self, message, **kwargs: notices.append(str(message)),
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot)
+                await self._connect(app, pilot, None)
+                await pilot.pause()
+
+                self.assertIsNone(app.agent.llm_client.settings.credential)
+                self.assertNotIsInstance(app.screen, ApiKeyScreen)
+                self.assertTrue(any("not connected" in note for note in notices))
+
+    async def test_login_offers_the_same_choice(self):
+        app = self._app(_settings(credential=None, oauth=OAUTH))
+
+        with patch.dict(os.environ, {"MODEL": "acme/starter"}):
+            async with app.run_test(size=(120, 40)) as pilot:
+                app.query_one(PromptInput).text = "/login"
+                await pilot.press("enter")
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, CredentialChoiceScreen),
+                    description="the connection choice",
+                )
+
+                app.screen.dismiss(None)
+                await pilot.pause()
+
+    async def test_the_choice_never_calls_the_unnamed_provider_default(self):
+        screen = CredentialChoiceScreen("default")
+
+        self.assertNotIn("default", screen._explanation())
+
+    async def test_both_ways_are_offered_by_name(self):
+        app = self._app(_settings(credential=None, oauth=OAUTH))
+        screen = CredentialChoiceScreen("acme")
+
+        with patch.dict(os.environ, {"MODEL": "acme/starter"}):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await app.push_screen(screen)
+                await pilot.pause()
+                await wait_until(
+                    pilot,
+                    lambda: screen.query_one("#choose-key").region.width > 0,
+                    description="the buttons to be laid out",
+                )
+
+                rendered = "".join(
+                    "".join(segment.text for segment in strip)
+                    for strip in app.screen._compositor.render_strips()
+                )
+
+                self.assertIn("Browser sign-in", rendered)
+                self.assertIn("API key", rendered)
+                self.assertIn("esc cancel", rendered)
 
 
 class LoginCommandTests(_Base):
@@ -582,6 +768,7 @@ class AuthorisationPromptTests(_Base):
         ):
             async with app.run_test(size=(120, 40)) as pilot:
                 await self._pick(app, pilot)
+                await self._connect(app, pilot)
                 await wait_until(
                     pilot,
                     lambda: isinstance(app.screen, AuthorisationScreen),
@@ -616,6 +803,7 @@ class AuthorisationPromptTests(_Base):
         ):
             async with app.run_test(size=(120, 40)) as pilot:
                 await self._pick(app, pilot)
+                await self._connect(app, pilot)
                 await wait_until(
                     pilot,
                     lambda: isinstance(app.screen, AuthorisationScreen),
@@ -654,6 +842,7 @@ class AuthorisationPromptTests(_Base):
         ):
             async with app.run_test(size=(120, 40)) as pilot:
                 await self._pick(app, pilot)
+                await self._connect(app, pilot)
                 await wait_until(
                     pilot,
                     lambda: isinstance(app.screen, AuthorisationScreen),
@@ -692,6 +881,7 @@ class AuthorisationPromptTests(_Base):
         ):
             async with app.run_test(size=(120, 40)) as pilot:
                 await self._pick(app, pilot)
+                await self._connect(app, pilot)
                 await wait_until(
                     pilot,
                     lambda: isinstance(app.screen, AuthorisationScreen),
@@ -724,6 +914,7 @@ class AuthorisationPromptTests(_Base):
         ):
             async with app.run_test(size=(120, 40)) as pilot:
                 await self._pick(app, pilot)
+                await self._connect(app, pilot)
                 await wait_until(
                     pilot,
                     lambda: isinstance(app.screen, AuthorisationScreen),
@@ -815,6 +1006,7 @@ class AuthorisationPromptTests(_Base):
         ):
             async with app.run_test(size=(120, 40)) as pilot:
                 await self._pick(app, pilot)
+                await self._connect(app, pilot)
                 await wait_until(
                     pilot,
                     lambda: isinstance(app.screen, AuthorisationScreen),

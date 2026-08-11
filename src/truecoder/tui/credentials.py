@@ -20,6 +20,65 @@ NOTE_WITH_BROWSER: Final = (
     "A browser tab should have opened; this link works from any browser."
 )
 NOTE_WITHOUT_BROWSER: Final = "No browser could be opened, so open this link yourself."
+OAUTH_CHOICE: Final = "oauth"
+KEY_CHOICE: Final = "key"
+
+
+def provider_label(provider: str) -> str:
+    if not provider or provider == DEFAULT_PROVIDER_NAME:
+        return "This provider"
+    return provider
+
+
+class CredentialChoiceScreen(ModalScreen["str | None"]):
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("escape", "cancel", "Close", show=False),
+        Binding("left", "focus_previous", "Previous", show=False),
+        Binding("right", "focus_next", "Next", show=False),
+    ]
+
+    def __init__(self, provider: str, model: str = "") -> None:
+        self.provider = provider
+        self.model = model
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="credential-choice-dialog"):
+            yield Static("Connect", classes="credential-title")
+            yield Static(self._explanation(), classes="credential-body", markup=False)
+            with Horizontal(id="credential-choice-actions"):
+                yield Button("Browser sign-in", id="choose-oauth", variant="primary")
+                yield Button("API key", id="choose-key")
+            yield Static(
+                "Either one works. A browser sign-in uses your existing "
+                "subscription; a key bills the account it belongs to.",
+                classes="credential-note",
+                markup=False,
+            )
+            yield Static(
+                "tab switch   enter choose   esc cancel",
+                classes="credential-help",
+            )
+
+    def _explanation(self) -> str:
+        who = provider_label(self.provider)
+        if self.model:
+            return f"{self.model} needs {who} connected. Choose how."
+        return f"{who} accepts a browser sign-in or an API key. Choose one."
+
+    def on_mount(self) -> None:
+        self.query_one("#choose-oauth", Button).focus()
+
+    @on(Button.Pressed, "#choose-oauth")
+    def choose_oauth(self) -> None:
+        self.dismiss(OAUTH_CHOICE)
+
+    @on(Button.Pressed, "#choose-key")
+    def choose_key(self) -> None:
+        self.dismiss(KEY_CHOICE)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class ApiKeyScreen(ModalScreen[str | None]):

@@ -140,7 +140,7 @@ def unreachable(provider: str, detail: str = "", *, partial: bool = False) -> Pr
 def remedy(kind: str, *, oauth: bool = False) -> str:
     if kind == CREDENTIAL:
         if oauth:
-            return "Run /login to sign in again."
+            return "Choose how to connect again in the prompt, or run /login later."
         return "Type a new key in the prompt, or run /login to enter one later."
     if kind == BILLING:
         return "Add credit with the provider, or pick a cheaper model with /models."

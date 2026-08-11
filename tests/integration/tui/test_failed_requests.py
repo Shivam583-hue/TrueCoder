@@ -16,7 +16,11 @@ from truecoder.client.response import EventType, StreamEvent
 from truecoder.providers import ApiKey, Provider, SessionSettings
 from truecoder.providers.oauth import OAuthClient
 from truecoder.tui.app import TrueCoderApp
-from truecoder.tui.credentials import ApiKeyScreen
+from truecoder.tui.credentials import (
+    KEY_CHOICE,
+    ApiKeyScreen,
+    CredentialChoiceScreen,
+)
 from truecoder.tui.widgets import ChatMessage, PromptInput
 
 CREDITS = (
@@ -146,7 +150,7 @@ class FailedRequestTests(_Base):
                 )
 
                 self.assertIn("rejected the credential", shown)
-                self.assertIn("rejected the key in use", app.screen._explanation())
+                self.assertIn("Enter another key", app.screen._explanation())
                 self.assertEqual(app.screen.provider, "acme")
 
                 app.screen.dismiss(None)
@@ -177,17 +181,48 @@ class FailedRequestTests(_Base):
                     (self.root / "keys.json").read_text(),
                 )
 
-    async def test_an_oauth_provider_is_told_to_run_login_instead(self):
+    async def test_an_oauth_provider_is_offered_both_ways_to_reconnect(self):
         failure = classify(status=401, provider="acme")
         app = self._app(failure, oauth=OAUTH)
 
         with patch.dict(os.environ, {"MODEL": "acme/starter"}):
             async with app.run_test(size=(120, 40)) as pilot:
                 shown = (await self._send(app, pilot)).content_text
-                await pilot.pause()
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, CredentialChoiceScreen),
+                    description="the connection choice",
+                )
 
                 self.assertIn("/login", shown)
-                self.assertNotIsInstance(app.screen, ApiKeyScreen)
+                self.assertEqual(app.screen.provider, "acme")
+
+                app.screen.dismiss(None)
+                await pilot.pause()
+
+    async def test_a_rejected_token_can_be_replaced_with_a_key(self):
+        failure = classify(status=401, provider="acme")
+        app = self._app(failure, oauth=OAUTH)
+
+        with patch.dict(os.environ, {"MODEL": "acme/starter"}):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._send(app, pilot)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, CredentialChoiceScreen),
+                    description="the connection choice",
+                )
+                app.screen.dismiss(KEY_CHOICE)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ApiKeyScreen),
+                    description="the api key prompt",
+                )
+
+                self.assertIn("Enter another key", app.screen._explanation())
+
+                app.screen.dismiss(None)
+                await pilot.pause()
 
     async def test_an_unclassified_failure_invents_no_advice(self):
         failure = classify(status=None, fallback="something went wrong", provider="acme")
