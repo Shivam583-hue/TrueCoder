@@ -251,8 +251,7 @@ ChatMessage.user {
 }
 
 ChatMessage.assistant {
-    padding-top: 1;
-    padding-bottom: 1;
+    padding: 1 3;
 }
 
 ChatMessage.error {
@@ -726,8 +725,7 @@ Screen.-narrow #transcript {
 }
 
 Screen.-narrow ChatMessage {
-    padding-left: 1;
-    padding-right: 1;
+    padding: 1 1;
 }
 
 Screen.-narrow #composer {
@@ -1167,10 +1165,11 @@ ExecutionCard.expanded .execution-details {
 }
 
 #model-filter {
+    height: 3;
     margin-bottom: 1;
+    padding: 1 1;
     background: $tc-surface-hover;
     border: none;
-    height: 3;
 }
 
 #model-list {
@@ -1235,10 +1234,11 @@ ExecutionCard.expanded .execution-details {
 }
 
 #api-key-input {
+    height: 3;
     margin-bottom: 1;
+    padding: 1 1;
     background: $tc-surface-hover;
     border: none;
-    height: 3;
 }
 
 .credential-note {
