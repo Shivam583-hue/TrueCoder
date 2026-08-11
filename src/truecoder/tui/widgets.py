@@ -388,6 +388,22 @@ class ChatMessage(Vertical):
         )
 
 
+class SystemNote(Vertical):
+    """A durable transcript entry the agent never wrote, such as a sign-in link."""
+
+    def __init__(self, heading: str, message: str, detail: str = "") -> None:
+        self.heading = heading
+        self.message = message
+        self.detail = detail
+        super().__init__(classes="system-note")
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.heading, classes="note-heading", markup=False)
+        yield Static(self.message, classes="note-body", markup=False)
+        if self.detail:
+            yield Static(self.detail, classes="note-detail", markup=False)
+
+
 _DIFF_HEADER_STYLE = "#707070"
 _DIFF_TRUNCATION_STYLE = "#f2a33a"
 _DIFF_LINE_STYLES: dict[DiffLineKind, str] = {

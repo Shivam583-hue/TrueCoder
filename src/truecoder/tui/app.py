@@ -7,7 +7,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import ClassVar, Final
+from typing import TYPE_CHECKING, ClassVar, Final
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -72,11 +72,16 @@ from truecoder.tui.widgets import (
     PlanCard,
     PromptInput,
     StatusBar,
+    SystemNote,
     ToolCallCard,
 )
 
+if TYPE_CHECKING:
+    from truecoder.providers.models import ModelInfo
+
 SHUTDOWN_DRAIN_SECONDS: Final = 5.0
 MODEL_NOT_CONFIGURED: Final = "model not configured"
+SIGN_IN_HEADING: Final = "Sign in"
 
 
 @dataclass
@@ -365,45 +370,88 @@ class TrueCoderApp(App[None]):
             await self.action_quit()
 
     async def _choose_model(self, *, refresh: bool = False) -> None:
-        from truecoder.providers.catalog import CatalogError, load_models
+        from truecoder.providers.catalog import (
+            catalog_problem,
+            load_catalog,
+            merge_models,
+        )
+        from truecoder.providers.configuration import selectable_providers
+        from truecoder.providers.models import stored_credential
 
         settings = self.agent.llm_client.settings
-        models: tuple = ()
-        reason: str | None = None
-        try:
-            models = await load_models(
-                settings.provider,
-                settings.credential,
-                refresh=refresh,
+        providers = selectable_providers(settings.provider)
+        credentials = {
+            provider.name: (
+                settings.credential
+                if provider.name == settings.provider.name
+                else stored_credential(provider.name)
             )
-        except CatalogError as error:
-            reason = str(error)
+            for provider in providers
+        }
 
-        if reason is None and not models:
-            reason = "the provider listed no models"
+        slices = await load_catalog(providers, credentials, refresh=refresh)
+        models = merge_models(slices)
+        reason = catalog_problem(slices)
+
+        silent = [entry.provider.name for entry in slices if entry.reason is not None]
+        if models and silent:
+            self.notify(
+                f"No models listed for {', '.join(silent)}.",
+                severity="warning",
+                timeout=8,
+            )
 
         self.push_screen(
-            ModelPickerScreen(models, settings.model, unavailable_reason=reason),
+            ModelPickerScreen(
+                models,
+                settings.model,
+                active_provider=settings.provider.name,
+                unavailable_reason=reason,
+            ),
             self._apply_model_choice,
         )
 
-    def _apply_model_choice(self, model: str | None) -> None:
-        if not model:
+    def _provider_named(self, name: str):
+        from truecoder.providers.configuration import selectable_providers
+
+        settings = self.agent.llm_client.settings
+        current = settings.provider
+        if not name or name == current.name:
+            return current
+        return next(
+            (
+                provider
+                for provider in selectable_providers(current)
+                if provider.name == name
+            ),
+            current,
+        )
+
+    def _apply_model_choice(self, choice: ModelInfo | None) -> None:
+        if choice is None:
             return
+        from truecoder.providers.models import stored_credential
         from truecoder.providers.store import StoredSelection, save_selection
 
         settings = self.agent.llm_client.settings
+        provider = self._provider_named(choice.provider)
+        moved = provider.name != settings.provider.name
+        if moved:
+            settings.use(provider, stored_credential(provider.name))
+
+        model = choice.identifier
         settings.select_model(model)
         self._model_name = model
         self.query_one(Composer).set_model_name(model)
 
-        if save_selection(
-            StoredSelection(model=model, provider=settings.provider.name)
-        ):
-            self.notify(f"Now answering with {model}")
+        arrival = f"Now answering with {model}"
+        if moved:
+            arrival += f" via {provider.name}"
+        if save_selection(StoredSelection(model=model, provider=provider.name)):
+            self.notify(arrival)
         else:
             self.notify(
-                f"Now answering with {model}, but the choice could not be saved.",
+                f"{arrival}, but the choice could not be saved.",
                 severity="warning",
             )
 
@@ -477,6 +525,7 @@ class TrueCoderApp(App[None]):
             return
 
         opened = open_in_browser(pending.url)
+        await self._note_sign_in(settings.provider.name, pending.url, opened=opened)
         screen = AuthorisationScreen(
             settings.provider.name,
             pending.url,
@@ -505,6 +554,24 @@ class TrueCoderApp(App[None]):
                 "Signed in, but the token could not be saved.",
                 severity="warning",
             )
+
+    async def _note_sign_in(self, provider: str, url: str, *, opened: bool) -> None:
+        from truecoder.tui.credentials import (
+            NOTE_WITH_BROWSER,
+            NOTE_WITHOUT_BROWSER,
+        )
+
+        note = SystemNote(
+            SIGN_IN_HEADING,
+            f"Authorise TrueCoder with {provider}. "
+            f"{NOTE_WITH_BROWSER if opened else NOTE_WITHOUT_BROWSER}",
+            url,
+        )
+        self.query_one("#empty-state", EmptyState).styles.display = "none"
+        self.screen.remove_class("empty-chat")
+        transcript = self.query_one("#transcript", VerticalScroll)
+        await transcript.mount(note)
+        self._scroll_to_latest()
 
     async def _await_authorisation(self, waiting, cancelled, screen):
         from truecoder.providers.oauth import OAuthError
@@ -1057,6 +1124,7 @@ class TrueCoderApp(App[None]):
         await self.query(".tool-call-card").remove()
         await self.query(".execution-card").remove()
         await self.query(".plan-card").remove()
+        await self.query(".system-note").remove()
         self._tool_cards.clear()
         self._execution_cards.clear()
         self._clear_plan()
@@ -1353,6 +1421,7 @@ class TrueCoderApp(App[None]):
         await self.query(".tool-call-card").remove()
         await self.query(".execution-card").remove()
         await self.query(".plan-card").remove()
+        await self.query(".system-note").remove()
         self._tool_cards.clear()
         self._execution_cards.clear()
         self._clear_plan()

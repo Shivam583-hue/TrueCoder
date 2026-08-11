@@ -12,26 +12,39 @@ from textual.widgets import Input, ListItem, ListView, Static
 from truecoder.providers.models import ModelInfo
 
 MAX_VISIBLE_MODELS: Final = 200
+IDENTIFIER_COLUMN: Final = 38
+PROVIDER_COLUMN: Final = 14
+CONTEXT_COLUMN: Final = 6
+GAP: Final = "  "
 
 
 class ModelListItem(ListItem):
-    def __init__(self, model: ModelInfo, *, active: bool) -> None:
+    def __init__(
+        self,
+        model: ModelInfo,
+        *,
+        active: bool,
+        identifier_width: int = 0,
+        provider_width: int = 0,
+    ) -> None:
         self.model = model
         self.active = active
+        self.identifier_width = identifier_width
+        self.provider_width = provider_width
         super().__init__(classes="model-item active" if active else "model-item")
 
-    def compose(self) -> ComposeResult:
+    def line(self) -> str:
         marker = "● " if self.active else "  "
-        context = self.model.context_label
-        suffix = f"   {context}" if context else ""
-        yield Static(
-            f"{marker}{self.model.identifier}{suffix}",
-            classes="model-item-line",
-            markup=False,
-        )
+        row = marker + self.model.identifier.ljust(self.identifier_width)
+        if self.provider_width:
+            row += GAP + self.model.provider.ljust(self.provider_width)
+        return (row + GAP + self.model.context_label.rjust(CONTEXT_COLUMN)).rstrip()
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.line(), classes="model-item-line", markup=False)
 
 
-class ModelPickerScreen(ModalScreen[str | None]):
+class ModelPickerScreen(ModalScreen[ModelInfo | None]):
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("escape", "cancel", "Close", show=False),
     ]
@@ -41,12 +54,25 @@ class ModelPickerScreen(ModalScreen[str | None]):
         models: tuple[ModelInfo, ...],
         active_model: str,
         *,
+        active_provider: str = "",
         unavailable_reason: str | None = None,
     ) -> None:
         self.models = models
         self.active_model = active_model
+        self.active_provider = active_provider
         self.unavailable_reason = unavailable_reason
         super().__init__()
+
+    @property
+    def spans_providers(self) -> bool:
+        return len({model.provider for model in self.models}) > 1
+
+    def is_active(self, model: ModelInfo) -> bool:
+        if model.identifier != self.active_model:
+            return False
+        if not self.active_provider:
+            return True
+        return model.provider == self.active_provider
 
     def compose(self) -> ComposeResult:
         with Vertical(id="model-picker-dialog"):
@@ -65,9 +91,28 @@ class ModelPickerScreen(ModalScreen[str | None]):
                 classes="model-dialog-help",
             )
 
+    def columns(self) -> tuple[int, int]:
+        identifiers = min(
+            max((len(model.identifier) for model in self.models), default=0),
+            IDENTIFIER_COLUMN,
+        )
+        if not self.spans_providers:
+            return identifiers, 0
+        providers = min(
+            max((len(model.provider) for model in self.models), default=0),
+            PROVIDER_COLUMN,
+        )
+        return identifiers, providers
+
     def _items(self, models: tuple[ModelInfo, ...]) -> list[ModelListItem]:
+        identifiers, providers = self.columns()
         return [
-            ModelListItem(model, active=model.identifier == self.active_model)
+            ModelListItem(
+                model,
+                active=self.is_active(model),
+                identifier_width=identifiers,
+                provider_width=providers,
+            )
             for model in models[:MAX_VISIBLE_MODELS]
         ]
 
@@ -79,7 +124,7 @@ class ModelPickerScreen(ModalScreen[str | None]):
             (
                 index
                 for index, model in enumerate(self.models[:MAX_VISIBLE_MODELS])
-                if model.identifier == self.active_model
+                if self.is_active(model)
             ),
             0,
         )
@@ -102,12 +147,12 @@ class ModelPickerScreen(ModalScreen[str | None]):
     def choose_first_match(self, event: Input.Submitted) -> None:
         matches = self.visible_models(event.value)
         if matches:
-            self.dismiss(matches[0].identifier)
+            self.dismiss(matches[0])
 
     @on(ListView.Selected)
     def choose_model(self, event: ListView.Selected) -> None:
         if isinstance(event.item, ModelListItem):
-            self.dismiss(event.item.model.identifier)
+            self.dismiss(event.item.model)
 
     def action_cancel(self) -> None:
         self.dismiss(None)

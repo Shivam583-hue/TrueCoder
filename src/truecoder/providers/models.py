@@ -91,6 +91,8 @@ class ModelInfo:
     def context_label(self) -> str:
         if self.context_window is None:
             return ""
+        if self.context_window >= 1_000_000:
+            return f"{self.context_window // 1_000_000}M"
         if self.context_window >= 1000:
             return f"{self.context_window // 1000}K"
         return str(self.context_window)

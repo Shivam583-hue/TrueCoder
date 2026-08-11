@@ -22,9 +22,19 @@ from truecoder.tui.model_picker import ModelPickerScreen
 from truecoder.tui.widgets import ChatMessage, PromptInput
 
 CATALOG = (
-    ModelInfo(identifier="anthropic/claude-opus-5", context_window=200000),
-    ModelInfo(identifier="openai/gpt-5", context_window=128000),
-    ModelInfo(identifier="google/gemini-3", context_window=1000000),
+    ModelInfo(
+        identifier="anthropic/claude-opus-5",
+        provider="test",
+        context_window=200000,
+    ),
+    ModelInfo(identifier="openai/gpt-5", provider="test", context_window=128000),
+    ModelInfo(identifier="google/gemini-3", provider="test", context_window=1000000),
+)
+BY_IDENTIFIER = {model.identifier: model for model in CATALOG}
+MIXED = (
+    ModelInfo(identifier="acme/one", provider="acme", context_window=128000),
+    ModelInfo(identifier="acme/two-with-a-longer-name", provider="acme"),
+    ModelInfo(identifier="brio/one", provider="brio", context_window=1000000),
 )
 
 
@@ -52,14 +62,19 @@ class ModelCommandTests(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self._directory = tempfile.TemporaryDirectory()
-        self.config = Path(self._directory.name).resolve() / "settings.json"
+        root = Path(self._directory.name).resolve()
+        self.config = root / "settings.json"
         self.addCleanup(self._directory.cleanup)
-        saver = patch(
-            "truecoder.providers.store.default_settings_path",
-            return_value=self.config,
-        )
-        saver.start()
-        self.addCleanup(saver.stop)
+        for target, name in (
+            ("truecoder.providers.store.default_settings_path", "settings.json"),
+            (
+                "truecoder.providers.configuration.default_providers_config_path",
+                "providers.json",
+            ),
+        ):
+            active = patch(target, return_value=root / name)
+            active.start()
+            self.addCleanup(active.stop)
 
     async def _type(self, app: TrueCoderApp, pilot, text: str) -> None:
         app.query_one(PromptInput).text = text
@@ -118,7 +133,10 @@ class ModelCommandTests(unittest.IsolatedAsyncioTestCase):
                     description="the model picker",
                 )
 
-                self.assertEqual(app.screen.models, CATALOG)
+                self.assertEqual(
+                    app.screen.models,
+                    tuple(sorted(CATALOG, key=lambda model: model.identifier)),
+                )
                 self.assertEqual(app.screen.active_model, "anthropic/claude-opus-5")
 
     async def test_choosing_a_model_changes_what_the_agent_will_use(self):
@@ -138,7 +156,7 @@ class ModelCommandTests(unittest.IsolatedAsyncioTestCase):
                     lambda: isinstance(app.screen, ModelPickerScreen),
                     description="the model picker",
                 )
-                app.screen.dismiss("openai/gpt-5")
+                app.screen.dismiss(BY_IDENTIFIER["openai/gpt-5"])
                 await pilot.pause()
 
                 self.assertEqual(
@@ -258,6 +276,59 @@ class PickerFilterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(screen.visible_models("claude")), 1)
         self.assertEqual(len(screen.visible_models("")), 3)
         self.assertEqual(len(screen.visible_models("nothing")), 0)
+
+    def test_filtering_by_provider_finds_that_provider(self):
+        screen = ModelPickerScreen(MIXED, "openai/gpt-5")
+
+        self.assertEqual(len(screen.visible_models("brio")), 1)
+        self.assertEqual(len(screen.visible_models("acme")), 2)
+
+
+class PickerLayoutTests(unittest.TestCase):
+    def _lines(self, screen: ModelPickerScreen) -> list[str]:
+        return [item.line() for item in screen._items(screen.models)]
+
+    def test_one_provider_is_never_repeated_on_every_row(self):
+        screen = ModelPickerScreen(CATALOG, "openai/gpt-5")
+
+        self.assertFalse(screen.spans_providers)
+        self.assertNotIn("test", "".join(self._lines(screen)))
+
+    def test_several_providers_are_named_on_every_row(self):
+        screen = ModelPickerScreen(MIXED, "acme/one")
+
+        self.assertTrue(screen.spans_providers)
+        for line in self._lines(screen):
+            self.assertTrue("acme" in line or "brio" in line)
+
+    def test_the_provider_column_starts_at_the_same_place_on_every_row(self):
+        screen = ModelPickerScreen(MIXED, "acme/one")
+        identifiers, _ = screen.columns()
+        start = 2 + identifiers + 2
+
+        for item in screen._items(screen.models):
+            name = item.model.provider
+            self.assertEqual(item.line()[start : start + len(name)], name)
+
+    def test_the_active_row_is_the_one_from_the_active_provider(self):
+        duplicated = (
+            ModelInfo(identifier="shared/model", provider="acme"),
+            ModelInfo(identifier="shared/model", provider="brio"),
+        )
+        screen = ModelPickerScreen(
+            duplicated,
+            "shared/model",
+            active_provider="brio",
+        )
+
+        self.assertFalse(screen.is_active(duplicated[0]))
+        self.assertTrue(screen.is_active(duplicated[1]))
+
+    def test_a_million_token_window_is_not_written_as_thousands(self):
+        self.assertEqual(
+            ModelInfo(identifier="one", context_window=1000000).context_label,
+            "1M",
+        )
 
 
 if __name__ == "__main__":

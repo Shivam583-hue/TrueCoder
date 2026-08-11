@@ -264,6 +264,32 @@ ChatMessage.cancelled {
     border-left: solid #707070;
 }
 
+SystemNote {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+    padding: 1 2;
+    background: $tc-surface;
+    border-left: solid $tc-blue;
+}
+
+.note-heading {
+    width: 100%;
+    color: $tc-text;
+    text-style: bold;
+}
+
+.note-body {
+    width: 100%;
+    color: $tc-text-secondary;
+}
+
+.note-detail {
+    width: 100%;
+    margin-top: 1;
+    color: $tc-blue;
+}
+
 .message-body {
     width: 100%;
     height: auto;
@@ -1164,7 +1190,10 @@ ExecutionCard.expanded .execution-details {
 }
 
 .model-item-line {
+    width: 100%;
     color: $tc-text-secondary;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 .model-dialog-empty {

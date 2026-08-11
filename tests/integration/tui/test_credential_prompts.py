@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import tempfile
 import unittest
@@ -23,9 +24,11 @@ from truecoder.tui.credentials import (
     AuthorisationScreen,
 )
 from truecoder.tui.model_picker import ModelPickerScreen
-from truecoder.tui.widgets import PromptInput
+from truecoder.tui.widgets import PromptInput, SystemNote
 
-CATALOG = (ModelInfo(identifier="openai/gpt-5", context_window=128000),)
+CATALOG = (
+    ModelInfo(identifier="openai/gpt-5", provider="acme", context_window=128000),
+)
 
 OAUTH = OAuthClient(
     client_id="client-123",
@@ -38,6 +41,22 @@ class _Client(ScriptedLLMClient):
     def __init__(self, settings: SessionSettings) -> None:
         super().__init__([])
         self._settings = settings
+
+
+def _pending_login(url: str = "https://provider.invalid/oauth/authorize?x=1"):
+    class _Pending:
+        def __init__(self) -> None:
+            self.url = url
+            self.closed = False
+            self.token = asyncio.get_event_loop().create_future()
+
+        async def wait(self, *, timeout: float = 300.0):
+            return await self.token
+
+        async def close(self) -> None:
+            self.closed = True
+
+    return _Pending()
 
 
 def _settings(*, credential, oauth=None) -> SessionSettings:
@@ -62,6 +81,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
             "truecoder.providers.store.default_settings_path",
             "truecoder.providers.keys.default_keys_path",
             "truecoder.providers.tokens.default_tokens_path",
+            "truecoder.providers.configuration.default_providers_config_path",
         ):
             name = (
                 target.rsplit(".", 1)[-1].replace("default_", "").replace("_path", "")
@@ -81,7 +101,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         )
         return TrueCoderApp(agent)
 
-    async def _pick(self, app, pilot, model: str = "openai/gpt-5") -> None:
+    async def _pick(self, app, pilot, model: ModelInfo | None = None) -> None:
         app.query_one(PromptInput).text = "/models"
         await pilot.press("enter")
         await wait_until(
@@ -89,7 +109,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
             lambda: isinstance(app.screen, ModelPickerScreen),
             description="the model picker",
         )
-        app.screen.dismiss(model)
+        app.screen.dismiss(model or CATALOG[0])
         await pilot.pause()
 
 
@@ -204,6 +224,148 @@ class ApiKeyPromptTests(_Base):
                 self.assertIn("•", rendered)
 
 
+class CrossProviderTests(_Base):
+    def _configure(self, *, brio_oauth: bool) -> None:
+        brio: dict[str, object] = {
+            "name": "brio",
+            "base_url": "https://api.brio.invalid/v1",
+        }
+        if brio_oauth:
+            brio["oauth"] = {
+                "client_id": "client-123",
+                "authorize_url": "https://provider.invalid/oauth/authorize",
+                "token_url": "https://provider.invalid/oauth/token",
+            }
+        (self.root / "providers_config.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "providers": [
+                        {"name": "acme", "base_url": "https://api.acme.invalid/v1"},
+                        brio,
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    async def _listing(provider, credential, *, refresh=False):
+        return {
+            "acme": (ModelInfo(identifier="acme/starter", provider="acme"),),
+            "brio": (ModelInfo(identifier="brio/large", provider="brio"),),
+        }.get(provider.name, ())
+
+    def _catalog(self):
+        return patch(
+            "truecoder.providers.catalog.load_models",
+            side_effect=self._listing,
+        )
+
+    async def test_the_picker_lists_models_from_every_provider(self):
+        self._configure(brio_oauth=False)
+        app = self._app(_settings(credential=ApiKey("sk-acme")))
+
+        with patch.dict(os.environ, {"MODEL": "acme/starter"}), self._catalog():
+            async with app.run_test(size=(120, 40)) as pilot:
+                app.query_one(PromptInput).text = "/models"
+                await pilot.press("enter")
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ModelPickerScreen),
+                    description="the model picker",
+                )
+
+                listed = [model.identifier for model in app.screen.models]
+                self.assertEqual(listed, ["acme/starter", "brio/large"])
+                self.assertTrue(app.screen.spans_providers)
+                app.screen.dismiss(None)
+                await pilot.pause()
+
+    async def test_a_model_from_another_provider_moves_the_session_to_it(self):
+        self._configure(brio_oauth=False)
+        app = self._app(_settings(credential=ApiKey("sk-acme")))
+
+        with patch.dict(os.environ, {"MODEL": "acme/starter"}), self._catalog():
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(
+                    app,
+                    pilot,
+                    ModelInfo(identifier="brio/large", provider="brio"),
+                )
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ApiKeyScreen),
+                    description="the api key prompt",
+                )
+
+                settings = app.agent.llm_client.settings
+                self.assertEqual(settings.provider.name, "brio")
+                self.assertEqual(settings.model, "brio/large")
+                self.assertEqual(app.screen.provider, "brio")
+                self.assertIn("brio", (self.root / "settings.json").read_text())
+
+                app.screen.dismiss(None)
+                await pilot.pause()
+
+    async def test_a_remembered_key_for_that_provider_is_reused_without_asking(self):
+        from truecoder.providers.keys import store_key
+
+        self._configure(brio_oauth=False)
+        store_key("brio", ApiKey("sk-brio"), self.root / "keys.json")
+        app = self._app(_settings(credential=ApiKey("sk-acme")))
+
+        with patch.dict(os.environ, {"MODEL": "acme/starter"}), self._catalog():
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(
+                    app,
+                    pilot,
+                    ModelInfo(identifier="brio/large", provider="brio"),
+                )
+                await pilot.pause()
+
+                settings = app.agent.llm_client.settings
+                self.assertEqual(settings.provider.name, "brio")
+                self.assertEqual(settings.credential, ApiKey("sk-brio"))
+                self.assertNotIsInstance(app.screen, ApiKeyScreen)
+
+    async def test_an_oauth_provider_starts_a_sign_in_rather_than_a_key_prompt(self):
+        self._configure(brio_oauth=True)
+        app = self._app(_settings(credential=ApiKey("sk-acme")))
+        pending = _pending_login()
+        opened: list[str] = []
+
+        async def begin(client, *, provider=""):
+            return pending
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            self._catalog(),
+            patch("truecoder.providers.login.begin_login", side_effect=begin),
+            patch(
+                "truecoder.providers.login.open_in_browser",
+                side_effect=lambda target: (opened.append(target), True)[1],
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(
+                    app,
+                    pilot,
+                    ModelInfo(identifier="brio/large", provider="brio"),
+                )
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, AuthorisationScreen),
+                    description="the authorisation screen",
+                )
+
+                self.assertEqual(app.agent.llm_client.settings.provider.name, "brio")
+                self.assertEqual(opened, [pending.url])
+
+                app.screen.dismiss(False)
+                await pilot.pause()
+
+
 class LoginCommandTests(_Base):
     async def _run(self, app, pilot, command: str) -> None:
         app.query_one(PromptInput).text = command
@@ -268,19 +430,7 @@ class LoginCommandTests(_Base):
 
 class AuthorisationPromptTests(_Base):
     def _pending(self, url: str = "https://provider.invalid/oauth/authorize?x=1"):
-        class _Pending:
-            def __init__(self) -> None:
-                self.url = url
-                self.closed = False
-                self.token = asyncio.get_event_loop().create_future()
-
-            async def wait(self, *, timeout: float = 300.0):
-                return await self.token
-
-            async def close(self) -> None:
-                self.closed = True
-
-        return _Pending()
+        return _pending_login(url)
 
     async def test_choosing_an_oauth_model_shows_the_link_and_opens_a_browser(self):
         app = self._app(_settings(credential=None, oauth=OAUTH))
@@ -357,6 +507,76 @@ class AuthorisationPromptTests(_Base):
 
                 app.screen.dismiss(False)
                 await pilot.pause()
+
+    async def test_the_link_outlives_the_dialog_in_the_transcript(self):
+        app = self._app(_settings(credential=None, oauth=OAUTH))
+        pending = self._pending()
+
+        async def begin(client, *, provider=""):
+            return pending
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", return_value=CATALOG),
+            patch("truecoder.providers.login.begin_login", side_effect=begin),
+            patch("truecoder.providers.login.open_in_browser", return_value=True),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, AuthorisationScreen),
+                    description="the authorisation screen",
+                )
+
+                app.screen.dismiss(False)
+                await wait_until(
+                    pilot,
+                    lambda: not isinstance(app.screen, AuthorisationScreen),
+                    description="the authorisation screen to close",
+                )
+
+                notes = list(app.query(SystemNote))
+                self.assertEqual(len(notes), 1)
+                self.assertEqual(notes[0].detail, pending.url)
+
+                rendered = "".join(
+                    "".join(segment.text for segment in strip)
+                    for strip in app.screen._compositor.render_strips()
+                )
+                self.assertIn("provider.invalid", rendered)
+
+    async def test_a_new_chat_clears_the_sign_in_note(self):
+        app = self._app(_settings(credential=None, oauth=OAUTH))
+        pending = self._pending()
+
+        async def begin(client, *, provider=""):
+            return pending
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", return_value=CATALOG),
+            patch("truecoder.providers.login.begin_login", side_effect=begin),
+            patch("truecoder.providers.login.open_in_browser", return_value=True),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, AuthorisationScreen),
+                    description="the authorisation screen",
+                )
+                app.screen.dismiss(False)
+                await wait_until(
+                    pilot,
+                    lambda: bool(app.query(SystemNote)),
+                    description="the sign-in note",
+                )
+
+                await app.action_new_chat()
+                await pilot.pause()
+
+                self.assertEqual(list(app.query(SystemNote)), [])
 
     async def test_the_link_can_be_copied(self):
         app = self._app(_settings(credential=None, oauth=OAUTH))
