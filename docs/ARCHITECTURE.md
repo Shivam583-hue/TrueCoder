@@ -1804,12 +1804,30 @@ wrote. Two providers may offer the same identifier, so the active row is the one
 whose provider matches as well; without that the marker lands on the wrong row the
 moment two catalogs overlap.
 
-The provider column appears only when more than one provider contributed, because
-a column repeating the same value on every row is noise. Rows are padded to widths
-computed from the data rather than joined with fixed spacing, so identifiers,
-providers, and context windows line up down the list. A row too wide for a narrow
-terminal is clipped with an ellipsis rather than wrapped, since a wrapped row turns
-a list into paragraphs and costs more than the character it saves.
+Every list says who serves it. A model identifier looks like a provider and is not
+one: a gateway's catalog is full of names like `openai/gpt-5.6-sol` and
+`anthropic/claude-opus-5`, all of them served by the gateway and reachable with the
+gateway's key. A list that shows those identifiers and nothing else invites the
+reader to conclude they have picked OpenAI, and then the absence of a sign-in
+prompt looks like a bug rather than the correct answer for a provider already
+connected. The column was originally hidden when only one provider contributed, on
+the theory that a repeated value is noise. It is not noise; it is the answer to the
+question the identifiers provoke. One provider is named once above the list, and
+several are named per row, which spends the width where it actually distinguishes
+something.
+
+A provider with no name of its own is shown by host rather than by the word
+`default`, so a configuration that came from `BASE_URL` reads as `openrouter.ai`
+instead of a placeholder that tells the reader nothing. The same label is used
+wherever a provider is mentioned to a person, while the name remains the key
+everything is stored under, because the two jobs are different and conflating them
+is how storage ends up keyed by a display string.
+
+Rows are padded to widths computed from the data rather than joined with fixed
+spacing, so identifiers, providers, and context windows line up down the list. A
+row too wide for a narrow terminal is clipped with an ellipsis rather than wrapped,
+since a wrapped row turns a list into paragraphs and costs more than the character
+it saves.
 
 ## Commands typed into the composer
 
@@ -1979,6 +1997,13 @@ that runs is the one that provider actually supports: a browser sign-in when an
 OAuth client is configured, and a prompt for an API key otherwise. Nothing is
 asked when a usable credential already exists, because a prompt that appears when
 it is not needed teaches people to dismiss prompts.
+
+A provider that offers only one way in does not ask which way, but it does say why.
+Someone who expected a choice and got a key prompt has no way to tell whether the
+browser option is missing, broken, or simply not configured here, so the prompt
+names the provider and states that no browser sign-in is configured for it. An
+interface that silently offers less than the user expected is indistinguishable
+from one that is failing.
 
 Providers may also need headers of their own, so a provider can declare them and
 they are sent with every request. One header is refused: a configuration file
