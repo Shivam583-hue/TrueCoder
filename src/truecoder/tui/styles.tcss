@@ -1213,6 +1213,7 @@ ExecutionCard.expanded .execution-details {
 /* Credential dialogs */
 #api-key-dialog,
 #credential-choice-dialog,
+#device-code-dialog,
 #authorisation-dialog {
     width: 74;
     max-width: 92%;
@@ -1260,9 +1261,38 @@ ExecutionCard.expanded .execution-details {
 }
 
 #authorisation-actions,
-#credential-choice-actions {
+#credential-choice-actions,
+#device-actions {
     width: 100%;
     height: auto;
+}
+
+#device-actions Button {
+    width: auto;
+    height: 3;
+    margin: 0 2 1 0;
+}
+
+#device-user-code {
+    width: 100%;
+    height: 1;
+    margin: 1 0;
+    color: $tc-orange;
+    text-style: bold;
+    text-align: center;
+}
+
+#device-url {
+    width: 100%;
+    height: auto;
+    max-height: 3;
+    margin-bottom: 1;
+    padding: 0 1;
+    color: $tc-blue;
+    background: $tc-surface-raised;
+    border-left: solid $tc-blue;
+    overflow-y: auto;
+    scrollbar-size: 1 1;
 }
 
 #credential-choice-actions Button {

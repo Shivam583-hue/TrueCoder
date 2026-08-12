@@ -20,11 +20,13 @@ from truecoder.tui.credentials import (
     BROWSER_OPENED,
     BROWSER_REFUSED,
     COPIED_MESSAGE,
+    DEVICE_CHOICE,
     KEY_CHOICE,
     OAUTH_CHOICE,
     ApiKeyScreen,
     AuthorisationScreen,
     CredentialChoiceScreen,
+    DeviceCodeScreen,
 )
 from truecoder.tui.model_picker import ModelPickerScreen
 from truecoder.tui.widgets import PromptInput, SystemNote
@@ -412,7 +414,9 @@ class CrossProviderTests(_Base):
 
                 self.assertEqual(app.screen.provider, "brio")
                 self.assertEqual(app.agent.llm_client.settings.provider.name, "acme")
-                self.assertEqual(app.agent.llm_client.settings.credential, ApiKey("sk-acme"))
+                self.assertEqual(
+                    app.agent.llm_client.settings.credential, ApiKey("sk-acme")
+                )
 
                 signed_in = True
                 pending.token.set_result(
@@ -681,6 +685,189 @@ class CredentialChoiceTests(_Base):
                 self.assertIn("Browser sign-in", rendered)
                 self.assertIn("API key", rendered)
                 self.assertIn("esc cancel", rendered)
+
+
+class DeviceCodeTests(_Base):
+    def _oauth(self, *, device: bool):
+        return OAuthClient(
+            client_id="client-123",
+            authorize_url="https://provider.invalid/oauth/authorize",
+            token_url="https://provider.invalid/oauth/token",
+            device_url="https://provider.invalid/oauth/device" if device else "",
+        )
+
+    def _grant(self):
+        from truecoder.providers.device import DeviceGrant
+
+        return DeviceGrant(
+            device_code="dc-1",
+            user_code="WDJB-MJHT",
+            verification_url="https://provider.invalid/activate",
+        )
+
+    async def test_a_provider_without_a_device_url_never_offers_the_code(self):
+        app = self._app(_settings(credential=None, oauth=self._oauth(device=False)))
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", return_value=CATALOG),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, CredentialChoiceScreen),
+                    description="the connection choice",
+                )
+
+                self.assertFalse(app.screen.device)
+                self.assertFalse(app.screen.query("#choose-device"))
+
+                app.screen.dismiss(None)
+                await pilot.pause()
+
+    async def test_a_device_provider_offers_a_third_way(self):
+        app = self._app(_settings(credential=None, oauth=self._oauth(device=True)))
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", return_value=CATALOG),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, CredentialChoiceScreen),
+                    description="the connection choice",
+                )
+
+                self.assertTrue(app.screen.device)
+                self.assertTrue(app.screen.query("#choose-device"))
+
+                app.screen.dismiss(None)
+                await pilot.pause()
+
+    async def test_a_code_is_shown_and_the_token_is_adopted(self):
+        app = self._app(_settings(credential=None, oauth=self._oauth(device=True)))
+        grant = self._grant()
+        approved = asyncio.get_event_loop().create_future()
+
+        async def request(client):
+            return grant
+
+        async def poll(client, issued, *, provider="", **rest):
+            return await approved
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", return_value=CATALOG),
+            patch(
+                "truecoder.providers.device.request_device_grant", side_effect=request
+            ),
+            patch("truecoder.providers.device.poll_device_grant", side_effect=poll),
+            patch("truecoder.providers.login.open_in_browser", return_value=True),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot)
+                await self._connect(app, pilot, DEVICE_CHOICE)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, DeviceCodeScreen),
+                    description="the device code screen",
+                )
+
+                self.assertEqual(app.screen.user_code, "WDJB-MJHT")
+                notes = list(app.query(SystemNote))
+                self.assertTrue(any("WDJB-MJHT" in note.message for note in notes))
+
+                approved.set_result(
+                    OAuthToken(access_token="at-device", provider="acme")
+                )
+                await wait_until(
+                    pilot,
+                    lambda: app.agent.llm_client.settings.credential is not None,
+                    description="the token to be adopted",
+                )
+
+                self.assertIn(
+                    "at-device",
+                    (self.root / "tokens.json").read_text(),
+                )
+
+    async def test_the_code_can_be_copied(self):
+        app = self._app(_settings(credential=None, oauth=self._oauth(device=True)))
+        screen = DeviceCodeScreen("acme", "WDJB-MJHT", "https://provider.invalid/a")
+
+        with patch.dict(os.environ, {"MODEL": "acme/starter"}):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await app.push_screen(screen)
+                await pilot.pause()
+                await pilot.press("c")
+                await pilot.pause()
+
+                self.assertEqual(app.clipboard, "WDJB-MJHT")
+
+    async def test_cancelling_the_code_leaves_the_credential_alone(self):
+        app = self._app(_settings(credential=None, oauth=self._oauth(device=True)))
+        grant = self._grant()
+        waiting = asyncio.get_event_loop().create_future()
+
+        async def request(client):
+            return grant
+
+        async def poll(client, issued, *, provider="", **rest):
+            return await waiting
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch("truecoder.providers.catalog.load_models", return_value=CATALOG),
+            patch(
+                "truecoder.providers.device.request_device_grant", side_effect=request
+            ),
+            patch("truecoder.providers.device.poll_device_grant", side_effect=poll),
+            patch("truecoder.providers.login.open_in_browser", return_value=True),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._pick(app, pilot)
+                await self._connect(app, pilot, DEVICE_CHOICE)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, DeviceCodeScreen),
+                    description="the device code screen",
+                )
+
+                app.screen.dismiss(False)
+                await wait_until(
+                    pilot,
+                    lambda: not isinstance(app.screen, DeviceCodeScreen),
+                    description="the device screen to close",
+                )
+
+                self.assertIsNone(app.agent.llm_client.settings.credential)
+
+    async def test_a_refused_grant_is_reported_not_raised(self):
+        app = self._app(_settings(credential=None, oauth=self._oauth(device=True)))
+        notices: list[str] = []
+
+        async def request(client):
+            raise OAuthError("the provider refused a device code")
+
+        with (
+            patch.dict(os.environ, {"MODEL": "acme/starter"}),
+            patch(
+                "truecoder.providers.device.request_device_grant", side_effect=request
+            ),
+            patch.object(
+                TrueCoderApp,
+                "notify",
+                lambda self, message, **kwargs: notices.append(str(message)),
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await app._authorise_by_code(app.agent.llm_client.settings.provider)
+                await pilot.pause()
+
+                self.assertTrue(any("refused a device code" in n for n in notices))
 
 
 class LoginCommandTests(_Base):

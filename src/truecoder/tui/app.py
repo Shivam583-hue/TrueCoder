@@ -47,10 +47,12 @@ from truecoder.tui.commands import (
     unknown_command_message,
 )
 from truecoder.tui.credentials import (
+    DEVICE_CHOICE,
     OAUTH_CHOICE,
     ApiKeyScreen,
     AuthorisationScreen,
     CredentialChoiceScreen,
+    DeviceCodeScreen,
 )
 from truecoder.tui.execution_health import (
     ExecutionHealthScreen,
@@ -511,9 +513,7 @@ class TrueCoderApp(App[None]):
         if target.oauth is None:
             return await self._ask_for_api_key(target)
 
-        chosen = await self.push_screen_wait(
-            CredentialChoiceScreen(target.name, self._model_for(target))
-        )
+        chosen = await self._ask_how_to_connect(target)
         if chosen is None:
             self.notify(
                 f"{target.name} is still not connected, so requests will fail.",
@@ -523,7 +523,19 @@ class TrueCoderApp(App[None]):
             return False
         if chosen == OAUTH_CHOICE:
             return await self._authorise_provider(target)
+        if chosen == DEVICE_CHOICE:
+            return await self._authorise_by_code(target)
         return await self._ask_for_api_key(target)
+
+    async def _ask_how_to_connect(self, provider) -> str | None:
+        client = provider.oauth
+        return await self.push_screen_wait(
+            CredentialChoiceScreen(
+                provider.name,
+                self._model_for(provider),
+                device=client is not None and client.supports_device_code,
+            )
+        )
 
     def _model_for(self, provider) -> str:
         settings = self.agent.llm_client.settings
@@ -611,18 +623,83 @@ class TrueCoderApp(App[None]):
             )
         return True
 
+    async def _authorise_by_code(self, provider) -> bool:
+        from truecoder.providers.device import poll_device_grant, request_device_grant
+        from truecoder.providers.login import open_in_browser
+        from truecoder.providers.oauth import OAuthError
+        from truecoder.providers.tokens import store_token
+
+        client = provider.oauth
+        if client is None or not client.supports_device_code:
+            self.notify(
+                f"{provider.name} does not offer a device code flow.",
+                severity="warning",
+            )
+            return False
+
+        try:
+            grant = await request_device_grant(client)
+        except OAuthError as error:
+            self.notify(f"Authorisation failed: {error}", severity="error", timeout=12)
+            return False
+
+        opened = open_in_browser(grant.best_url)
+        await self._note_device_code(provider.name, grant)
+        screen = DeviceCodeScreen(
+            provider.name,
+            grant.user_code,
+            grant.best_url,
+            browser_opened=opened,
+        )
+        waiting = asyncio.ensure_future(
+            poll_device_grant(client, grant, provider=provider.name)
+        )
+        cancelled = self.push_screen_wait(screen)
+
+        try:
+            token = await self._await_authorisation(waiting, cancelled, screen)
+        except OAuthError as error:
+            self.notify(f"Authorisation failed: {error}", severity="error", timeout=12)
+            return False
+
+        if token is None:
+            self.notify("Authorisation cancelled.", severity="warning")
+            return False
+
+        self._adopt(provider, token)
+        if store_token(token):
+            self.notify(f"Signed in to {provider.name}.")
+        else:
+            self.notify(
+                "Signed in, but the token could not be saved.",
+                severity="warning",
+            )
+        return True
+
+    async def _note_device_code(self, provider: str, grant) -> None:
+        note = SystemNote(
+            SIGN_IN_HEADING,
+            f"Enter the code {grant.user_code} to authorise {provider}.",
+            grant.best_url,
+        )
+        await self._show_note(note)
+
     async def _note_sign_in(self, provider: str, url: str, *, opened: bool) -> None:
         from truecoder.tui.credentials import (
             NOTE_WITH_BROWSER,
             NOTE_WITHOUT_BROWSER,
         )
 
-        note = SystemNote(
-            SIGN_IN_HEADING,
-            f"Authorise TrueCoder with {provider}. "
-            f"{NOTE_WITH_BROWSER if opened else NOTE_WITHOUT_BROWSER}",
-            url,
+        await self._show_note(
+            SystemNote(
+                SIGN_IN_HEADING,
+                f"Authorise TrueCoder with {provider}. "
+                f"{NOTE_WITH_BROWSER if opened else NOTE_WITHOUT_BROWSER}",
+                url,
+            )
         )
+
+    async def _show_note(self, note: SystemNote) -> None:
         self.query_one("#empty-state", EmptyState).styles.display = "none"
         self.screen.remove_class("empty-chat")
         transcript = self.query_one("#transcript", VerticalScroll)

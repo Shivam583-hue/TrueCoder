@@ -22,6 +22,8 @@ NOTE_WITH_BROWSER: Final = (
 NOTE_WITHOUT_BROWSER: Final = "No browser could be opened, so open this link yourself."
 OAUTH_CHOICE: Final = "oauth"
 KEY_CHOICE: Final = "key"
+DEVICE_CHOICE: Final = "device"
+DEVICE_WAITING: Final = "Waiting for you to approve this code..."
 
 
 def provider_label(provider: str) -> str:
@@ -37,9 +39,10 @@ class CredentialChoiceScreen(ModalScreen["str | None"]):
         Binding("right", "focus_next", "Next", show=False),
     ]
 
-    def __init__(self, provider: str, model: str = "") -> None:
+    def __init__(self, provider: str, model: str = "", *, device: bool = False) -> None:
         self.provider = provider
         self.model = model
+        self.device = device
         super().__init__()
 
     def compose(self) -> ComposeResult:
@@ -48,6 +51,8 @@ class CredentialChoiceScreen(ModalScreen["str | None"]):
             yield Static(self._explanation(), classes="credential-body", markup=False)
             with Horizontal(id="credential-choice-actions"):
                 yield Button("Browser sign-in", id="choose-oauth", variant="primary")
+                if self.device:
+                    yield Button("Enter a code", id="choose-device")
                 yield Button("API key", id="choose-key")
             yield Static(
                 "Either one works. A browser sign-in uses your existing "
@@ -77,8 +82,77 @@ class CredentialChoiceScreen(ModalScreen["str | None"]):
     def choose_key(self) -> None:
         self.dismiss(KEY_CHOICE)
 
+    @on(Button.Pressed, "#choose-device")
+    def choose_device(self) -> None:
+        self.dismiss(DEVICE_CHOICE)
+
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class DeviceCodeScreen(ModalScreen[bool]):
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("escape", "cancel", "Close", show=False),
+        Binding("c", "copy", "Copy code", show=False),
+    ]
+
+    def __init__(
+        self,
+        provider: str,
+        user_code: str,
+        url: str,
+        *,
+        browser_opened: bool = False,
+    ) -> None:
+        self.provider = provider
+        self.user_code = user_code
+        self.url = url
+        self.browser_opened = browser_opened
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="device-code-dialog"):
+            yield Static("Enter a code", classes="credential-title")
+            yield Static(
+                f"Open this page on any device and enter the code to "
+                f"authorise {self.provider}.",
+                classes="credential-body",
+                markup=False,
+            )
+            yield Static(self.user_code, id="device-user-code", markup=False)
+            yield Static(self.url, id="device-url", markup=False)
+            with Horizontal(id="device-actions"):
+                yield Button("Copy code", id="copy-code", variant="primary")
+                yield Button("Copy link", id="copy-device-link")
+            yield Static(
+                DEVICE_WAITING,
+                classes="credential-note",
+                id="device-status",
+                markup=False,
+            )
+            yield Static("c copy   esc cancel", classes="credential-help")
+
+    def on_mount(self) -> None:
+        self.query_one("#copy-code", Button).focus()
+
+    def report(self, message: str) -> None:
+        self.query_one("#device-status", Static).update(message)
+
+    @on(Button.Pressed, "#copy-code")
+    def copy_code(self) -> None:
+        self.app.copy_to_clipboard(self.user_code)
+        self.report(f"Code {self.user_code} copied to the clipboard.")
+
+    @on(Button.Pressed, "#copy-device-link")
+    def copy_link(self) -> None:
+        self.app.copy_to_clipboard(self.url)
+        self.report(COPIED_MESSAGE)
+
+    def action_copy(self) -> None:
+        self.copy_code()
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
 
 
 class ApiKeyScreen(ModalScreen[str | None]):

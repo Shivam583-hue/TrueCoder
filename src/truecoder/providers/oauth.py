@@ -45,6 +45,7 @@ class OAuthClient:
     api_base_url: str = ""
     extra_parameters: tuple[tuple[str, str], ...] = ()
     redirect_port: int = 0
+    device_url: str = ""
 
     def __post_init__(self) -> None:
         for name in ("client_id", "authorize_url", "token_url"):
@@ -69,10 +70,16 @@ class OAuthClient:
             raise OAuthError("redirect_port must be a whole number")
         if not 0 <= self.redirect_port <= MAX_PORT:
             raise OAuthError(f"redirect_port must be between 0 and {MAX_PORT}")
+        if self.device_url and urlparse(self.device_url).scheme != "https":
+            raise OAuthError("device_url must be an https URL")
 
     @property
     def carries_account(self) -> bool:
         return bool(self.account_claim and self.account_header)
+
+    @property
+    def supports_device_code(self) -> bool:
+        return bool(self.device_url)
 
 
 @dataclass(frozen=True, slots=True)

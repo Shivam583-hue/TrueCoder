@@ -29,6 +29,7 @@ _OAUTH_FIELDS: Final = frozenset(
         "api_base_url",
         "extra_parameters",
         "redirect_port",
+        "device_url",
     }
 )
 
@@ -190,6 +191,7 @@ def _oauth(name: str, value: object) -> OAuthClient | None:
                 (str(key), str(item)) for key, item in sorted((extra or {}).items())
             ),
             redirect_port=port,
+            device_url=str(value.get("device_url", "")),
         )
     except OAuthError as error:
         raise ProviderConfigError(
