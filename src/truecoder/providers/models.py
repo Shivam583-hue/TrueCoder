@@ -3,14 +3,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol, runtime_checkable
-from urllib.parse import urlparse
 
 from truecoder.providers.oauth import OAuthClient
 
 MAX_MODEL_ID_CHARACTERS: Final = 200
 MAX_MODEL_NAME_CHARACTERS: Final = 120
 DEFAULT_PROVIDER_NAME: Final = "default"
-UNNAMED_PROVIDER_LABEL: Final = "the configured provider"
+MAX_DISPLAY_NAME_CHARACTERS: Final = 60
 MAX_HEADERS: Final = 16
 MAX_HEADER_NAME_CHARACTERS: Final = 64
 MAX_HEADER_VALUE_CHARACTERS: Final = 1024
@@ -103,10 +102,15 @@ class Provider:
     base_url: str | None = None
     oauth: OAuthClient | None = None
     header_pairs: tuple[tuple[str, str], ...] = ()
+    display_name: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
             raise CredentialError("a provider needs a name")
+        if not isinstance(self.display_name, str):
+            raise CredentialError("display_name must be text")
+        if len(self.display_name) > MAX_DISPLAY_NAME_CHARACTERS:
+            raise CredentialError("display_name is longer than allowed")
         if self.base_url is not None and not isinstance(self.base_url, str):
             raise CredentialError("base_url must be text or None")
         if self.oauth is not None and not isinstance(self.oauth, OAuthClient):
@@ -118,11 +122,12 @@ class Provider:
         return dict(self.header_pairs)
 
     @property
+    def is_named(self) -> bool:
+        return bool(self.display_name) or self.name != DEFAULT_PROVIDER_NAME
+
+    @property
     def label(self) -> str:
-        if self.name != DEFAULT_PROVIDER_NAME:
-            return self.name
-        host = urlparse(self.base_url or "").netloc
-        return host.removeprefix("www.") if host else UNNAMED_PROVIDER_LABEL
+        return self.display_name or self.name
 
     @property
     def models_url(self) -> str:

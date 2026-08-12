@@ -105,7 +105,11 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
         names = {model.provider for model in self.models}
         if len(names) != 1:
             return ""
-        return self.source_of(names.pop())
+        only = names.pop()
+        label = self.sources.get(only, "")
+        return label if label and label != only else ""
+
+
 
     @property
     def spans_providers(self) -> bool:

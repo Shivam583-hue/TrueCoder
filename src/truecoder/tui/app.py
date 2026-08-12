@@ -479,7 +479,9 @@ class TrueCoderApp(App[None]):
         self._model_name = model
         self.query_one(Composer).set_model_name(model)
 
-        arrival = f"Now answering with {model} via {provider.label}"
+        arrival = f"Now answering with {model}"
+        if provider.is_named:
+            arrival += f" via {provider.label}"
         if save_selection(StoredSelection(model=model, provider=provider.name)):
             self.notify(arrival)
         else:

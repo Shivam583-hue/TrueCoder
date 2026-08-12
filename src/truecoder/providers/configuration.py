@@ -17,7 +17,9 @@ MAX_SCOPES: Final = 32
 MAX_EXTRA_PARAMETERS: Final = 16
 
 _ROOT_FIELDS: Final = frozenset({"version", "providers"})
-_PROVIDER_FIELDS: Final = frozenset({"name", "base_url", "oauth", "headers"})
+_PROVIDER_FIELDS: Final = frozenset(
+    {"name", "base_url", "oauth", "headers", "display_name"}
+)
 _OAUTH_FIELDS: Final = frozenset(
     {
         "client_id",
@@ -129,6 +131,7 @@ def _provider(entry: object) -> Provider:
             base_url=base_url,
             oauth=_oauth(name, entry.get("oauth")),
             header_pairs=_headers(name, entry.get("headers")),
+            display_name=str(entry.get("display_name", "")),
         )
     except (CredentialError, OAuthError) as error:
         raise ProviderConfigError(f"provider {name!r} is unusable: {error}") from None

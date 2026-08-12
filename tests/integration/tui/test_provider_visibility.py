@@ -83,7 +83,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
 
 
 class ProviderVisibilityTests(_Base):
-    async def test_one_provider_is_still_named_above_the_list(self):
+    async def test_an_unbranded_provider_is_never_named_to_the_user(self):
         app = self._app(ApiKey("sk-or-1"))
 
         with (
@@ -93,32 +93,39 @@ class ProviderVisibilityTests(_Base):
             async with app.run_test(size=(120, 40)) as pilot:
                 await self._open_picker(app, pilot)
 
-                self.assertEqual(app.screen.served_by(), "openrouter.ai")
+                self.assertEqual(app.screen.served_by(), "")
 
                 rendered = "".join(
                     "".join(segment.text for segment in strip)
                     for strip in app.screen._compositor.render_strips()
                 )
-                self.assertIn("Served by openrouter.ai", rendered)
+                self.assertNotIn("Served by", rendered)
+                self.assertNotIn("openrouter", rendered)
 
                 app.screen.dismiss(None)
                 await pilot.pause()
 
-    async def test_the_unnamed_provider_is_shown_by_host_not_as_default(self):
+    async def test_a_display_name_is_what_the_user_sees(self):
+        provider = Provider(
+            name="default",
+            base_url="https://openrouter.ai/api/v1",
+            display_name="TrueCoder Cloud",
+        )
+
+        self.assertTrue(provider.is_named)
+        self.assertEqual(provider.label, "TrueCoder Cloud")
+
+    async def test_an_unbranded_provider_is_not_named(self):
         provider = Provider(name="default", base_url="https://openrouter.ai/api/v1")
 
-        self.assertEqual(provider.label, "openrouter.ai")
-        self.assertNotIn("default", provider.label)
-
-    async def test_a_provider_with_no_base_url_still_reads_as_english(self):
-        self.assertEqual(Provider(name="default").label, "the configured provider")
+        self.assertFalse(provider.is_named)
 
     async def test_a_named_provider_keeps_its_name(self):
         self.assertEqual(
             Provider(name="acme", base_url="https://x.invalid").label, "acme"
         )
 
-    async def test_choosing_a_model_names_the_provider_that_serves_it(self):
+    async def test_the_upstream_host_never_reaches_the_notice(self):
         app = self._app(ApiKey("sk-or-1"))
         notices: list[str] = []
 
@@ -136,10 +143,10 @@ class ProviderVisibilityTests(_Base):
                 app.screen.dismiss(ROUTED[0])
                 await pilot.pause()
 
-                self.assertTrue(
-                    any("via openrouter.ai" in note for note in notices),
-                    notices,
-                )
+                joined = " ".join(notices)
+                self.assertIn("Now answering with openai/gpt-5.6-sol", joined)
+                self.assertNotIn("openrouter", joined)
+                self.assertNotIn("via", joined)
 
 
 class KeyOnlyProviderTests(_Base):
