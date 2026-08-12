@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from truecoder.providers import (
@@ -17,8 +19,12 @@ from truecoder.providers import (
     catalog_slug,
     fetch_models,
     load_catalog,
+    load_models_dev,
     merge_models,
+    parse_models_dev,
+    read_models_dev_cache,
     selectable_providers,
+    write_models_dev_cache,
 )
 from truecoder.providers.catalog import EMPTY_CATALOG_REASON
 from truecoder.providers.oauth import OAuthToken
@@ -80,6 +86,111 @@ class FetchCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.headers["ChatGPT-Account-Id"], "acct-1")
         self.assertEqual(client.headers["originator"], "truecoder")
         self.assertEqual(models[0].identifier, "gpt-5.2")
+
+
+MODELS_DEV = {
+    "openai": {
+        "id": "openai",
+        "name": "OpenAI",
+        "env": ["OPENAI_API_KEY"],
+        "npm": "@ai-sdk/openai",
+        "models": {
+            "gpt-5.2": {
+                "id": "gpt-5.2",
+                "name": "GPT-5.2",
+                "release_date": "2025-12-11",
+                "limit": {"context": 400000, "output": 128000},
+            },
+            "retired": {
+                "id": "retired",
+                "name": "Retired",
+                "status": "deprecated",
+                "limit": {"context": 1, "output": 1},
+            },
+        },
+    },
+    "openrouter": {
+        "id": "openrouter",
+        "name": "OpenRouter",
+        "env": ["OPENROUTER_API_KEY"],
+        "npm": "@openrouter/ai-sdk-provider",
+        "api": "https://openrouter.ai/api/v1",
+        "models": {
+            "openai/gpt-5.2": {
+                "id": "openai/gpt-5.2",
+                "name": "GPT-5.2",
+                "release_date": "2025-12-11",
+                "limit": {"context": 400000, "output": 128000},
+            }
+        },
+    },
+    "anthropic": {
+        "id": "anthropic",
+        "name": "Anthropic",
+        "env": ["ANTHROPIC_API_KEY"],
+        "npm": "@ai-sdk/anthropic",
+        "api": "https://api.anthropic.com/v1",
+        "models": {},
+    },
+}
+
+
+class ModelsDevTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        import tempfile
+
+        self._directory = tempfile.TemporaryDirectory()
+        self.path = Path(self._directory.name) / "models.json"
+        self.addCleanup(self._directory.cleanup)
+
+    def test_the_registry_preserves_provider_identity(self):
+        slices = parse_models_dev(MODELS_DEV)
+        by_provider = {entry.provider.name: entry for entry in slices}
+
+        direct = by_provider["openai"].models[0]
+        routed = by_provider["openrouter"].models[0]
+        self.assertEqual(direct.qualified_identifier, "openai/gpt-5.2")
+        self.assertEqual(
+            routed.qualified_identifier,
+            "openrouter/openai/gpt-5.2",
+        )
+
+    def test_provider_metadata_selects_the_transport_and_environment(self):
+        slices = parse_models_dev(MODELS_DEV)
+        providers = {entry.provider.name: entry.provider for entry in slices}
+
+        self.assertEqual(providers["openai"].adapter, "openai")
+        self.assertEqual(providers["anthropic"].adapter, "anthropic")
+        self.assertEqual(
+            providers["openrouter"].env_names,
+            ("OPENROUTER_API_KEY",),
+        )
+
+    def test_deprecated_models_are_not_offered(self):
+        slices = parse_models_dev(MODELS_DEV)
+        openai = next(item for item in slices if item.provider.name == "openai")
+
+        self.assertEqual([model.identifier for model in openai.models], ["gpt-5.2"])
+
+    async def test_a_fresh_cache_avoids_a_network_request(self):
+        raw = json.dumps(MODELS_DEV).encode()
+        write_models_dev_cache(self.path, raw)
+
+        with patch(
+            "truecoder.providers.catalog.fetch_models_dev"
+        ) as fetch:
+            slices = await load_models_dev(path=self.path)
+
+        fetch.assert_not_called()
+        self.assertTrue(slices)
+
+    def test_a_registry_cache_can_be_read_back(self):
+        write_models_dev_cache(self.path, json.dumps(MODELS_DEV).encode())
+
+        slices = read_models_dev_cache(self.path)
+
+        self.assertIsNotNone(slices)
+        self.assertEqual(len(slices or ()), 3)
 
 
 class SlugTests(unittest.TestCase):

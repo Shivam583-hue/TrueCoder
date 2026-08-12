@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,7 @@ from platformdirs import user_cache_path
 from truecoder.providers.models import (
     MAX_MODEL_ID_CHARACTERS,
     MAX_MODEL_NAME_CHARACTERS,
+    MAX_RELEASE_DATE_CHARACTERS,
     Credential,
     ModelInfo,
     Provider,
@@ -20,10 +22,14 @@ from truecoder.providers.models import (
 
 MAX_MODELS: Final = 1000
 MAX_RESPONSE_BYTES: Final = 4 * 1024 * 1024
+MAX_MODELS_DEV_RESPONSE_BYTES: Final = 16 * 1024 * 1024
 CACHE_TTL_SECONDS: Final = 6 * 60 * 60
+MODELS_DEV_CACHE_TTL_SECONDS: Final = 5 * 60
 REQUEST_TIMEOUT_SECONDS: Final = 20.0
 MAX_SLUG_CHARACTERS: Final = 40
+MAX_PROVIDERS: Final = 256
 EMPTY_CATALOG_REASON: Final = "the provider listed no models"
+MODELS_DEV_URL: Final = "https://models.dev/api.json"
 
 _CONTEXT_KEYS: Final = (
     "context_length",
@@ -51,6 +57,10 @@ def catalog_path_for(provider: str) -> Path:
     return root / f"{catalog_slug(provider)}.json"
 
 
+def models_dev_path() -> Path:
+    return user_cache_path("truecoder", appauthor=False) / "models.json"
+
+
 def _bounded(value: object, limit: int) -> str:
     if not isinstance(value, str):
         return ""
@@ -73,6 +83,206 @@ def _context_window(entry: dict[str, Any]) -> int | None:
     if isinstance(top, dict):
         return _context_window(top)
     return None
+
+
+def _models_dev_adapter(value: object) -> str:
+    package = value if isinstance(value, str) else ""
+    if package == "@ai-sdk/anthropic":
+        return "anthropic"
+    if package == "@ai-sdk/google":
+        return "google"
+    if package == "@ai-sdk/openai":
+        return "openai"
+    return "openai-compatible"
+
+
+def _models_dev_provider(identifier: str, entry: dict[str, Any]) -> Provider:
+    from truecoder.providers.openai import openai_provider
+    from truecoder.providers.registry import openrouter_provider
+
+    api = _bounded(entry.get("api"), 2048) or None
+    env = entry.get("env")
+    env_names = tuple(
+        _bounded(name, 100)
+        for name in (env if isinstance(env, list) else [])[:16]
+        if _bounded(name, 100)
+    )
+    label = _bounded(entry.get("name"), 60) or identifier
+    package = entry.get("npm")
+
+    if identifier == "openai":
+        return openai_provider()
+    if identifier == "openrouter":
+        provider = openrouter_provider(base_url=api or "https://openrouter.ai/api/v1")
+        return Provider(
+            name=provider.name,
+            base_url=provider.base_url,
+            header_pairs=provider.header_pairs,
+            display_name=label,
+            wire_api=provider.wire_api,
+            adapter=provider.adapter,
+            env_names=env_names or provider.env_names,
+        )
+    return Provider(
+        name=identifier,
+        display_name=label,
+        base_url=api,
+        adapter=_models_dev_adapter(package),
+        env_names=env_names,
+    )
+
+
+def parse_models_dev(payload: object) -> tuple[CatalogSlice, ...]:
+    if not isinstance(payload, dict):
+        return ()
+
+    slices: list[CatalogSlice] = []
+    for key, entry in list(payload.items())[:MAX_PROVIDERS]:
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            continue
+        identifier = _bounded(entry.get("id"), MAX_MODEL_NAME_CHARACTERS)
+        identifier = identifier or _bounded(key, MAX_MODEL_NAME_CHARACTERS)
+        if not identifier:
+            continue
+        provider = _models_dev_provider(identifier, entry)
+        listed = entry.get("models")
+        if not isinstance(listed, dict):
+            listed = {}
+
+        models: list[ModelInfo] = []
+        for model_key, model_entry in list(listed.items())[:MAX_MODELS]:
+            if not isinstance(model_key, str) or not isinstance(model_entry, dict):
+                continue
+            if model_entry.get("status") == "deprecated":
+                continue
+            model_id = _bounded(
+                model_entry.get("id") or model_key,
+                MAX_MODEL_ID_CHARACTERS,
+            )
+            if not model_id:
+                continue
+            models.append(
+                ModelInfo(
+                    identifier=model_id,
+                    provider=provider.name,
+                    display_name=_bounded(
+                        model_entry.get("name"),
+                        MAX_MODEL_NAME_CHARACTERS,
+                    ),
+                    context_window=_context_window(model_entry),
+                    release_date=_bounded(
+                        model_entry.get("release_date"),
+                        MAX_RELEASE_DATE_CHARACTERS,
+                    ),
+                )
+            )
+        slices.append(
+            CatalogSlice(
+                provider,
+                tuple(
+                    sorted(
+                        models,
+                        key=lambda model: (model.release_date, model.label),
+                        reverse=True,
+                    )
+                ),
+                None if models else EMPTY_CATALOG_REASON,
+            )
+        )
+    return tuple(sorted(slices, key=lambda item: item.provider.label.casefold()))
+
+
+def decode_models_dev(raw: bytes) -> tuple[CatalogSlice, ...]:
+    if len(raw) > MAX_MODELS_DEV_RESPONSE_BYTES:
+        raise CatalogError("the Models.dev catalog was larger than allowed")
+    try:
+        payload = json.loads(raw.decode("utf-8", errors="replace"))
+    except ValueError:
+        raise CatalogError("the Models.dev catalog was not valid JSON") from None
+    slices = parse_models_dev(payload)
+    if not slices:
+        raise CatalogError("the Models.dev catalog listed no providers")
+    return slices
+
+
+def read_models_dev_cache(
+    path: Path,
+    *,
+    now: float | None = None,
+    allow_stale: bool = False,
+) -> tuple[CatalogSlice, ...] | None:
+    try:
+        stat = path.stat()
+        current = time.time() if now is None else now
+        if not allow_stale and current - stat.st_mtime > MODELS_DEV_CACHE_TTL_SECONDS:
+            return None
+        raw = path.read_bytes()
+        return decode_models_dev(raw)
+    except (OSError, CatalogError):
+        return None
+
+
+def write_models_dev_cache(path: Path, raw: bytes) -> None:
+    if len(raw) > MAX_MODELS_DEV_RESPONSE_BYTES:
+        return
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_bytes(raw)
+        temporary.replace(path)
+    except OSError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+async def fetch_models_dev(
+    *,
+    url: str = MODELS_DEV_URL,
+    timeout_seconds: float = REQUEST_TIMEOUT_SECONDS,
+) -> tuple[tuple[CatalogSlice, ...], bytes]:
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.get(
+                url,
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "truecoder/0.1.0",
+                },
+            )
+    except httpx.HTTPError as error:
+        raise CatalogError(f"the Models.dev catalog could not be fetched: {error}") from None
+    if response.status_code != 200:
+        raise CatalogError(
+            f"Models.dev returned {response.status_code} for its catalog"
+        )
+    raw = response.content
+    return decode_models_dev(raw), raw
+
+
+async def load_models_dev(
+    *,
+    path: Path | None = None,
+    refresh: bool = False,
+    url: str = MODELS_DEV_URL,
+) -> tuple[CatalogSlice, ...]:
+    target = path or models_dev_path()
+    if not refresh:
+        cached = read_models_dev_cache(target)
+        if cached is not None:
+            return cached
+    try:
+        slices, raw = await fetch_models_dev(url=url)
+    except CatalogError:
+        stale = read_models_dev_cache(target, allow_stale=True)
+        if stale is not None:
+            return stale
+        raise
+    write_models_dev_cache(target, raw)
+    return slices
 
 
 def parse_models(payload: object, provider: str) -> tuple[ModelInfo, ...]:
@@ -125,6 +335,7 @@ def encode_cache(models: tuple[ModelInfo, ...], *, fetched_at: float) -> str:
                     "provider": model.provider,
                     "name": model.display_name,
                     "context_window": model.context_window,
+                    "release_date": model.release_date,
                 }
                 for model in models
             ],
@@ -169,6 +380,10 @@ def decode_cache(
                 provider=_bounded(entry.get("provider"), MAX_MODEL_NAME_CHARACTERS),
                 display_name=_bounded(entry.get("name"), MAX_MODEL_NAME_CHARACTERS),
                 context_window=window if isinstance(window, int) else None,
+                release_date=_bounded(
+                    entry.get("release_date"),
+                    MAX_RELEASE_DATE_CHARACTERS,
+                ),
             )
         )
     return tuple(models)

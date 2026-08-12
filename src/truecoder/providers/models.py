@@ -8,6 +8,7 @@ from truecoder.providers.oauth import OAuthClient
 
 MAX_MODEL_ID_CHARACTERS: Final = 200
 MAX_MODEL_NAME_CHARACTERS: Final = 120
+MAX_RELEASE_DATE_CHARACTERS: Final = 20
 DEFAULT_PROVIDER_NAME: Final = "default"
 MAX_DISPLAY_NAME_CHARACTERS: Final = 60
 MAX_HEADERS: Final = 16
@@ -172,10 +173,15 @@ class ModelInfo:
     provider: str = DEFAULT_PROVIDER_NAME
     display_name: str = ""
     context_window: int | None = None
+    release_date: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.identifier, str) or not self.identifier.strip():
             raise CredentialError("a model needs an identifier")
+        if not isinstance(self.release_date, str):
+            raise CredentialError("release_date must be text")
+        if len(self.release_date) > MAX_RELEASE_DATE_CHARACTERS:
+            raise CredentialError("release_date is longer than allowed")
 
     @property
     def label(self) -> str:
