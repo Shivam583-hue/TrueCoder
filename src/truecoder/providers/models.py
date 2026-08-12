@@ -14,6 +14,7 @@ MAX_HEADERS: Final = 16
 MAX_HEADER_NAME_CHARACTERS: Final = 64
 MAX_HEADER_VALUE_CHARACTERS: Final = 1024
 RESERVED_HEADERS: Final = frozenset({"authorization"})
+WIRE_APIS: Final = frozenset({"chat", "responses"})
 
 
 class CredentialError(ValueError):
@@ -103,6 +104,7 @@ class Provider:
     oauth: OAuthClient | None = None
     header_pairs: tuple[tuple[str, str], ...] = ()
     display_name: str = ""
+    wire_api: str = "chat"
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -115,6 +117,8 @@ class Provider:
             raise CredentialError("base_url must be text or None")
         if self.oauth is not None and not isinstance(self.oauth, OAuthClient):
             raise CredentialError("oauth must be an OAuthClient or None")
+        if self.wire_api not in WIRE_APIS:
+            raise CredentialError(f"wire_api must be one of {sorted(WIRE_APIS)}")
         validate_headers(self.header_pairs)
 
     @property
@@ -133,6 +137,16 @@ class Provider:
     def models_url(self) -> str:
         root = (self.base_url or "https://api.openai.com/v1").rstrip("/")
         return f"{root}/models"
+
+    def models_url_for(self, credential: Credential | None) -> str:
+        if (
+            credential is not None
+            and credential.kind == "oauth"
+            and self.oauth is not None
+            and self.oauth.models_url
+        ):
+            return self.oauth.models_url
+        return self.models_url
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,9 +242,9 @@ def settings_from_environment(
     raw_key = os.getenv("API_KEY", "").strip()
     base_url = os.getenv("BASE_URL", "").strip() or None
     if base_url is None:
-        from truecoder.providers.openai import default_openai_provider
+        from truecoder.providers.openai import openai_provider
 
-        provider = default_openai_provider()
+        provider = openai_provider()
     else:
         provider = Provider(name=DEFAULT_PROVIDER_NAME, base_url=base_url)
     return SessionSettings(
@@ -266,6 +280,10 @@ def resolve_settings() -> SessionSettings:
         settings.provider = chosen
 
     remembered = stored_credential(settings.provider.name)
+    if remembered is None and settings.provider.name == "openai":
+        from truecoder.providers.keys import load_keys
+
+        remembered = load_keys().get(DEFAULT_PROVIDER_NAME)
     if remembered is not None:
         settings.credential = remembered
     return settings

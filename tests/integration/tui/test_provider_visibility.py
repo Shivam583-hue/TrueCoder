@@ -12,7 +12,7 @@ from tests.helpers.tui import wait_until
 from tests.integration.tui.test_app import FixedTokenCounter, ScriptedLLMClient
 from truecoder.agent import Agent, ContextBuilder
 from truecoder.providers import ApiKey, ModelInfo, Provider, SessionSettings
-from truecoder.providers.openai import default_openai_provider
+from truecoder.providers.openai import openai_provider
 from truecoder.tui.app import TrueCoderApp
 from truecoder.tui.credentials import ApiKeyScreen, CredentialChoiceScreen
 from truecoder.tui.model_picker import ModelPickerScreen
@@ -228,7 +228,7 @@ class OpenAIConnectionTests(_Base):
 
     async def test_direct_openai_login_offers_browser_or_api_key(self):
         settings = SessionSettings(
-            provider=default_openai_provider(),
+            provider=openai_provider(),
             credential=None,
             model="gpt-5.2",
         )

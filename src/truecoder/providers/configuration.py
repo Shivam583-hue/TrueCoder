@@ -18,7 +18,7 @@ MAX_EXTRA_PARAMETERS: Final = 16
 
 _ROOT_FIELDS: Final = frozenset({"version", "providers"})
 _PROVIDER_FIELDS: Final = frozenset(
-    {"name", "base_url", "oauth", "headers", "display_name"}
+    {"name", "base_url", "oauth", "headers", "display_name", "wire_api"}
 )
 _OAUTH_FIELDS: Final = frozenset(
     {
@@ -29,6 +29,7 @@ _OAUTH_FIELDS: Final = frozenset(
         "account_claim",
         "account_header",
         "api_base_url",
+        "models_url",
         "extra_parameters",
         "redirect_port",
         "redirect_host",
@@ -144,6 +145,7 @@ def _provider(entry: object) -> Provider:
             oauth=_oauth(name, entry.get("oauth")),
             header_pairs=_headers(name, entry.get("headers")),
             display_name=str(entry.get("display_name", "")),
+            wire_api=str(entry.get("wire_api", "chat")),
         )
     except (CredentialError, OAuthError) as error:
         raise ProviderConfigError(f"provider {name!r} is unusable: {error}") from None
@@ -202,6 +204,7 @@ def _oauth(name: str, value: object) -> OAuthClient | None:
             account_claim=str(value.get("account_claim", "")),
             account_header=str(value.get("account_header", "")),
             api_base_url=str(value.get("api_base_url", "")),
+            models_url=str(value.get("models_url", "")),
             extra_parameters=tuple(
                 (str(key), str(item)) for key, item in sorted((extra or {}).items())
             ),

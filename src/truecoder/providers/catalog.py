@@ -80,6 +80,10 @@ def parse_models(payload: object, provider: str) -> tuple[ModelInfo, ...]:
         return ()
 
     listed = payload.get("data")
+    codex_listing = False
+    if not isinstance(listed, list):
+        listed = payload.get("models")
+        codex_listing = isinstance(listed, list)
     if not isinstance(listed, list):
         return ()
 
@@ -88,7 +92,12 @@ def parse_models(payload: object, provider: str) -> tuple[ModelInfo, ...]:
     for entry in listed[:MAX_MODELS]:
         if not isinstance(entry, dict):
             continue
-        identifier = _bounded(entry.get("id"), MAX_MODEL_ID_CHARACTERS)
+        if codex_listing and entry.get("visibility") not in (None, "list"):
+            continue
+        identifier = _bounded(
+            entry.get("slug") if codex_listing else entry.get("id"),
+            MAX_MODEL_ID_CHARACTERS,
+        )
         if not identifier or identifier in seen:
             continue
         seen.add(identifier)
@@ -97,7 +106,7 @@ def parse_models(payload: object, provider: str) -> tuple[ModelInfo, ...]:
                 identifier=identifier,
                 provider=provider,
                 display_name=_bounded(
-                    entry.get("name"),
+                    entry.get("display_name") if codex_listing else entry.get("name"),
                     MAX_MODEL_NAME_CHARACTERS,
                 ),
                 context_window=_context_window(entry),
@@ -205,14 +214,19 @@ async def fetch_models(
 ) -> tuple[ModelInfo, ...]:
     import httpx
 
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", **provider.headers}
+    if credential is not None:
+        headers.update(credential.request_headers())
     secret = bearer_token(credential)
     if secret:
         headers["Authorization"] = f"Bearer {secret}"
 
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            response = await client.get(provider.models_url, headers=headers)
+            response = await client.get(
+                provider.models_url_for(credential),
+                headers=headers,
+            )
     except Exception as error:  # noqa: BLE001 - any transport failure is the same
         raise CatalogError(f"the model list could not be fetched: {error}") from None
 

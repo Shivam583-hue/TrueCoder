@@ -8,8 +8,8 @@ from truecoder.providers.openai import (
     OPENAI_API_BASE_URL,
     OPENAI_CODEX_BASE_URL,
     OPENAI_CODEX_CLIENT_ID,
+    OPENAI_CODEX_MODELS_URL,
     OPENAI_OAUTH_CLIENT,
-    default_openai_provider,
     openai_provider,
 )
 
@@ -21,6 +21,7 @@ class OpenAIProviderTests(unittest.TestCase):
             "app_EMoamEEZ73f0CkXaXp7hrann",
         )
         self.assertEqual(OPENAI_OAUTH_CLIENT.api_base_url, OPENAI_CODEX_BASE_URL)
+        self.assertEqual(OPENAI_OAUTH_CLIENT.models_url, OPENAI_CODEX_MODELS_URL)
         self.assertEqual(OPENAI_OAUTH_CLIENT.redirect_port, 1455)
         self.assertEqual(
             (
@@ -47,14 +48,8 @@ class OpenAIProviderTests(unittest.TestCase):
         self.assertEqual(provider.name, "openai")
         self.assertEqual(provider.label, "OpenAI")
         self.assertEqual(provider.base_url, OPENAI_API_BASE_URL)
-
-    def test_the_environment_default_keeps_legacy_storage_names(self):
-        provider = default_openai_provider()
-
-        self.assertEqual(provider.name, "default")
-        self.assertEqual(provider.label, "OpenAI")
-        self.assertIs(provider.oauth, OPENAI_OAUTH_CLIENT)
-
+        self.assertEqual(provider.wire_api, "responses")
+        self.assertEqual(provider.headers["originator"], "truecoder")
 
 if __name__ == "__main__":
     unittest.main()

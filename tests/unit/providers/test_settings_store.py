@@ -131,7 +131,7 @@ class ResolutionTests(unittest.TestCase):
         from truecoder.providers.oauth import OAuthToken
 
         stored = StoredSelection(model="stored-model")
-        token = OAuthToken(access_token="at", provider="default")
+        token = OAuthToken(access_token="at", provider="openai")
 
         with (
             patch.dict(
@@ -140,7 +140,7 @@ class ResolutionTests(unittest.TestCase):
             patch("truecoder.providers.store.load_selection", return_value=stored),
             patch(
                 "truecoder.providers.tokens.load_tokens",
-                return_value={"default": token},
+                return_value={"openai": token},
             ),
         ):
             settings = resolve_settings()
@@ -172,6 +172,57 @@ class ResolutionTests(unittest.TestCase):
             settings = resolve_settings()
 
         self.assertEqual(settings.credential.kind, "api-key")
+
+    def test_a_stored_openai_selection_resolves_the_built_in_provider(self):
+        from truecoder.providers.oauth import OAuthToken
+
+        token = OAuthToken(access_token="at", provider="openai")
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "MODEL": "router/model",
+                    "BASE_URL": "https://router.invalid/v1",
+                },
+                clear=True,
+            ),
+            patch(
+                "truecoder.providers.store.load_selection",
+                return_value=StoredSelection(model="gpt-5.2", provider="openai"),
+            ),
+            patch("truecoder.providers.configuration.load_providers", return_value=()),
+            patch(
+                "truecoder.providers.tokens.load_tokens",
+                return_value={"openai": token},
+            ),
+        ):
+            settings = resolve_settings()
+
+        self.assertEqual(settings.provider.name, "openai")
+        self.assertEqual(settings.provider.wire_api, "responses")
+        self.assertEqual(settings.credential, token)
+
+    def test_a_legacy_default_key_is_reused_for_direct_openai(self):
+        from truecoder.providers import ApiKey
+
+        key = ApiKey("sk-legacy")
+        with (
+            patch.dict("os.environ", {"MODEL": "gpt-5.2"}, clear=True),
+            patch(
+                "truecoder.providers.store.load_selection",
+                return_value=StoredSelection(),
+            ),
+            patch("truecoder.providers.configuration.load_providers", return_value=()),
+            patch("truecoder.providers.tokens.load_tokens", return_value={}),
+            patch(
+                "truecoder.providers.keys.load_keys",
+                return_value={"default": key},
+            ),
+        ):
+            settings = resolve_settings()
+
+        self.assertEqual(settings.provider.name, "openai")
+        self.assertEqual(settings.credential, key)
 
 
 if __name__ == "__main__":

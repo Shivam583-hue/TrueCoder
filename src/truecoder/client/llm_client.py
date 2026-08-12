@@ -28,6 +28,11 @@ from truecoder.client.response import (
     TokenUsage,
     ToolCallDelta,
 )
+from truecoder.client.responses import (
+    non_stream_response,
+    responses_request,
+    stream_response,
+)
 from truecoder.providers.models import (
     Credential,
     CredentialError,
@@ -155,10 +160,13 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncGenerator[StreamEvent, None]:
         await self.refresh_credential()
-        model = self.settings.model
+        settings = self.settings
+        model = settings.model
         client = self.get_client()
 
-        if tools:
+        if settings.provider.wire_api == "responses":
+            request = responses_request(model, messages, tools)
+        elif tools:
             request = {
                 "model": model,
                 "tools": tools,
@@ -175,11 +183,19 @@ class LLMClient:
 
             try:
                 if stream:
-                    async for event in self._stream_response(client, request):
+                    events = (
+                        stream_response(client, request)
+                        if settings.provider.wire_api == "responses"
+                        else self._stream_response(client, request)
+                    )
+                    async for event in events:
                         stream_started = True
                         yield event
                 else:
-                    yield await self._non_stream_response(client, request)
+                    if settings.provider.wire_api == "responses":
+                        yield await non_stream_response(client, request)
+                    else:
+                        yield await self._non_stream_response(client, request)
                 return
             except RateLimitError as error:
                 if not stream_started and attempt < self._max_retries:

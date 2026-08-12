@@ -45,6 +45,7 @@ class OAuthClient:
     account_claim: str = ""
     account_header: str = ""
     api_base_url: str = ""
+    models_url: str = ""
     extra_parameters: tuple[tuple[str, str], ...] = ()
     redirect_port: int = 0
     redirect_host: str = CALLBACK_HOST
@@ -62,6 +63,8 @@ class OAuthClient:
                 raise OAuthError(f"{name} must be an https URL")
         if self.api_base_url and urlparse(self.api_base_url).scheme != "https":
             raise OAuthError("api_base_url must be an https URL")
+        if self.models_url and urlparse(self.models_url).scheme != "https":
+            raise OAuthError("models_url must be an https URL")
         if bool(self.account_claim) != bool(self.account_header):
             raise OAuthError(
                 "account_claim and account_header are only useful together"

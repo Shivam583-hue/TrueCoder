@@ -15,12 +15,14 @@ from truecoder.providers import (
     catalog_path_for,
     catalog_problem,
     catalog_slug,
+    fetch_models,
     load_catalog,
     merge_models,
     selectable_providers,
 )
 from truecoder.providers.catalog import EMPTY_CATALOG_REASON
 from truecoder.providers.oauth import OAuthToken
+from truecoder.providers.openai import OPENAI_CODEX_MODELS_URL, openai_provider
 
 ACME = Provider(name="acme", base_url="https://api.acme.invalid/v1")
 BRIO = Provider(name="brio", base_url="https://api.brio.invalid/v1")
@@ -37,6 +39,47 @@ class BearerTests(unittest.TestCase):
 
     def test_no_credential_yields_no_bearer(self):
         self.assertEqual(bearer_token(None), "")
+
+
+class _CatalogResponse:
+    status_code = 200
+    content = b'{"models":[{"slug":"gpt-5.2","visibility":"list"}]}'
+
+
+class _CatalogClient:
+    def __init__(self) -> None:
+        self.url = ""
+        self.headers: dict[str, str] = {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return None
+
+    async def get(self, url, *, headers):
+        self.url = str(url)
+        self.headers = headers
+        return _CatalogResponse()
+
+
+class FetchCatalogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_oauth_uses_the_subscription_catalog_and_account_headers(self):
+        client = _CatalogClient()
+        token = OAuthToken(
+            access_token="at-openai",
+            provider="openai",
+            metadata=(("ChatGPT-Account-Id", "acct-1"),),
+        )
+
+        with patch("httpx.AsyncClient", return_value=client):
+            models = await fetch_models(openai_provider(), token)
+
+        self.assertEqual(client.url, OPENAI_CODEX_MODELS_URL)
+        self.assertEqual(client.headers["Authorization"], "Bearer at-openai")
+        self.assertEqual(client.headers["ChatGPT-Account-Id"], "acct-1")
+        self.assertEqual(client.headers["originator"], "truecoder")
+        self.assertEqual(models[0].identifier, "gpt-5.2")
 
 
 class SlugTests(unittest.TestCase):

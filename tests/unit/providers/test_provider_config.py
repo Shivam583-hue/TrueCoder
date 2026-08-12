@@ -52,6 +52,15 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(provider.oauth.redirect_host, "localhost")
         self.assertEqual(provider.oauth.redirect_path, "/auth/callback")
 
+    def test_a_provider_can_select_the_responses_wire_api(self):
+        provider = parse_providers(_config(wire_api="responses"))[0]
+
+        self.assertEqual(provider.wire_api, "responses")
+
+    def test_an_unknown_wire_api_is_refused(self):
+        with self.assertRaises(ProviderConfigError):
+            parse_providers(_config(wire_api="messages"))
+
     def test_no_providers_is_valid(self):
         self.assertEqual(parse_providers(json.dumps({"version": 1})), ())
 

@@ -65,6 +65,30 @@ class ProviderTests(unittest.TestCase):
         with self.assertRaises(CredentialError):
             Provider(name="  ")
 
+    def test_an_oauth_catalog_can_override_the_key_catalog(self):
+        from truecoder.providers.oauth import OAuthClient, OAuthToken
+
+        oauth = OAuthClient(
+            client_id="client",
+            authorize_url="https://x.invalid/authorize",
+            token_url="https://x.invalid/token",
+            models_url="https://subscription.invalid/models",
+        )
+        provider = Provider(
+            name="p",
+            base_url="https://keys.invalid/v1",
+            oauth=oauth,
+        )
+
+        self.assertEqual(
+            provider.models_url_for(OAuthToken(access_token="at")),
+            "https://subscription.invalid/models",
+        )
+        self.assertEqual(
+            provider.models_url_for(ApiKey("sk")),
+            "https://keys.invalid/v1/models",
+        )
+
 
 class SessionSettingsTests(unittest.TestCase):
     def test_selecting_a_model_updates_the_active_one(self):
@@ -132,6 +156,7 @@ class EnvironmentTests(unittest.TestCase):
             settings = settings_from_environment()
 
         self.assertEqual(settings.provider.label, "OpenAI")
+        self.assertEqual(settings.provider.name, "openai")
         self.assertIsNotNone(settings.provider.oauth)
 
     def test_a_custom_endpoint_remains_a_key_only_provider(self):
@@ -212,6 +237,38 @@ class ParseModelsTests(unittest.TestCase):
         models = parse_models({"data": [{"id": "z"}, {"id": "a"}]}, "p")
 
         self.assertEqual([model.identifier for model in models], ["a", "z"])
+
+    def test_a_codex_listing_uses_slugs_and_display_names(self):
+        models = parse_models(
+            {
+                "models": [
+                    {
+                        "slug": "gpt-5.2-codex",
+                        "display_name": "GPT-5.2-Codex",
+                        "context_window": 400000,
+                        "visibility": "list",
+                    }
+                ]
+            },
+            "openai",
+        )
+
+        self.assertEqual(models[0].identifier, "gpt-5.2-codex")
+        self.assertEqual(models[0].display_name, "GPT-5.2-Codex")
+        self.assertEqual(models[0].context_window, 400000)
+
+    def test_a_hidden_codex_model_is_not_offered(self):
+        models = parse_models(
+            {
+                "models": [
+                    {"slug": "listed", "visibility": "list"},
+                    {"slug": "hidden", "visibility": "hide"},
+                ]
+            },
+            "openai",
+        )
+
+        self.assertEqual([model.identifier for model in models], ["listed"])
 
 
 class MatchTests(unittest.TestCase):
