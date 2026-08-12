@@ -3,12 +3,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol, runtime_checkable
+from urllib.parse import urlparse
 
 from truecoder.providers.oauth import OAuthClient
 
 MAX_MODEL_ID_CHARACTERS: Final = 200
 MAX_MODEL_NAME_CHARACTERS: Final = 120
 DEFAULT_PROVIDER_NAME: Final = "default"
+UNNAMED_PROVIDER_LABEL: Final = "the configured provider"
 MAX_HEADERS: Final = 16
 MAX_HEADER_NAME_CHARACTERS: Final = 64
 MAX_HEADER_VALUE_CHARACTERS: Final = 1024
@@ -114,6 +116,13 @@ class Provider:
     @property
     def headers(self) -> dict[str, str]:
         return dict(self.header_pairs)
+
+    @property
+    def label(self) -> str:
+        if self.name != DEFAULT_PROVIDER_NAME:
+            return self.name
+        host = urlparse(self.base_url or "").netloc
+        return host.removeprefix("www.") if host else UNNAMED_PROVIDER_LABEL
 
     @property
     def models_url(self) -> str:

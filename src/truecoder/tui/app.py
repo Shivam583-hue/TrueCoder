@@ -423,6 +423,7 @@ class TrueCoderApp(App[None]):
                 settings.model,
                 active_provider=settings.provider.name,
                 invitations=invitations,
+                sources={provider.name: provider.label for provider in providers},
                 unavailable_reason=catalog_problem(slices),
             ),
             self._apply_model_choice,
@@ -470,8 +471,7 @@ class TrueCoderApp(App[None]):
 
         settings = self.agent.llm_client.settings
         provider = self._provider_named(choice.provider)
-        moved = provider.name != settings.provider.name
-        if moved:
+        if provider.name != settings.provider.name:
             settings.use(provider, stored_credential(provider.name))
 
         model = choice.identifier
@@ -479,9 +479,7 @@ class TrueCoderApp(App[None]):
         self._model_name = model
         self.query_one(Composer).set_model_name(model)
 
-        arrival = f"Now answering with {model}"
-        if moved:
-            arrival += f" via {provider.name}"
+        arrival = f"Now answering with {model} via {provider.label}"
         if save_selection(StoredSelection(model=model, provider=provider.name)):
             self.notify(arrival)
         else:
@@ -531,7 +529,7 @@ class TrueCoderApp(App[None]):
         client = provider.oauth
         return await self.push_screen_wait(
             CredentialChoiceScreen(
-                provider.name,
+                provider.label,
                 self._model_for(provider),
                 device=client is not None and client.supports_device_code,
             )
@@ -547,7 +545,12 @@ class TrueCoderApp(App[None]):
 
         target = provider or self.agent.llm_client.settings.provider
         typed = await self.push_screen_wait(
-            ApiKeyScreen(target.name, self._model_for(target), reason)
+            ApiKeyScreen(
+                target.label,
+                self._model_for(target),
+                reason,
+                browser_sign_in=target.oauth is not None,
+            )
         )
         if not typed:
             self.notify(
@@ -597,7 +600,7 @@ class TrueCoderApp(App[None]):
 
         opened = open_in_browser(pending.url)
         await self._note_sign_in(target.name, pending.url, opened=opened)
-        screen = AuthorisationScreen(target.name, pending.url, browser_opened=opened)
+        screen = AuthorisationScreen(target.label, pending.url, browser_opened=opened)
         waiting = asyncio.ensure_future(pending.wait())
         cancelled = self.push_screen_wait(screen)
 
@@ -644,9 +647,9 @@ class TrueCoderApp(App[None]):
             return False
 
         opened = open_in_browser(grant.best_url)
-        await self._note_device_code(provider.name, grant)
+        await self._note_device_code(provider.label, grant)
         screen = DeviceCodeScreen(
-            provider.name,
+            provider.label,
             grant.user_code,
             grant.best_url,
             browser_opened=opened,
@@ -1051,7 +1054,7 @@ class TrueCoderApp(App[None]):
             return
 
         chosen = await self.push_screen_wait(
-            CredentialChoiceScreen(provider.name, self._model_name)
+            CredentialChoiceScreen(provider.label, self._model_name)
         )
         if chosen is None:
             return

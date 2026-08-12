@@ -55,18 +55,20 @@ class ModelListItem(ListItem):
         active: bool,
         identifier_width: int = 0,
         provider_width: int = 0,
+        source: str = "",
     ) -> None:
         self.model = model
         self.active = active
         self.identifier_width = identifier_width
         self.provider_width = provider_width
+        self.source = source or model.provider
         super().__init__(classes="model-item active" if active else "model-item")
 
     def line(self) -> str:
         marker = "● " if self.active else "  "
         row = marker + self.model.identifier.ljust(self.identifier_width)
         if self.provider_width:
-            row += GAP + self.model.provider.ljust(self.provider_width)
+            row += GAP + self.source.ljust(self.provider_width)
         return (row + GAP + self.model.context_label.rjust(CONTEXT_COLUMN)).rstrip()
 
     def compose(self) -> ComposeResult:
@@ -85,14 +87,25 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
         *,
         active_provider: str = "",
         invitations: tuple[ProviderInvite, ...] = (),
+        sources: dict[str, str] | None = None,
         unavailable_reason: str | None = None,
     ) -> None:
         self.models = models
         self.active_model = active_model
         self.active_provider = active_provider
         self.invitations = invitations
+        self.sources = sources or {}
         self.unavailable_reason = unavailable_reason
         super().__init__()
+
+    def source_of(self, provider: str) -> str:
+        return self.sources.get(provider, provider)
+
+    def served_by(self) -> str:
+        names = {model.provider for model in self.models}
+        if len(names) != 1:
+            return ""
+        return self.source_of(names.pop())
 
     @property
     def spans_providers(self) -> bool:
@@ -110,8 +123,15 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
         return bool(self.models or self.invitations)
 
     def compose(self) -> ComposeResult:
+        served = self.served_by()
         with Vertical(id="model-picker-dialog"):
             yield Static("Models", classes="model-dialog-title")
+            if served:
+                yield Static(
+                    f"Served by {served}",
+                    classes="model-dialog-source",
+                    markup=False,
+                )
             if self.unavailable_reason is not None:
                 yield Static(
                     self.unavailable_reason,
@@ -154,6 +174,7 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
                 active=self.is_active(model),
                 identifier_width=identifiers,
                 provider_width=providers,
+                source=self.source_of(model.provider),
             )
             for model in models[:MAX_VISIBLE_MODELS]
         ]

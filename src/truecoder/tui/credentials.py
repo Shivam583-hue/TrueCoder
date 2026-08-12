@@ -160,16 +160,30 @@ class ApiKeyScreen(ModalScreen[str | None]):
         Binding("escape", "cancel", "Close", show=False),
     ]
 
-    def __init__(self, provider: str, model: str = "", reason: str = "") -> None:
+    def __init__(
+        self,
+        provider: str,
+        model: str = "",
+        reason: str = "",
+        *,
+        browser_sign_in: bool = True,
+    ) -> None:
         self.provider = provider
         self.model = model
         self.reason = reason
+        self.browser_sign_in = browser_sign_in
         super().__init__()
 
     def compose(self) -> ComposeResult:
         with Vertical(id="api-key-dialog"):
             yield Static("API key", classes="credential-title")
             yield Static(self._explanation(), classes="credential-body", markup=False)
+            if not self.browser_sign_in:
+                yield Static(
+                    self._only_way_in(),
+                    classes="credential-body",
+                    markup=False,
+                )
             yield Input(
                 placeholder="Enter your API key",
                 password=True,
@@ -182,6 +196,13 @@ class ApiKeyScreen(ModalScreen[str | None]):
                 markup=False,
             )
             yield Static("enter save   esc skip", classes="credential-help")
+
+    def _only_way_in(self) -> str:
+        return (
+            f"{provider_label(self.provider)} has no browser sign-in configured, "
+            "so a key is the only way in. Add an oauth block to providers.json "
+            "to be offered both."
+        )
 
     def _explanation(self) -> str:
         if self.reason:

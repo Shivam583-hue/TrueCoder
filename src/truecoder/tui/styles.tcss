@@ -1200,6 +1200,13 @@ ExecutionCard.expanded .execution-details {
     text-overflow: ellipsis;
 }
 
+.model-dialog-source {
+    width: 100%;
+    color: $tc-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 .model-dialog-empty {
     color: $tc-text-muted;
     margin-bottom: 1;
