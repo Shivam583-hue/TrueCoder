@@ -190,11 +190,11 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
         unavailable_reason: str | None = None,
         dialog_title: str = "Models",
     ) -> None:
-        self.models = models
         self.active_model = active_model
         self.active_provider = active_provider
         self.invitations = invitations
         self.sources = sources or {}
+        self.models = self._ordered_models(models)
         self.unavailable_reason = unavailable_reason
         self.dialog_title = dialog_title
         super().__init__()
@@ -210,7 +210,26 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
         label = self.sources.get(only, "")
         return label if label and label != only else ""
 
+    def _provider_rank(self, provider: str) -> tuple[int, int, str]:
+        if provider == self.active_provider:
+            return 0, 0, ""
+        priority = PROVIDER_PRIORITY.get(provider)
+        if priority is not None:
+            return 1, priority, ""
+        return 2, 0, self.source_of(provider).casefold()
 
+    def _ordered_models(
+        self,
+        models: tuple[ModelInfo, ...],
+    ) -> tuple[ModelInfo, ...]:
+        ordered = sorted(
+            models,
+            key=lambda model: (model.label.casefold(), model.identifier.casefold()),
+        )
+        ordered.sort(key=lambda model: model.release_date, reverse=True)
+        ordered.sort(key=lambda model: self._provider_rank(model.provider))
+        ordered.sort(key=lambda model: 0 if self.is_active(model) else 1)
+        return tuple(ordered)
 
     @property
     def spans_providers(self) -> bool:
@@ -266,7 +285,10 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
         if not self.spans_providers:
             return identifiers, 0
         providers = min(
-            max((len(model.provider) for model in self.models), default=0),
+            max(
+                (len(self.source_of(model.provider)) for model in self.models),
+                default=0,
+            ),
             PROVIDER_COLUMN,
         )
         return identifiers, providers
@@ -306,7 +328,16 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
         self.query_one("#model-filter", Input).focus()
 
     def visible_models(self, query: str) -> tuple[ModelInfo, ...]:
-        return tuple(model for model in self.models if model.matches(query))
+        needle = query.strip().casefold()
+        return tuple(
+            model
+            for model in self.models
+            if model.matches(query)
+            or all(
+                part in self.source_of(model.provider).casefold()
+                for part in needle.split()
+            )
+        )
 
     def visible_invitations(self, query: str) -> tuple[ProviderInvite, ...]:
         return tuple(

@@ -307,6 +307,15 @@ class PickerFilterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(screen.visible_models("brio")), 1)
         self.assertEqual(len(screen.visible_models("acme")), 2)
 
+    def test_filtering_matches_the_provider_display_name(self):
+        screen = ModelPickerScreen(
+            MIXED,
+            "acme/one",
+            sources={"acme": "Acme Cloud", "brio": "Brio AI"},
+        )
+
+        self.assertEqual(len(screen.visible_models("cloud")), 2)
+
 
 class PickerLayoutTests(unittest.TestCase):
     def _lines(self, screen: ModelPickerScreen) -> list[str]:
@@ -347,6 +356,34 @@ class PickerLayoutTests(unittest.TestCase):
 
         self.assertFalse(screen.is_active(duplicated[0]))
         self.assertTrue(screen.is_active(duplicated[1]))
+
+    def test_the_active_model_leads_even_beyond_the_render_limit(self):
+        models = tuple(
+            ModelInfo(identifier=f"model-{index:03}", provider="acme")
+            for index in range(201)
+        )
+        screen = ModelPickerScreen(
+            models,
+            "model-200",
+            active_provider="acme",
+        )
+
+        self.assertEqual(screen.models[0].identifier, "model-200")
+
+    def test_active_then_popular_providers_lead_the_combined_catalog(self):
+        models = (
+            ModelInfo(identifier="zeta", provider="zeta"),
+            ModelInfo(identifier="router", provider="openrouter"),
+            ModelInfo(identifier="gemini", provider="google"),
+            ModelInfo(identifier="claude", provider="anthropic"),
+            ModelInfo(identifier="gpt", provider="openai"),
+        )
+        screen = ModelPickerScreen(models, "", active_provider="zeta")
+
+        self.assertEqual(
+            [model.provider for model in screen.models],
+            ["zeta", "openai", "anthropic", "google", "openrouter"],
+        )
 
     def test_a_million_token_window_is_not_written_as_thousands(self):
         self.assertEqual(
