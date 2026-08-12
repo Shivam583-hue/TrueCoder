@@ -80,9 +80,7 @@ class CredentialChoiceScreen(ModalScreen["str | None"]):
         )
 
     def on_mount(self) -> None:
-        self.call_after_refresh(
-            lambda: self.query_one("#choose-oauth", Button).focus()
-        )
+        self.call_after_refresh(lambda: self.query("#choose-oauth").focus())
 
     @on(Button.Pressed, "#choose-oauth")
     def choose_oauth(self) -> None:
@@ -143,7 +141,7 @@ class DeviceCodeScreen(ModalScreen[bool]):
             yield Static("c copy   esc cancel", classes="credential-help")
 
     def on_mount(self) -> None:
-        self.call_after_refresh(lambda: self.query_one("#copy-code", Button).focus())
+        self.call_after_refresh(lambda: self.query("#copy-code").focus())
 
     def report(self, message: str) -> None:
         self.query_one("#device-status", Static).update(message)
@@ -227,9 +225,7 @@ class ApiKeyScreen(ModalScreen[str | None]):
         return "This provider needs an API key before it can answer."
 
     def on_mount(self) -> None:
-        self.call_after_refresh(
-            lambda: self.query_one("#api-key-input", Input).focus()
-        )
+        self.call_after_refresh(lambda: self.query("#api-key-input").focus())
 
     @on(Input.Submitted, "#api-key-input")
     def submit_key(self, event: Input.Submitted) -> None:
@@ -279,7 +275,7 @@ class AuthorisationScreen(ModalScreen[bool]):
             yield Static("c copy   esc cancel", classes="credential-help")
 
     def on_mount(self) -> None:
-        self.call_after_refresh(lambda: self.query_one("#copy-link", Button).focus())
+        self.call_after_refresh(lambda: self.query("#copy-link").focus())
 
     def report(self, message: str) -> None:
         self.query_one("#authorisation-status", Static).update(message)
