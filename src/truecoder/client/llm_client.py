@@ -29,10 +29,12 @@ from truecoder.client.response import (
     ToolCallDelta,
 )
 from truecoder.providers.models import (
+    Credential,
     CredentialError,
     SessionSettings,
     resolve_settings,
 )
+from truecoder.providers.oauth import OAuthError, OAuthToken, refresh_token
 from truecoder.tools.base import ToolCall
 
 load_dotenv()
@@ -50,6 +52,7 @@ class LLMClient:
         self.__client: AsyncOpenAI | None = None
         self._max_retries: int = 3
         self._settings = settings
+        self._refresh_lock = asyncio.Lock()
         if settings is not None:
             settings.on_connection_change(self._invalidate)
 
@@ -103,6 +106,39 @@ class LLMClient:
             await self.__client.close()
             self.__client = None
 
+    @staticmethod
+    def _is_stale(credential: Credential | None) -> bool:
+        if not isinstance(credential, OAuthToken):
+            return False
+        return credential.needs_refresh and credential.refresh_token is not None
+
+    async def refresh_credential(self) -> bool:
+        settings = self.settings
+        if not self._is_stale(settings.credential):
+            return False
+        client = settings.provider.oauth
+        if client is None:
+            return False
+
+        async with self._refresh_lock:
+            current = settings.credential
+            if not self._is_stale(current):
+                return False
+            assert isinstance(current, OAuthToken)
+            try:
+                refreshed = await refresh_token(client, current)
+            except OAuthError:
+                return False
+            settings.use(settings.provider, refreshed)
+            self._persist(refreshed)
+            return True
+
+    @staticmethod
+    def _persist(token: OAuthToken) -> None:
+        from truecoder.providers.tokens import store_token
+
+        store_token(token)
+
     async def chat_completion(
         self,
         messages: Sequence[Mapping[str, Any]],
@@ -110,6 +146,7 @@ class LLMClient:
         *,
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncGenerator[StreamEvent, None]:
+        await self.refresh_credential()
         model = self.settings.model
         client = self.get_client()
 
