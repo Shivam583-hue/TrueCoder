@@ -64,7 +64,12 @@ from truecoder.tui.execution_view import (
     is_terminal_stage,
 )
 from truecoder.tui.memory import MemoryAction, MemoryBrowserScreen
-from truecoder.tui.model_picker import ModelPickerScreen, ProviderInvite
+from truecoder.tui.model_picker import (
+    ModelPickerScreen,
+    ProviderChoice,
+    ProviderInvite,
+    ProviderPickerScreen,
+)
 from truecoder.tui.sessions import (
     DeleteSessionScreen,
     RenameSessionScreen,
@@ -214,6 +219,7 @@ class TrueCoderApp(App[None]):
         self._plan_card: PlanCard | None = None
         self._plan_calls: dict[str, str] = {}
         self._model_name = MODEL_NOT_CONFIGURED
+        self._known_providers: dict[str, object] = {}
         self.agent.set_execution_sinks(
             event_sink=_AppEventSink(self),
             preview_sink=_AppPreviewSink(self),
@@ -228,7 +234,10 @@ class TrueCoderApp(App[None]):
         from truecoder.providers.models import CredentialError
 
         try:
-            return self.agent.llm_client.settings.model
+            settings = self.agent.llm_client.settings
+            if settings.provider.name == "default":
+                return settings.model
+            return f"{settings.provider.name}/{settings.model}"
         except (RuntimeError, CredentialError):
             return MODEL_NOT_CONFIGURED
 
@@ -369,6 +378,10 @@ class TrueCoderApp(App[None]):
             await self._choose_model(refresh=parsed.argument == "refresh")
             return
 
+        if parsed.name == "connect":
+            self.run_worker(self._choose_provider(), exclusive=False)
+            return
+
         if parsed.name == "login":
             self.run_worker(self._collect_credential(), exclusive=False)
             return
@@ -380,27 +393,76 @@ class TrueCoderApp(App[None]):
         if parsed.name == "quit":
             await self.action_quit()
 
-    async def _choose_model(self, *, refresh: bool = False) -> None:
+    async def _catalog(self, *, refresh: bool = False):
+        from truecoder.providers.catalog import discover_catalog
+
+        catalog = await discover_catalog(
+            self.agent.llm_client.settings,
+            refresh=refresh,
+        )
+        self._known_providers = {
+            entry.provider.name: entry.provider for entry in catalog.slices
+        }
+        if catalog.directory_reason and catalog.slices:
+            self.notify(
+                f"The provider directory could not refresh: "
+                f"{catalog.directory_reason}",
+                severity="warning",
+                timeout=8,
+            )
+        return catalog
+
+    async def _choose_provider(self) -> None:
+        catalog = await self._catalog()
+        if not catalog.slices:
+            self.notify(
+                catalog.directory_reason or "No providers are available.",
+                severity="error",
+                timeout=10,
+            )
+            return
+        choices = tuple(
+            ProviderChoice(
+                entry.provider,
+                connected=_usable(catalog.credentials.get(entry.provider.name)),
+                model_count=len(entry.models),
+            )
+            for entry in catalog.slices
+        )
+        self.push_screen(ProviderPickerScreen(choices), self._apply_provider_choice)
+
+    def _apply_provider_choice(self, choice: ProviderChoice | None) -> None:
+        if choice is None:
+            return
+        self.run_worker(
+            self._connect_and_choose(choice.provider),
+            exclusive=False,
+        )
+
+    async def _connect_and_choose(self, provider) -> None:
+        if not await self._collect_credential(provider):
+            return
+        await self._choose_model(provider_name=provider.name)
+
+    async def _choose_model(
+        self,
+        *,
+        refresh: bool = False,
+        provider_name: str = "",
+    ) -> None:
         from truecoder.providers.catalog import (
             catalog_problem,
-            load_catalog,
             merge_models,
         )
-        from truecoder.providers.configuration import selectable_providers
-        from truecoder.providers.models import stored_credential
 
         settings = self.agent.llm_client.settings
-        providers = selectable_providers(settings.provider)
-        credentials = {
-            provider.name: (
-                settings.credential
-                if provider.name == settings.provider.name
-                else stored_credential(provider.name)
-            )
-            for provider in providers
-        }
-
-        slices = await load_catalog(providers, credentials, refresh=refresh)
+        catalog = await self._catalog(refresh=refresh)
+        slices = tuple(
+            entry
+            for entry in catalog.slices
+            if not provider_name or entry.provider.name == provider_name
+        )
+        credentials = catalog.credentials
         models = merge_models(slices)
         invitations = self._invitations(slices, credentials)
         invited = {invitation.provider for invitation in invitations}
@@ -423,8 +485,19 @@ class TrueCoderApp(App[None]):
                 settings.model,
                 active_provider=settings.provider.name,
                 invitations=invitations,
-                sources={provider.name: provider.label for provider in providers},
-                unavailable_reason=catalog_problem(slices),
+                sources={
+                    entry.provider.name: entry.provider.label for entry in slices
+                },
+                unavailable_reason=(
+                    catalog_problem(slices)
+                    if slices
+                    else catalog.directory_reason or "This provider listed no models."
+                ),
+                dialog_title=(
+                    slices[0].provider.label
+                    if provider_name and len(slices) == 1
+                    else "Models"
+                ),
             ),
             self._apply_model_choice,
         )
@@ -452,6 +525,9 @@ class TrueCoderApp(App[None]):
         current = settings.provider
         if not name or name == current.name:
             return current
+        known = self._known_providers.get(name)
+        if known is not None:
+            return known
         return next(
             (
                 provider
@@ -467,22 +543,21 @@ class TrueCoderApp(App[None]):
         if isinstance(choice, ProviderInvite):
             self.run_worker(self._accept_invitation(choice), exclusive=False)
             return
-        from truecoder.providers.models import stored_credential
+        from truecoder.providers.models import credential_for_provider
         from truecoder.providers.store import StoredSelection, save_selection
 
         settings = self.agent.llm_client.settings
         provider = self._provider_named(choice.provider)
         if provider.name != settings.provider.name:
-            settings.use(provider, stored_credential(provider.name))
+            settings.use(provider, credential_for_provider(provider, settings))
 
         model = choice.identifier
         settings.select_model(model)
-        self._model_name = model
-        self.query_one(Composer).set_model_name(model)
+        display_model = choice.qualified_identifier
+        self._model_name = display_model
+        self.query_one(Composer).set_model_name(display_model)
 
-        arrival = f"Now answering with {model}"
-        if provider.is_named:
-            arrival += f" via {provider.label}"
+        arrival = f"Now answering with {display_model}"
         if save_selection(StoredSelection(model=model, provider=provider.name)):
             self.notify(arrival)
         else:

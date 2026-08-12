@@ -1148,7 +1148,8 @@ ExecutionCard.expanded .execution-details {
 }
 
 /* Model picker */
-#model-picker-dialog {
+#model-picker-dialog,
+#provider-picker-dialog {
     width: 78;
     max-width: 92%;
     height: auto;
@@ -1164,7 +1165,8 @@ ExecutionCard.expanded .execution-details {
     margin-bottom: 1;
 }
 
-#model-filter {
+#model-filter,
+#provider-filter {
     height: 3;
     margin-bottom: 1;
     padding: 1 1;
@@ -1172,7 +1174,8 @@ ExecutionCard.expanded .execution-details {
     border: none;
 }
 
-#model-list {
+#model-list,
+#provider-list {
     height: auto;
     max-height: 24;
     background: transparent;

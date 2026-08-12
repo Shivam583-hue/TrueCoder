@@ -56,6 +56,12 @@ class _Base(unittest.IsolatedAsyncioTestCase):
             active = patch(target, return_value=self.root / f"{name}.json")
             active.start()
             self.addCleanup(active.stop)
+        directory = patch(
+            "truecoder.providers.catalog.load_models_dev",
+            return_value=(),
+        )
+        directory.start()
+        self.addCleanup(directory.stop)
 
     def _app(self, credential=None) -> TrueCoderApp:
         settings = SessionSettings(

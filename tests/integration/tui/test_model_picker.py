@@ -15,10 +15,23 @@ from tests.integration.tui.test_app import (
 )
 from truecoder.agent import Agent, ContextBuilder
 from truecoder.client.llm_client import LLMClient
-from truecoder.providers import ApiKey, ModelInfo, Provider, SessionSettings
+from truecoder.providers import (
+    ApiKey,
+    CatalogSlice,
+    ModelInfo,
+    Provider,
+    SessionSettings,
+)
+from truecoder.providers.openai import openai_provider
+from truecoder.providers.registry import openrouter_provider
 from truecoder.providers.store import StoredSelection
 from truecoder.tui.app import TrueCoderApp
-from truecoder.tui.model_picker import ModelPickerScreen
+from truecoder.tui.credentials import CredentialChoiceScreen
+from truecoder.tui.model_picker import (
+    ModelPickerScreen,
+    ProviderChoice,
+    ProviderPickerScreen,
+)
 from truecoder.tui.widgets import ChatMessage, PromptInput
 
 CATALOG = (
@@ -80,6 +93,12 @@ class ModelCommandTests(unittest.IsolatedAsyncioTestCase):
             active = patch(target, return_value=root / name)
             active.start()
             self.addCleanup(active.stop)
+        directory = patch(
+            "truecoder.providers.catalog.load_models_dev",
+            return_value=(),
+        )
+        directory.start()
+        self.addCleanup(directory.stop)
 
     async def _type(self, app: TrueCoderApp, pilot, text: str) -> None:
         app.query_one(PromptInput).text = text
@@ -168,7 +187,7 @@ class ModelCommandTests(unittest.IsolatedAsyncioTestCase):
                     app.agent.llm_client.settings.model,
                     "openai/gpt-5",
                 )
-                self.assertEqual(app._model_name, "openai/gpt-5")
+                self.assertEqual(app._model_name, "test/openai/gpt-5")
                 self.assertIn("openai/gpt-5", self.config.read_text())
 
     async def test_an_unreachable_provider_explains_itself(self):
@@ -270,7 +289,7 @@ class DisplayedModelTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(app._resolved_model_name(), metadata)
                 self.assertEqual(
                     app._resolved_model_name(),
-                    app.agent.llm_client.settings.model,
+                    "openrouter/" + app.agent.llm_client.settings.model,
                 )
 
 
@@ -334,6 +353,125 @@ class PickerLayoutTests(unittest.TestCase):
             ModelInfo(identifier="one", context_window=1000000).context_label,
             "1M",
         )
+
+
+class ProviderPickerTests(unittest.IsolatedAsyncioTestCase):
+    def test_popular_providers_lead_the_list(self):
+        choices = (
+            ProviderChoice(Provider(name="zeta", display_name="Zeta")),
+            ProviderChoice(openrouter_provider()),
+            ProviderChoice(openai_provider()),
+        )
+
+        screen = ProviderPickerScreen(choices)
+
+        self.assertEqual(
+            [choice.provider.name for choice in screen.providers],
+            ["openai", "openrouter", "zeta"],
+        )
+
+    def test_provider_search_matches_name_and_identifier(self):
+        screen = ProviderPickerScreen(
+            (
+                ProviderChoice(openai_provider()),
+                ProviderChoice(openrouter_provider()),
+            )
+        )
+
+        self.assertEqual(
+            screen.visible_providers("router")[0].provider.name,
+            "openrouter",
+        )
+
+
+class ConnectCommandTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self._directory = tempfile.TemporaryDirectory()
+        root = Path(self._directory.name).resolve()
+        self.addCleanup(self._directory.cleanup)
+        for target, name in (
+            ("truecoder.providers.store.default_settings_path", "settings.json"),
+            (
+                "truecoder.providers.configuration.default_providers_config_path",
+                "providers.json",
+            ),
+            ("truecoder.providers.keys.default_keys_path", "keys.json"),
+            ("truecoder.providers.tokens.default_tokens_path", "tokens.json"),
+        ):
+            active = patch(target, return_value=root / name)
+            active.start()
+            self.addCleanup(active.stop)
+
+    @staticmethod
+    def _app() -> TrueCoderApp:
+        agent = Agent(
+            llm_client=_Client(),
+            context_builder=ContextBuilder(
+                system_prompt="test system",
+                max_input_tokens=1000,
+                token_counter=FixedTokenCounter(),
+            ),
+        )
+        return TrueCoderApp(agent)
+
+    @staticmethod
+    async def _type(app: TrueCoderApp, pilot, text: str) -> None:
+        app.query_one(PromptInput).text = text
+        await pilot.press("enter")
+        await pilot.pause()
+
+    async def test_connect_chooses_provider_before_authentication(self):
+        app = self._app()
+        directory = (
+            CatalogSlice(
+                Provider(name="test", base_url="https://x.invalid/v1"),
+                CATALOG,
+            ),
+            CatalogSlice(
+                openai_provider(),
+                (ModelInfo(identifier="gpt-5.2", provider="openai"),),
+            ),
+            CatalogSlice(
+                openrouter_provider(),
+                (
+                    ModelInfo(
+                        identifier="openai/gpt-5.2",
+                        provider="openrouter",
+                    ),
+                ),
+            ),
+        )
+
+        with (
+            patch.dict(os.environ, {"MODEL": "anthropic/claude-opus-5"}),
+            patch(
+                "truecoder.providers.catalog.load_models_dev",
+                return_value=directory,
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._type(app, pilot, "/connect")
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ProviderPickerScreen),
+                    description="the provider picker",
+                )
+
+                openai = next(
+                    choice
+                    for choice in app.screen.providers
+                    if choice.provider.name == "openai"
+                )
+                app.screen.dismiss(openai)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, CredentialChoiceScreen),
+                    description="OpenAI authentication methods",
+                )
+
+                self.assertEqual(app.screen.provider, "OpenAI")
+                app.screen.dismiss(None)
+                await pilot.pause()
 
 
 if __name__ == "__main__":
