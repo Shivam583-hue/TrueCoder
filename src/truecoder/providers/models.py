@@ -58,6 +58,10 @@ class Credential(Protocol):
 
     def client_options(self) -> dict[str, Any]: ...
 
+    def request_headers(self) -> dict[str, str]: ...
+
+    def endpoint_override(self) -> str | None: ...
+
     def redacted(self) -> str: ...
 
 
@@ -79,6 +83,12 @@ class ApiKey:
 
     def client_options(self) -> dict[str, Any]:
         return {"api_key": self.value}
+
+    def request_headers(self) -> dict[str, str]:
+        return {}
+
+    def endpoint_override(self) -> str | None:
+        return None
 
     def redacted(self) -> str:
         tail = self.value[-4:] if len(self.value) > 4 else ""

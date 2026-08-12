@@ -15,6 +15,7 @@ from truecoder.providers.oauth import OAuthError, OAuthToken
 TOKENS_VERSION: Final = 1
 MAX_TOKENS_BYTES: Final = 256 * 1024
 MAX_TOKEN_CHARACTERS: Final = 8192
+MAX_METADATA_ENTRIES: Final = 8
 
 
 def default_tokens_path() -> Path:
@@ -41,6 +42,8 @@ def encode_tokens(tokens: dict[str, OAuthToken]) -> str:
                         "access_token": token.access_token,
                         "refresh_token": token.refresh_token,
                         "expires_at": token.expires_at,
+                        "metadata": dict(token.metadata),
+                        "endpoint": token.endpoint,
                     }
                     for provider, token in sorted(tokens.items())
                 },
@@ -82,6 +85,7 @@ def parse_tokens(raw: str) -> dict[str, OAuthToken]:
         if access is None:
             continue
         expires_at = entry.get("expires_at")
+        endpoint = entry.get("endpoint")
         tokens[provider] = OAuthToken(
             access_token=access,
             refresh_token=_token_text(entry.get("refresh_token"), "refresh token"),
@@ -92,8 +96,26 @@ def parse_tokens(raw: str) -> dict[str, OAuthToken]:
                 else None
             ),
             provider=provider,
+            metadata=_metadata(entry.get("metadata")),
+            endpoint=endpoint if isinstance(endpoint, str) else "",
         )
     return tokens
+
+
+def _metadata(value: object) -> tuple[tuple[str, str], ...]:
+    if not isinstance(value, dict):
+        return ()
+    pairs = [
+        (name, content)
+        for name, content in sorted(value.items())
+        if isinstance(name, str)
+        and name.strip()
+        and isinstance(content, str)
+        and content.strip()
+        and name.casefold() != "authorization"
+        and len(content) <= MAX_TOKEN_CHARACTERS
+    ]
+    return tuple(pairs[:MAX_METADATA_ENTRIES])
 
 
 def load_tokens(path: Path | None = None) -> dict[str, OAuthToken]:

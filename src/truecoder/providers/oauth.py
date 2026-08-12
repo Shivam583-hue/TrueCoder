@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
+import json
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -10,6 +12,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 VERIFIER_BYTES: Final = 64
 STATE_BYTES: Final = 32
+MAX_CLAIM_CHARACTERS: Final = 8 * 1024
+MAX_ACCOUNT_CHARACTERS: Final = 200
 REFRESH_MARGIN_SECONDS: Final = 60.0
 CALLBACK_TIMEOUT_SECONDS: Final = 300.0
 MAX_CALLBACK_BYTES: Final = 16 * 1024
@@ -35,6 +39,10 @@ class OAuthClient:
     authorize_url: str
     token_url: str
     scopes: tuple[str, ...] = ()
+    account_claim: str = ""
+    account_header: str = ""
+    api_base_url: str = ""
+    extra_parameters: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         for name in ("client_id", "authorize_url", "token_url"):
@@ -45,6 +53,18 @@ class OAuthClient:
             scheme = urlparse(getattr(self, name)).scheme
             if scheme != "https":
                 raise OAuthError(f"{name} must be an https URL")
+        if self.api_base_url and urlparse(self.api_base_url).scheme != "https":
+            raise OAuthError("api_base_url must be an https URL")
+        if bool(self.account_claim) != bool(self.account_header):
+            raise OAuthError(
+                "account_claim and account_header are only useful together"
+            )
+        if self.account_header and self.account_header.casefold() == "authorization":
+            raise OAuthError("account_header cannot be the authorisation header")
+
+    @property
+    def carries_account(self) -> bool:
+        return bool(self.account_claim and self.account_header)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +108,8 @@ def authorization_url(
     }
     if client.scopes:
         parameters["scope"] = " ".join(client.scopes)
+    for key, value in client.extra_parameters:
+        parameters.setdefault(key, value)
     separator = "&" if "?" in client.authorize_url else "?"
     return f"{client.authorize_url}{separator}{urlencode(parameters)}"
 
@@ -122,6 +144,8 @@ class OAuthToken:
     refresh_token: str | None = None
     expires_at: float | None = None
     provider: str = ""
+    metadata: tuple[tuple[str, str], ...] = ()
+    endpoint: str = ""
     _clock: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -154,14 +178,73 @@ class OAuthToken:
     def client_options(self) -> dict[str, Any]:
         return {"api_key": self.access_token}
 
+    def request_headers(self) -> dict[str, str]:
+        return dict(self.metadata)
+
+    def endpoint_override(self) -> str | None:
+        return self.endpoint or None
+
     def redacted(self) -> str:
         tail = self.access_token[-4:] if len(self.access_token) > 4 else ""
         suffix = f" ending {tail}" if tail else ""
         return f"oauth token{suffix}"
 
 
+def token_claims(token: object) -> dict[str, Any]:
+    if not isinstance(token, str):
+        return {}
+    parts = token.split(".")
+    if len(parts) != 3 or len(parts[1]) > MAX_CLAIM_CHARACTERS:
+        return {}
+
+    body = parts[1]
+    try:
+        raw = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
+    except (ValueError, binascii.Error):
+        return {}
+
+    try:
+        claims = json.loads(raw.decode("utf-8", errors="replace"))
+    except ValueError:
+        return {}
+    return claims if isinstance(claims, dict) else {}
+
+
+def find_claim(claims: dict[str, Any], name: str) -> str:
+    if not name:
+        return ""
+    value = claims.get(name)
+    if isinstance(value, str) and value.strip():
+        return value[:MAX_ACCOUNT_CHARACTERS]
+
+    for nested in claims.values():
+        if not isinstance(nested, dict):
+            continue
+        inner = nested.get(name)
+        if isinstance(inner, str) and inner.strip():
+            return inner[:MAX_ACCOUNT_CHARACTERS]
+    return ""
+
+
+def account_metadata(
+    payload: dict[str, Any],
+    client: OAuthClient | None,
+) -> tuple[tuple[str, str], ...]:
+    if client is None or not client.carries_account:
+        return ()
+    for field_name in ("id_token", "access_token"):
+        account = find_claim(token_claims(payload.get(field_name)), client.account_claim)
+        if account:
+            return ((client.account_header, account),)
+    return ()
+
+
 def parse_token_response(
-    payload: object, *, provider: str = "", now: float | None = None
+    payload: object,
+    *,
+    provider: str = "",
+    now: float | None = None,
+    client: OAuthClient | None = None,
 ) -> OAuthToken:
     if not isinstance(payload, dict):
         raise OAuthError("the token response was not a JSON object")
@@ -193,6 +276,8 @@ def parse_token_response(
         refresh_token=refresh_token if isinstance(refresh_token, str) else None,
         expires_at=expires_at,
         provider=provider,
+        metadata=account_metadata(payload, client),
+        endpoint=client.api_base_url if client is not None else "",
     )
 
 
@@ -250,12 +335,12 @@ async def refresh_token(client: OAuthClient, token: OAuthToken) -> OAuthToken:
     payload = await post_token(
         client, refresh_body(client, refresh_token=token.refresh_token)
     )
-    refreshed = parse_token_response(payload, provider=token.provider)
-    if refreshed.refresh_token is None:
-        return OAuthToken(
-            access_token=refreshed.access_token,
-            refresh_token=token.refresh_token,
-            expires_at=refreshed.expires_at,
-            provider=token.provider,
-        )
-    return refreshed
+    refreshed = parse_token_response(payload, provider=token.provider, client=client)
+    return OAuthToken(
+        access_token=refreshed.access_token,
+        refresh_token=refreshed.refresh_token or token.refresh_token,
+        expires_at=refreshed.expires_at,
+        provider=token.provider,
+        metadata=refreshed.metadata or token.metadata,
+        endpoint=refreshed.endpoint or token.endpoint,
+    )

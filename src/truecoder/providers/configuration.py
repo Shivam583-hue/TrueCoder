@@ -14,11 +14,21 @@ PROVIDERS_VERSION: Final = 1
 MAX_CONFIG_BYTES: Final = 64 * 1024
 MAX_PROVIDERS: Final = 16
 MAX_SCOPES: Final = 32
+MAX_EXTRA_PARAMETERS: Final = 16
 
 _ROOT_FIELDS: Final = frozenset({"version", "providers"})
 _PROVIDER_FIELDS: Final = frozenset({"name", "base_url", "oauth", "headers"})
 _OAUTH_FIELDS: Final = frozenset(
-    {"client_id", "authorize_url", "token_url", "scopes"}
+    {
+        "client_id",
+        "authorize_url",
+        "token_url",
+        "scopes",
+        "account_claim",
+        "account_header",
+        "api_base_url",
+        "extra_parameters",
+    }
 )
 
 
@@ -150,12 +160,28 @@ def _oauth(name: str, value: object) -> OAuthClient | None:
     if len(scopes) > MAX_SCOPES:
         raise ProviderConfigError(f"provider {name!r} declares too many oauth scopes")
 
+    extra = value.get("extra_parameters")
+    if extra is not None and not isinstance(extra, dict):
+        raise ProviderConfigError(
+            f"provider {name!r} oauth extra_parameters must be an object"
+        )
+    if isinstance(extra, dict) and len(extra) > MAX_EXTRA_PARAMETERS:
+        raise ProviderConfigError(
+            f"provider {name!r} declares too many oauth extra_parameters"
+        )
+
     try:
         return OAuthClient(
             client_id=str(value.get("client_id", "")),
             authorize_url=str(value.get("authorize_url", "")),
             token_url=str(value.get("token_url", "")),
             scopes=tuple(str(scope) for scope in scopes),
+            account_claim=str(value.get("account_claim", "")),
+            account_header=str(value.get("account_header", "")),
+            api_base_url=str(value.get("api_base_url", "")),
+            extra_parameters=tuple(
+                (str(key), str(item)) for key, item in sorted((extra or {}).items())
+            ),
         )
     except OAuthError as error:
         raise ProviderConfigError(

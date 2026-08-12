@@ -130,7 +130,11 @@ class PendingLogin:
                 verifier=self.verifier,
             ),
         )
-        return parse_token_response(payload, provider=self.provider)
+        return parse_token_response(
+            payload,
+            provider=self.provider,
+            client=self.client,
+        )
 
     async def close(self) -> None:
         await self.server.stop()
