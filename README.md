@@ -9,7 +9,7 @@
 [![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](#testing)
 
 TrueCoder is a terminal-native Python coding-agent runtime that reads, searches, edits, and runs code inside one project.
-It ships a Textual terminal interface, an OpenAI-compatible LLM client, persistent SQLite sessions, fifteen approval-gated tools plus any MCP servers you configure, a task planner, language-server code intelligence, workspace checkpoints, durable memory, user-configured hooks, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
+It ships a Textual terminal interface, direct OpenAI access through the Responses API, an OpenAI-compatible Chat Completions client, persistent SQLite sessions, fifteen approval-gated tools plus any MCP servers you configure, a task planner, language-server code intelligence, workspace checkpoints, durable memory, user-configured hooks, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
 Shell execution passes through policy evaluation, capability-based backend selection, an approval fingerprint, a durable audit admission, a resource launch gate, arbitrated terminal outcomes, and one immutable terminal audit record.
 Commands run on your machine by default, with the toolchain, virtual environments, and caches you already have, because the approval gate is the authorization boundary and an agent that cannot run your test suite is not useful.
 When a command must be isolated instead, the certified sandbox profile runs it in a digest-pinned, non-root, read-only, network-denied, capability-dropped Docker container that is proven against real Docker rather than assumed safe.
@@ -63,13 +63,13 @@ Coming soon...
 - **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
 - **Policy-evaluated execution** - ordered rules classify read-only, test, build, package, network, deletion, permission, Git, script, and unknown commands, and requested limits can only tighten the configured ceiling.
 - **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
-- **Switch models without restarting** - type `/models` to pick from everything your providers list, filtered as you type and annotated with context windows. Providers you have named appear beside their models, one above the list or one per row, so a catalog full of names like `openai/gpt-5.6-sol` is not mistaken for a direct connection; a provider with no name of its own is never mentioned, so a gateway you route through stays yours. Every configured provider is asked with its own credential and the results merge into one aligned list, so choosing a model also chooses where it comes from; a provider that is unreachable takes only its own rows with it. The lists come from each provider's own `/v1/models`, bounded like any other untrusted response, and cached per provider for six hours so they never cost a request at launch. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type, and `/quit` (or `/exit`) closes TrueCoder exactly as `ctrl+q` does. The status line always names the model that will actually answer, not whatever `MODEL` happens to say in your `.env`.
+- **Switch models without restarting** - type `/models` to pick from everything your providers list, filtered as you type and annotated with context windows. Direct OpenAI is built in, and providers you have named appear beside their models, one above the list or one per row, so a catalog full of names like `openai/gpt-5.6-sol` is not mistaken for a direct connection; a provider with no name of its own is never mentioned, so a gateway you route through stays yours. Every configured provider is asked with its own credential and the results merge into one aligned list, so choosing a model also chooses where it comes from; a provider that is unreachable takes only its own rows with it. The lists come from each provider's model-catalog endpoint, are bounded like any other untrusted response, and are cached per provider for six hours so they never cost a request at launch. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type, and `/quit` (or `/exit`) closes TrueCoder exactly as `ctrl+q` does. The status line always names the model that will actually answer, not whatever `MODEL` happens to say in your `.env`.
 - **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit`, `/e` leaves `exit`, and `/mo` leaves `models` and `model`. Tab completes to the longest prefix the remaining matches share: `/q` becomes `/quit` outright, `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
 - **It asks for what the model needs** - pick a model whose provider you have no credential for and TrueCoder asks for it there and then, instead of accepting the choice and failing on your next message. A provider that accepts both a browser sign-in and an API key asks which you want, because one draws on a subscription and the other bills a key; a provider that accepts one goes straight there and says why there was nothing to choose between. A key is saved privately so you only type it once. A provider that will not list its models until you connect appears in `/models` as a row of its own, so connecting is something you can select rather than something you had to already know. `/login` opens the same choice, and `/logout` forgets both.
 - **Refusals you can act on** - when a provider turns a request down you get a sentence, not its wire format: what happened, the provider's own explanation, and the next step. A rejected credential opens the way to replace it, offering both ways again if the provider takes both; running out of credit offers neither, because a new credential does not buy anything. A failure that does not classify gets no invented advice.
 - **A sign-in you can complete anywhere** - the browser opens automatically, and the screen still shows the full link with a copy button (`c`) and an open-again button. Where no browser can be reached at all, a provider that offers a device code gets a third option: TrueCoder shows a short code and the page to enter it on, then polls at the interval the provider asks for. The link is also written into the transcript, where it stays selectable after the dialog closes. The link is safe to show: only the PKCE challenge travels in it, never the verifier. Closing the screen cancels the attempt and releases the loopback port immediately.
 - **Sessions that do not expire under you** - an OAuth token is renewed from its refresh token before the request that would have failed, once even when several turns notice at the same moment, and written back so a restart picks up the fresh one. A refresh that fails changes nothing rather than leaving a half-updated credential.
-- **Provider-aware authentication** - API keys can come from the environment or the masked prompt, while providers configured with OAuth use authorization code with PKCE. The verifier never leaves the process, the callback listens only on loopback, only the first callback determines the result, and a mismatched `state` is refused. Keys and tokens are written privately in your config directory, `0600` on POSIX and ACL-restricted to your user and LocalSystem on Windows. Stored credentials are never inserted into child environments, and inherited credential-shaped variables are stripped.
+- **Provider-aware authentication** - direct OpenAI offers ChatGPT browser sign-in and API keys without extra configuration; other providers can add the same choice through `providers.json`. Browser sign-in uses authorization code with PKCE. The verifier never leaves the process, the callback listens only on loopback, only the first callback determines the result, and a mismatched `state` is refused. Keys and tokens are written privately in your config directory, `0600` on POSIX and ACL-restricted to your user and LocalSystem on Windows. Stored credentials are never inserted into child environments, and inherited credential-shaped variables are stripped.
 - **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. With nobody watching, what may proceed is a configured decision rather than an accident: `--autonomy read-only|edit|full` sets a risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
 - **Scored, not vibed** - `truecoder --eval` runs a fixed set of tasks in throwaway workspaces and reports how many passed, so "did that change help?" has an answer. Each task asserts an outcome on disk rather than which calls were made.
 - **Delegation with a hard boundary** - `delegate` hands a self-contained subtask to a fresh agent that shares the workspace but starts with an empty conversation. Only its final reply crosses back, never its transcript, it cannot delegate again, and it is approval-gated like any other tool.
@@ -166,6 +166,7 @@ TrueCoder/
 │   │   ├── catalog.py                 # Bounded model discovery across providers, cached per provider
 │   │   ├── configuration.py           # Strict providers.json, fail-closed
 │   │   ├── oauth.py                   # PKCE, the callback contract, and token lifetime
+│   │   ├── openai.py                  # Built-in OpenAI API-key and ChatGPT sign-in contract
 │   │   ├── login.py                   # Loopback callback server and the browser round trip
 │   │   ├── device.py                  # Device code grant for machines with no browser
 │   │   ├── store.py                   # The remembered model selection
@@ -208,7 +209,8 @@ TrueCoder/
 │   │   └── diff.py                    # Pure unified diff with context and truncation
 │   │
 │   ├── client/
-│   │   ├── llm_client.py              # OpenAI-compatible streaming and non-streaming calls
+│   │   ├── llm_client.py              # Credential-aware request routing and Chat Completions
+│   │   ├── responses.py               # Responses input, streaming, usage, and tool-call translation
 │   │   ├── failures.py                # Provider refusals classified into a kind and a remedy
 │   │   └── response.py                # Provider responses translated into internal events
 │   │
@@ -452,7 +454,7 @@ flowchart TB
         TUI[Textual TUI<br/>transcript, tool cards, approvals]
         Agent[Agent loop<br/>turns, state, cancellation, stall detection]
         Ctx[Context builder<br/>prompt + summary + turns + plan, bounded]
-        LLM[LLM client<br/>OpenAI-compatible streaming]
+        LLM[LLM client<br/>Responses + Chat Completions]
         Sessions[(Session store<br/>SQLite, project-scoped)]
         Checkpoints[(Checkpoints<br/>git snapshots per turn)]
         Tools[Tool registry + executor<br/>validate, prepare, approve]
@@ -478,7 +480,7 @@ flowchart TB
         end
     end
 
-    Provider[LLM provider<br/>any OpenAI-compatible endpoint]
+    Provider[LLM provider<br/>OpenAI or compatible endpoint]
 
     User <--> TUI
     TUI <--> Agent
@@ -554,7 +556,7 @@ No route escapes audit.
 | ------------------- | ------------------------------------------- | --------------------------------------------------------------------- |
 | Terminal interface  | Textual 8.2                                 | Transcript, streaming output, tool cards, approvals, and session browser |
 | Agent runtime       | Python 3.10+, asyncio                       | Turn lifecycle, tool orchestration, and cancellation                   |
-| Model access        | openai 2.46 async client                    | Any OpenAI-compatible endpoint, streaming and non-streaming            |
+| Model access        | openai 2.46 async client                    | OpenAI Responses plus compatible Chat Completions, streaming and non-streaming |
 | Outbound web        | httpx 0.27+                                 | Address-pinned, bounded fetching of public pages                       |
 | Code intelligence   | Language Server Protocol over stdio         | Symbols, definitions, references, and diagnostics from installed servers |
 | Checkpoints         | git plumbing                                | Workspace snapshots and restore, kept out of branches and history      |
@@ -572,7 +574,7 @@ No route escapes audit.
 
 - **Python 3.10 or newer.** The current development environment uses 3.14.3.
 - **Git.** Project root discovery walks up to the nearest ancestor containing `.git`, and that root scopes both sessions and every filesystem tool. Git is also what backs workspace checkpoints; without it, checkpoints report themselves unavailable and everything else still works.
-- **An OpenAI-compatible LLM endpoint** with a model name and either an API key or a configured OAuth client. Set a base URL when the provider default is not the endpoint you need.
+- **An OpenAI model or an OpenAI-compatible LLM endpoint.** Direct OpenAI accepts either a ChatGPT browser sign-in or an API key with no provider configuration. Set a base URL for a gateway or another compatible endpoint.
 - **Linux, macOS, or Windows** for local shell execution. POSIX hosts use process groups and sessions; Windows uses a Job Object backend.
 - **A language server on `PATH`** only if you want code intelligence. TrueCoder discovers pyright, pylsp, jedi, typescript-language-server, rust-analyzer, gopls, and clangd; it installs none of them, and the tools refuse with `no_server` when none matches a file.
 - **Docker** only if you want the container sandbox or intend to run the sandbox test suite. Docker 29.3.0 is the version currently verified.
@@ -599,9 +601,11 @@ Create your provider configuration:
 cp .env.example .env
 ```
 
-Fill in `MODEL` and, when needed, `BASE_URL`. You can set `API_KEY` now, or
-leave it empty and use `/login` in the interface to enter a key or start the
-configured browser flow. Then launch:
+Fill in `MODEL` and, when using a gateway or another compatible provider,
+`BASE_URL`. You can set `API_KEY` now, or leave it empty and use `/login` in the
+interface. Direct OpenAI will offer ChatGPT browser sign-in or an API key; a
+custom endpoint will use the authentication methods configured for it. Then
+launch:
 
 ```bash
 truecoder
@@ -645,9 +649,9 @@ Copy `.env.example` and never commit the filled-in file.
 
 | Variable           | Required | Purpose                                                                                                             |
 | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- |
-| `API_KEY`          | No       | Initial API credential for the LLM endpoint. A key saved through the interface outranks this value; leave it empty to enter one with `/login` or use a configured OAuth client. |
+| `API_KEY`          | No       | Initial API credential for the LLM endpoint. A key saved through the interface outranks this value; leave it empty to enter one with `/login` or use browser sign-in. |
 | `MODEL`            | Until you pick one | Model to start with. A model chosen with `/models` is remembered and outranks this, so the TUI may correctly show a different one. Once a choice is stored, launching works with `MODEL` unset. |
-| `BASE_URL`         | No       | OpenAI-compatible endpoint. Omit it to use the provider default.                                                    |
+| `BASE_URL`         | No       | OpenAI-compatible gateway or alternate endpoint. Omit it to use direct OpenAI.                                    |
 | `MAX_INPUT_TOKENS` | No       | Context budget for the system prompt plus selected turns. Defaults to `64000`. Lower it if your model's window is smaller. |
 
 A suitable local `.env` starts with:
@@ -727,10 +731,25 @@ goes through the execution service, so it is policy-classified, bounded by its
 timeout and an output ceiling, and recorded in the durable audit. A hook that
 fails is reported and never blocks the turn.
 
-### Optional providers and browser sign-in
+### Providers and browser sign-in
 
-The same config directory may contain `providers.json`, which names where a model
-comes from and, when the provider publishes one, how to sign in with a browser:
+OpenAI is always available as a direct provider. Selecting its connection row in
+`/models`, choosing one of its cached models without a credential, or running
+`/login` while it is active opens a choice between **ChatGPT browser sign-in** and
+**API key**. Browser sign-in uses the public Codex CLI client, opens the OpenAI
+authorization page, and listens at the registered
+`http://localhost:1455/auth/callback`. The resulting refreshable token uses the
+ChatGPT subscription endpoint, its account header, the Codex model catalog, and
+the Responses API. An API key instead uses `https://api.openai.com/v1`; both
+paths retain the same model and tool behavior inside the agent.
+
+An identifier such as `openai/gpt-5.6-sol` in a gateway catalog still belongs to
+that gateway. TrueCoder never infers the serving provider from a model prefix, so
+the gateway keeps its own credential and direct OpenAI remains a separate row.
+
+The same config directory may contain `providers.json` for additional providers.
+It names where a model comes from and, when the provider publishes an OAuth
+client, how to sign in with a browser:
 
 ```json
 {
@@ -740,6 +759,7 @@ comes from and, when the provider publishes one, how to sign in with a browser:
       "name": "acme",
       "display_name": "Acme Cloud",
       "base_url": "https://api.acme.example/v1",
+      "wire_api": "responses",
       "headers": { "acme-beta": "long-context-2026" },
       "oauth": {
         "client_id": "your-registered-client-id",
@@ -751,6 +771,9 @@ comes from and, when the provider publishes one, how to sign in with a browser:
         "account_claim": "acme_account_id",
         "account_header": "Acme-Account-Id",
         "api_base_url": "https://subscription.acme.example/v1",
+        "models_url": "https://subscription.acme.example/v1/models",
+        "redirect_host": "localhost",
+        "redirect_path": "/auth/callback",
         "extra_parameters": { "originator": "truecoder" }
       }
     }
@@ -795,19 +818,25 @@ Everything past `client_id`, `authorize_url`, and `token_url` is optional and
 exists because registered clients rarely fit the bare protocol. `redirect_port`
 pins the loopback port when the provider registered one exact redirect URI;
 leaving it out picks any free port, which is the better default when the provider
-allows it. `device_url` adds the code-entry option for machines with no browser.
+allows it. `redirect_host` controls whether that URI advertises `localhost` or
+`127.0.0.1`, while `redirect_path` supplies its registered path; the listener
+still binds only to loopback. `device_url` adds the code-entry option for machines
+with no browser.
 `account_claim` and `account_header` name a value inside the returned token and
 the header to send it as, for providers that route by account. `api_base_url`
 sends signed-in traffic to the subscription endpoint while API keys keep using
-`base_url`. `extra_parameters` adds flags to the authorization URL; they are
+`base_url`, and `models_url` can do the same for the signed-in catalog.
+`wire_api` is `chat` by default and may be `responses` when the provider accepts
+the Responses format. `extra_parameters` adds flags to the authorization URL; they are
 merged underneath the protocol's own, so none of them can replace the `client_id`,
 the PKCE challenge, or the state. A provider's `headers` are sent with every
 request, and `Authorization` is refused there because the credential sets it.
 
-The `client_id` is yours to supply. TrueCoder ships no registered client for any
-provider, because whether a given provider permits a third-party client to use a
-given account is that provider's decision and worth reading their terms for. API
-key authentication needs none of this and remains the default.
+The built-in OpenAI provider is the exception to the user-supplied client rule: it
+uses the public Codex CLI client ID and its fixed callback contract. For every
+provider added through `providers.json`, the `client_id` remains yours to supply,
+because whether that provider permits a third-party client to use a given account
+is its decision. API-key authentication needs none of the OAuth fields.
 
 ### Optional MCP tool servers
 
@@ -988,7 +1017,7 @@ Checkpoints are git objects and refs, so they live inside `.git` where the conte
 | Memory              | `<user data dir>/truecoder/memory.sqlite3`                  | Durable notes, scoped by canonical workspace identity              |
 | Hooks               | `<user config dir>/truecoder/hooks.json`                    | Optional user-configured commands, strict and versioned            |
 | MCP servers         | `<user config dir>/truecoder/mcp.json`                      | Optional third-party tool servers, strict and versioned            |
-| Providers           | `<user config dir>/truecoder/providers.json`                | Optional base URLs and OAuth clients, strict and versioned         |
+| Providers           | Built in plus `<user config dir>/truecoder/providers.json`  | Direct OpenAI and optional extra endpoints/OAuth clients           |
 | Model selection     | `<user config dir>/truecoder/settings.json`                 | The model chosen with `/models`, remembered across restarts        |
 | Authorisation       | `<user config dir>/truecoder/tokens.json`                   | OAuth tokens, one per provider, private to your user               |
 | API keys            | `<user config dir>/truecoder/keys.json`                     | Keys typed into the interface, one per provider, private to your user |
@@ -1047,7 +1076,8 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **No coverage measurement is committed.** No coverage tool is installed or configured, so this README claims no coverage percentage.
 - **No formatter configuration is committed.** `ruff check` is clean, but the repository pins no `[tool.ruff]` section, so `ruff format` would apply defaults that disagree with the codebase's existing line width. Either commit a configuration matching the current style or accept a one-time reformat, but do not leave it ambiguous.
 - **The sandbox suite needs a matching local image.** A rebuilt image with an unlocked digest makes the container backend unavailable, which is correct behavior but easy to trip over during development.
-- **Single provider shape.** The client targets OpenAI-compatible chat completions. Other provider protocols would need a new client behind the same internal event types.
+- **Two OpenAI wire shapes.** The client implements Responses and OpenAI-compatible Chat Completions. Anthropic Messages and other provider-native protocols still need a new adapter behind the same internal event types.
+- **Direct OpenAI OAuth needs the loopback callback.** The built-in flow uses the public Codex CLI client and its registered port 1455 browser redirect; it does not expose OpenAI's provider-specific device flow. Use the API-key choice when the browser cannot return to that loopback listener.
 
 ## Contributing
 

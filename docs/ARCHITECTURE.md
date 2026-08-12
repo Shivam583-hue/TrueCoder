@@ -17,6 +17,8 @@ Agent
  │   ├─ Configuration, model catalog, and private stores
  │   └─ API-key and OAuth login flows
  ├─ LLM client
+ │   ├─ OpenAI Responses translation
+ │   └─ OpenAI-compatible Chat Completions translation
  ├─ Approval service
  ├─ Plan store
  └─ Tools
@@ -71,9 +73,10 @@ The UI handles presentation and user input.
 
 The agent owns orchestration.
 
-The provider layer owns configuration, credentials, model discovery, and the
-active selection. The LLM client receives that resolved selection and translates
-wire responses into internal types.
+The provider layer owns configuration, credentials, model discovery, the active
+selection, and the declared wire protocol. The LLM client receives that resolved
+selection and translates either Responses or Chat Completions into the same
+internal event types.
 
 Tools are independent units that validate arguments, perform work, and return structured results.
 
@@ -1749,8 +1752,9 @@ provider, which is a bug waiting for the first person to switch.
 Settings are therefore resolved once and handed to the client rather than fetched
 by it. A credential knows how to turn itself into client options and how to
 describe itself without revealing itself, so a key can be shown in the interface
-as its last four characters and never in full. A provider knows its base URL and
-where its model list lives. The active selection holds both plus the model.
+as its last four characters and never in full. A provider knows its base URL,
+where its model list lives, and whether it speaks Chat Completions or Responses.
+The active selection holds it plus the credential and model.
 
 The seam is drawn where invalidation matters. Changing the model is free, because
 the same connection serves any model the provider offers. Changing the provider or
@@ -1783,10 +1787,13 @@ falling back to a value that would be wrong for the same reason.
 
 A provider's model list is third-party JSON and is treated as such: the count is
 capped, identifiers and names are length-bounded, context windows outside a
-plausible range are dropped, and duplicates are collapsed. The result is cached to
-disk with a timestamp and a six-hour lifetime, because this is a network call and
-it must not happen at launch or on a keystroke. A cache that is corrupt, truncated,
-or stale is ignored rather than repaired.
+plausible range are dropped, and duplicates are collapsed. Both the conventional
+`data` list and OpenAI's subscription `models` list are translated into the same
+`ModelInfo` values; subscription entries use their slug, display name, visibility,
+and context window. The result is cached to disk with a timestamp and a six-hour
+lifetime, because this is a network call and it must not happen at launch or on a
+keystroke. A cache that is corrupt, truncated, or stale is ignored rather than
+repaired.
 
 A list covering one provider can only ever offer one provider's models, which
 makes the picker a list of names rather than a place to decide where an answer
@@ -1825,6 +1832,14 @@ on TrueCoder does not necessarily want the gateway they route through printed in
 their interface. The name remains the key everything is stored under, while the
 display name is only ever shown, because conflating the two is how storage ends up
 keyed by a string somebody rebrands later.
+
+Direct OpenAI is a built-in named provider and custom gateways are not aliases for
+it. A gateway model identifier can begin with `openai/`, but provider identity
+comes from the catalog that returned the row, never from that string. The two use
+separate credential names so changing `BASE_URL` cannot send a ChatGPT token to a
+gateway. A legacy key stored under `default` is accepted as a fallback for direct
+OpenAI, preserving the pre-provider key workflow without merging the two
+namespaces going forward.
 
 Rows are padded to widths computed from the data rather than joined with fixed
 spacing, so identifiers, providers, and context windows line up down the list. A
@@ -1947,10 +1962,28 @@ shell command. A token knows its own expiry and whether a refresh is possible, s
 an expired credential with no refresh is treated as absent rather than presented
 and rejected by the provider.
 
-TrueCoder registers no OAuth client of its own. The `client_id` and both endpoints
-come from configuration, which keeps the mechanism general and leaves the question
-of which providers permit a third-party client where it belongs, with the person
-reading that provider's terms.
+The general OAuth mechanism still reads its client and endpoints from provider
+configuration. Direct OpenAI is deliberately built in: it uses the public Codex
+CLI client ID, OpenAI's authorization and token endpoints, and the registered
+`http://localhost:1455/auth/callback`. Its extra authorization flags request the
+simplified Codex flow and an offline token. Other providers remain user-supplied,
+which keeps their client registration and terms with the person configuring them.
+
+OpenAI's two credential choices share a provider identity, but not an endpoint.
+An API key targets `https://api.openai.com/v1`; a browser token carries an endpoint
+override for `https://chatgpt.com/backend-api/codex` and a bounded
+`ChatGPT-Account-Id` header extracted during exchange. Model discovery follows the
+same split, using the ordinary API catalog for keys and the Codex subscription
+catalog for OAuth tokens.
+
+Both direct OpenAI paths use Responses. Chat history is translated into Responses
+input items: assistant tool requests become `function_call` items and tool results
+become `function_call_output` items. Chat-style nested function definitions are
+flattened on the request. Text deltas, function-argument deltas, terminal tool
+calls, and usage are translated back into the same events the agent already
+consumes. This adapter lives in `client`, while provider configuration merely
+declares `wire_api="responses"`; every other compatible provider continues on
+Chat Completions unless it declares otherwise.
 
 Opening a browser and waiting used to be one indivisible call, which meant the
 authorization URL existed only inside a function nobody could see into. That is
@@ -1995,11 +2028,12 @@ had never authenticated to succeeded quietly and failed on the next request, at
 which point the error came from the provider and named nothing the user could act
 on.
 
-Selection now asks. When the chosen provider has no usable credential, the flow
-that runs is the one that provider actually supports: a browser sign-in when an
-OAuth client is configured, and a prompt for an API key otherwise. Nothing is
-asked when a usable credential already exists, because a prompt that appears when
-it is not needed teaches people to dismiss prompts.
+Selection now asks. When the chosen provider has no usable credential, a provider
+with OAuth opens the browser/API-key choice, while a key-only provider opens the
+masked prompt directly. Direct OpenAI always has the former choice without a
+`providers.json` entry. Nothing is asked when a usable credential already exists,
+because a prompt that appears when it is not needed teaches people to dismiss
+prompts.
 
 A provider that offers only one way in does not ask which way, but it does say why.
 Someone who expected a choice and got a key prompt has no way to tell whether the
