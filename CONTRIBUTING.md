@@ -27,29 +27,46 @@ testing the guarantee your change affects.
 
 ## Development setup
 
-TrueCoder requires Python 3.10 or newer and Git. Follow the README's
-[local setup](README.md#local-development-setup) to clone the project, create a
-virtual environment, and install the package. Then install the lint version used
-by CI:
+TrueCoder requires Python 3.10 or newer and Git. Docker is optional unless you
+are changing the container backend or running the sandbox suite.
+
+On Linux or macOS:
 
 ```bash
+git clone https://github.com/Shivam583-hue/TrueCoder.git
+cd TrueCoder
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
 python -m pip install ruff==0.16.0
 ```
 
-In PowerShell, activate the environment with:
+On Windows PowerShell:
 
 ```powershell
+git clone https://github.com/Shivam583-hue/TrueCoder.git
+Set-Location TrueCoder
+py -m venv .venv
 .venv\Scripts\Activate.ps1
+python -m pip install -e .
+python -m pip install ruff==0.16.0
 ```
 
-Docker is optional unless you are changing the container backend or running the
-sandbox suite. Copy `.env.example` to `.env` only when a manual provider test
-needs it, and never commit the populated file. Most automated tests use fakes
-and do not require a real credential.
+The editable install provides both `truecoder` and `python -m truecoder`. To
+exercise the interface manually, copy the provider template and fill in
+`MODEL`; credentials can remain empty if you intend to use `/connect`:
+
+```bash
+cp .env.example .env
+truecoder
+```
+
+Never commit the populated `.env`. Most automated tests use fakes and do not
+require a real credential.
 
 See the README for the full list of [prerequisites](README.md#prerequisites),
-[environment variables](README.md#environment-variables), and
-[available commands](README.md#available-commands-and-scripts).
+[environment variables](README.md#environment-variables), and runtime
+[commands](README.md#available-commands-and-scripts).
 
 ## Making a change
 
@@ -82,6 +99,39 @@ Additional expectations:
   actionable, and free of credentials or untrusted internal details.
 - Avoid unrelated cleanup in the same pull request. It makes behavioral and
   security review harder.
+
+### Where to make common changes
+
+| Change                                | Primary location                                  | Usually also check                                                     |
+| ------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------- |
+| Terminal UI, transcript, or approvals | `src/truecoder/tui`                               | `styles.tcss`, agent events, and the TUI integration tests             |
+| Agent loop or turn lifecycle          | `src/truecoder/agent/agent.py` and `state.py`     | Context builder, session codec, and unit agent tests                   |
+| Providers, credentials, or models     | `src/truecoder/providers`                         | `client`, `tui/credentials.py`, and provider tests                     |
+| A new tool                            | `src/truecoder/tools/builtin`                     | `builtin/__init__.py`, registration in `agent.py`, and tool tests      |
+| Plan shape or invariants              | `src/truecoder/planning`                          | `builtin/plan.py`, `PlanCard`, plan projection in `context.py`         |
+| Code intelligence                     | `src/truecoder/lsp`                               | `builtin/code_intelligence.py` and the fake server in `tests/helpers`  |
+| MCP tool servers                      | `src/truecoder/mcp`                               | Schema bounds, the registry adapter, and the fake server in `tests/helpers` |
+| JSON-RPC transport or framing         | `src/truecoder/jsonrpc`                           | Both `lsp/protocol.py` and `mcp/protocol.py`, and their transport tests |
+| Context budgeting                     | `src/truecoder/agent/budget.py`                   | `context.py` assembly and `compaction.py` for long histories           |
+| Token counting or launch latency      | `src/truecoder/agent/tokenizer.py`                | `TiktokenTokenCounter` in `context.py` and `run_interactive` in `agent.py` |
+| Loop and stall behaviour              | `src/truecoder/agent/progress.py`                 | `_agentic_loop` in `agent.py` and the loop-detection tests             |
+| Checkpoints and restore               | `src/truecoder/checkpoint`                        | `tui/checkpoints.py` and capture in `agent.py`                         |
+| What a turn changed                   | `src/truecoder/checkpoint/changes.py`             | `tui/changes.py` and `turn_changes` in `agent.py`                      |
+| Memory shape or scoping               | `src/truecoder/memory`                            | `builtin/memory.py`, `tui/memory.py`, projection in `context.py`       |
+| Hook events or execution              | `src/truecoder/hooks`                             | `_run_hooks` and `pre_authorise` in `agent.py`                         |
+| Outbound network rules                | `src/truecoder/web/policy.py`                     | `fetch.py` redirect handling and the SSRF refusal tests                |
+| Diff rendering or bounds              | `src/truecoder/mutation`                          | `ToolCallCard` diff view, `styles.tcss`, preview tests                 |
+| Mutation evidence                     | `src/truecoder/tools/mutation_audit.py`           | `write_file.py`, `edit_file.py`, and the schema immutability triggers  |
+| Filesystem safety rules               | `src/truecoder/tools/builtin/filesystem.py`       | Every filesystem tool and its sensitive-path tests                     |
+| Command classification or limits      | `src/truecoder/execution/policy.py`               | `defaults.py`, approval display, and policy unit tests                 |
+| Host detection                        | `src/truecoder/execution/discovery.py`            | `selection.py`, `bootstrap.py`, and discovery integration tests        |
+| Process lifecycle on POSIX            | `src/truecoder/execution/backends/posix*.py`      | The backend contract suite and POSIX integration tests                 |
+| Process lifecycle on Windows          | `src/truecoder/execution/backends/windows*.py`    | Native contract and integration suites on `windows-latest`             |
+| Sandbox flags or mounts               | `src/truecoder/execution/backends/container_plan.py` | `container_dialects.py`, `image.lock`, and the sandbox suite         |
+| Audit schema or evidence              | `src/truecoder/execution/audit`                   | `schema.py` version, recovery handlers, and audit store tests          |
+| Operator execution policy             | `src/truecoder/execution/configuration.py`        | Defaults, bootstrap, trusted rules, health, and configuration tests    |
+| Startup wiring                        | `src/truecoder/execution/bootstrap.py`            | Health report, `prompts.py` shell guidance, and composition tests      |
+| Sandbox image                         | `container/`                                      | `container/image.lock` in the same commit, then rerun the sandbox suite |
 
 ## Tests and checks
 
@@ -183,9 +233,27 @@ recovery.
 ### Sandbox changes
 
 The sandbox suite is adversarial and requires Docker plus a local image whose
-digest matches `container/image.lock`. Follow
-[`container/README.build.md`](container/README.build.md) to build, lock, and
-verify it, then run:
+digest matches `container/image.lock`. Build the image and obtain its content
+ID with:
+
+```bash
+docker build -t truecoder-exec:1 container/
+docker images --no-trunc --format '{{.ID}}' truecoder-exec:1
+```
+
+Write the printed content ID into both `reference` and `digest` in
+`container/image.lock`, then perform the basic image checks:
+
+```bash
+docker run --rm --network none truecoder-exec:1 --version
+docker run --rm --network none truecoder-exec:1 python3 -c "import os; print(os.getuid(), os.getgid(), os.getcwd())"
+docker run --rm --network none --read-only --cap-drop ALL truecoder-exec:1 sh -c 'echo x > /etc/probe'
+```
+
+The first command prints the entrypoint protocol version, the second prints
+`65532 65532 /workspace`, and the third must fail with a read-only filesystem
+error. See [`container/README.build.md`](container/README.build.md) for the
+authoritative image contract and troubleshooting guidance. Finally, run:
 
 ```bash
 python -m unittest discover -s tests/sandbox -t .
@@ -193,7 +261,9 @@ python -m unittest discover -s tests/sandbox -t .
 
 The container backend is a security boundary. Changes to its image, launch
 arguments, resource identity, filesystem access, network access, cleanup, or
-limits need tests that exercise the real Docker boundary.
+limits need tests that exercise the real Docker boundary. Rebuilding produces a
+new content digest, so commit the corresponding `container/image.lock` update
+with the image change; discovery deliberately refuses a digest mismatch.
 
 ## Code and documentation style
 

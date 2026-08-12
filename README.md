@@ -4,8 +4,8 @@
 
 [![Tests](https://github.com/Shivam583-hue/TrueCoder/actions/workflows/tests.yml/badge.svg)](https://github.com/Shivam583-hue/TrueCoder/actions/workflows/tests.yml)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)](#prerequisites)
-[![Ruff](https://img.shields.io/badge/ruff-check%20passing-2ea44f?style=flat-square&logo=ruff&logoColor=white)](#available-commands-and-scripts)
-[![Sandbox](https://img.shields.io/badge/sandbox-Linux%20%C2%B7%20Docker%20certified-2496ed?style=flat-square&logo=docker&logoColor=white)](#container-sandbox-image)
+[![Ruff](https://img.shields.io/badge/ruff-check%20passing-2ea44f?style=flat-square&logo=ruff&logoColor=white)](CONTRIBUTING.md#tests-and-checks)
+[![Sandbox](https://img.shields.io/badge/sandbox-Linux%20%C2%B7%20Docker%20certified-2496ed?style=flat-square&logo=docker&logoColor=white)](#container-sandbox)
 [![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](CONTRIBUTING.md#tests-and-checks)
 
 TrueCoder is a terminal-native Python coding-agent runtime that reads, searches, edits, and runs code inside one project.
@@ -24,11 +24,13 @@ When a command must be isolated instead, the certified sandbox profile runs it i
 - [Architecture overview and diagram](#architecture-overview-and-diagram)
 - [Technology stack](#technology-stack)
 - [Prerequisites](#prerequisites)
-- [Local development setup](#local-development-setup)
+- [Running TrueCoder](#running-truecoder)
+- [Terminal shortcuts](#terminal-shortcuts)
 - [Environment variables](#environment-variables)
-- [Container sandbox image](#container-sandbox-image)
+- [Container sandbox](#container-sandbox)
 - [Available commands and scripts](#available-commands-and-scripts)
 - [Runtime data and storage](#runtime-data-and-storage)
+- [All features](#all-features)
 - [Known limitations](#known-limitations)
 - [Contributing](#contributing)
 - [Security](#security)
@@ -40,60 +42,14 @@ Coming soon...
 
 ## Key features
 
-- **Terminal-native agent** - a Textual TUI with streaming responses, live tool cards, inline approvals, cancellation, and token accounting.
-- **Turn-based conversation model** - only complete, valid turns enter history, so a tool call never survives without its result.
-- **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
-- **Fifteen approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, `get_diagnostics`, `remember`, `forget`, and `delegate`, each with its own validated schema and approval policy. `edit_file` takes a list of edits applied together, so a multi-site change costs one call and one approval and either lands whole or not at all. A tool call the model gets wrong comes back as an error it can read and retry, so a bad argument costs one call rather than the turn.
-- **A context budget that is actually enforced** - a single shell or fetch result can exceed the whole token budget, so oversized tool results are shortened where the request is assembled, into a valid envelope that says how much was dropped. The stored turn and session record keep the complete tool result; the execution and mutation audits retain their independent bounded evidence.
-- **Memory you can read, correct, and delete** - `remember` records a durable fact about the project and `forget` drops one, both approval-gated because they change behaviour in future sessions. A note that stops being true is corrected in one step with `replaces`, so a correction never leaves the old version contradicting the new one on every later turn. Notes are keyed case- and punctuation-insensitively so trivial variants cannot crowd out real facts, they are scoped to one workspace, projected into every request, and `ctrl+n` shows exactly what the model is being told.
-- **Hooks that run inside the execution plane** - a versioned `hooks.json` can run your formatter or linter at turn start or after a turn that changed files. Because you wrote the config, a hook is pre-authorised rather than prompting, but it is still bounded, policy-checked, and written to the same durable audit as any other command.
-- **See what a turn actually changed** - `ctrl+d` diffs the workspace against the pre-turn checkpoint, so a turn's real effect on disk is visible even when files were changed by a shell command rather than by the reviewed edit tools. The mutation audit records what `write_file` and `edit_file` did; this records what happened.
-- **Undoable turns** - a checkpoint of the whole workspace is captured before every turn using git plumbing, so a turn can be reversed even when the agent changed files through `shell` rather than through the reviewed edit tools. Restoring first captures the current state, so a restore is itself undoable.
-- **Loop detection, not just a cap** - identical tool calls returning identical results are recognised as a stall, the tools are withdrawn so the model must answer with what it has, and a model that ignores the withdrawal is stopped rather than allowed to keep spending. A stuck agent that previously burned 25 model requests and then failed the turn now costs 4 and still answers.
-- **Rolling compaction instead of silent forgetting** - when history outgrows the budget, the oldest turns are summarised into a running summary rather than dropped, and the summary is labelled as history so it is never mistaken for instructions.
-- **Language-server code intelligence** - `find_symbol`, `goto_definition`, `find_references`, and `get_diagnostics` resolve names the way a compiler does instead of by text match, over a real LSP session with server discovery, stdio JSON-RPC framing, document synchronisation, and lifecycle management. This first version is strictly read-only.
-- **A task planner that survives context eviction** - `update_plan` keeps an ordered checklist with exactly one step in progress, and the current plan is reprojected into every model request instead of being left in history to roll off the token budget.
-- **SSRF-resistant web access** - `web_fetch` allows only publicly routable addresses rather than blocking a list of bad ones, validates every DNS record before connecting, pins the connection to a validated address, and re-validates each redirect hop, so loopback, private ranges, and cloud metadata are refused by construction.
-- **Fetched text is data, never instructions** - a page arrives with an explicit untrusted-content notice and prompt guidance that forbids following instructions found inside it.
-- **Reviewable file mutations** - `write_file` and `edit_file` render a real unified diff in the approval card, with hunk headers, line numbers, and colored gutters, so a code change is reviewed as a diff rather than as escaped JSON arguments.
-- **Durable mutation evidence** - every applied write and edit is recorded in its own immutable SQLite store with SHA-256 digests of the file before and after, byte counts, line deltas, and the originating call, turn, session, and workspace.
-- **Atomic filesystem edits** - `write_file` and `edit_file` write beside the destination and install with `os.replace()`, so a reader sees the old complete file or the new complete file and never a partial one.
-- **Concurrency-aware editing** - `edit_file` verifies device, inode, size, and modification time before replacement and reports `file_changed` instead of overwriting a file that moved underneath it.
-- **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
-- **Policy-evaluated execution** - ordered rules classify read-only, test, build, package, network, deletion, permission, Git, script, and unknown commands, and requested limits can only tighten the configured ceiling.
-- **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
-- **Switch models without restarting** - type `/models` to search the bounded Models.dev directory across supported providers, with the active provider and the popular OpenAI, Anthropic, Google, and OpenRouter groups first. Every row retains both its provider ID and wire model ID, so `openrouter/openai/gpt-5.6-sol` can never be mistaken for direct `openai/gpt-5.6-sol`. The five-minute directory cache falls back to its last valid copy offline; custom endpoints and authenticated subscription catalogs keep separate six-hour live caches, and one failing provider never hides the others. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type, and `/quit` (or `/exit`) closes TrueCoder exactly as `ctrl+q` does. The status line always names the model that will actually answer, not whatever `MODEL` happens to say in your `.env`.
-- **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit`, `/e` leaves `exit`, and `/mo` leaves `models` and `model`. Tab completes to the longest prefix the remaining matches share: `/q` becomes `/quit` outright, `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
-- **It asks for what the model needs** - `/connect` starts with a searchable provider picker, collects that provider's credential, then opens only its models. `/models` remains the global searchable catalog, but selecting an unconnected model immediately runs the same connection flow instead of accepting a choice that cannot answer. A key-only provider goes straight to the masked prompt; a provider with OAuth asks which method you want. `/login` reconnects the current provider for compatibility, and `/logout` forgets its stored key and token.
-- **Refusals you can act on** - when a provider turns a request down you get a sentence, not its wire format: what happened, the provider's own explanation, and the next step. A rejected credential opens the way to replace it, offering every method that provider supports; running out of credit offers none, because a new credential does not buy anything. A failure that does not classify gets no invented advice.
-- **A sign-in you can complete anywhere** - direct OpenAI offers ChatGPT browser sign-in, ChatGPT device authorization, and a manual API key. The browser opens automatically while the full link remains copyable; its authorization-code exchange uses PKCE and the fixed Codex CLI redirect. The headless path follows OpenAI's brokered device flow: request a short code, poll for approval, then exchange the returned authorization code and verifier. Other configured providers can use standard RFC 8628 device grants. Links also land in the transcript, and closing a dialog cancels its work and releases the callback listener.
-- **Sessions that do not expire under you** - an OAuth token is renewed from its refresh token before the request that would have failed, once even when several turns notice at the same moment, and written back so a restart picks up the fresh one. A refresh that fails changes nothing rather than leaving a half-updated credential.
-- **Provider-aware authentication** - credentials are stored and resolved by provider ID, never inferred from a model prefix. Models.dev supplies each provider's documented environment variable names and transport metadata; a typed key or token outranks the environment for that provider. Direct OpenAI's subscription token is scoped to its Codex endpoint and account header, while an OpenAI API key stays on the public API. Keys and tokens are written privately in your config directory, `0600` on POSIX and ACL-restricted to your user and LocalSystem on Windows. Stored credentials are never inserted into child environments, and inherited credential-shaped variables are stripped.
-- **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. With nobody watching, what may proceed is a configured decision rather than an accident: `--autonomy read-only|edit|full` sets a risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
-- **Scored, not vibed** - `truecoder --eval` runs a fixed set of tasks in throwaway workspaces and reports how many passed, so "did that change help?" has an answer. Each task asserts an outcome on disk rather than which calls were made.
-- **Delegation with a hard boundary** - `delegate` hands a self-contained subtask to a fresh agent that shares the workspace but starts with an empty conversation. Only its final reply crosses back, never its transcript, it cannot delegate again, and it is approval-gated like any other tool.
-- **MCP servers, treated as untrusted** - configured servers contribute their tools through the same registry, approval fingerprint, and audit as everything else. Their schemas are bounded before the model ever sees them, their names are namespaced so nothing can shadow a built-in, and their output is labelled as third-party data the model must never take instructions from. A server that fails to start is reported and skipped; it never stops the others or the application.
-- **A system prompt that teaches the agent to work** - learn how the repository builds and tests itself before running anything, never install a tool to make a command succeed, treat a shortened result as an instruction to read a narrower range rather than the same one again, and remember that every call spends a human approval. Each rule is there because its absence was observed costing a turn.
-- **The agent knows what machine it is on** - the working directory, operating system, interpreter, and any workspace virtual environment are gathered at startup and stated in the system prompt, so the model runs your test suite through the right interpreter instead of probing for it or guessing.
-- **Nothing is downloaded between typing `truecoder` and seeing it** - the token encoding that context budgeting needs is a 3.6 MB fetch, so it is loaded on first use rather than at construction, warmed on a background thread while the interface paints, and cached in your cache directory instead of the temporary directory that a reboot clears. If it cannot be fetched at all, counting falls back to an estimate that over-counts rather than under-counts, so an offline launch degrades instead of failing.
-- **Useful by default, isolated on request** - shell commands run locally so the project's dependencies are actually present; asking for the container, for a non-host filesystem mode, or for no network opts into the sandbox instead. A request no backend can satisfy names the backend that refused it and why, rather than failing as a generic infrastructure error.
-- **Critical commands cannot run unprotected** - a command that reaches critical risk and is still permitted has its isolation raised beyond anything a local backend provides, so it is refused on the host and must be moved into the sandbox deliberately. Set `unknown_risk` to `critical` and every unrecognised command is held to that bar.
-- **Proven container sandbox** - non-root UID 65532, read-only root filesystem, approved tmpfs only, denied network, all capabilities dropped, no-new-privileges, and a digest-pinned image that launch never pulls.
-- **Durable execution audit** - a WAL-journaled SQLite evidence store with an immutable event log, trigger-protected rows, exactly one terminal outcome per run, and SHA-256 digests over the full raw output streams.
-- **Operational evidence controls** - startup recovers nonterminal runs first, then atomically compacts expired terminal evidence while preserving schema triggers and every unresolved record.
-- **Launch gating** - project-controlled code stays blocked behind a private gate until its exact backend resource identity is committed to the audit store.
-- **Crash recovery** - startup leases every nonterminal audit row and acts only on exact persisted identities, never on a guessed or reused PID.
-- **Bounded everything** - output, previews, environment allowlists, scan limits, match counts, and lifecycle event buffers all stay bounded as the underlying quantity grows.
-- **Secret hygiene** - child environments are built from an allowlist rather than copied, credential-shaped names are removed, and values are never copied into audit metadata or tool results.
-- **Live execution cards** - one evolving card per command, driven entirely by typed lifecycle stages, with bounded streaming output, responsive cancel by execution id, and the audit id on completion.
-- **Actionable execution status** - refused and failed-start results carry bounded reason codes and messages, while `ctrl+e` explains audit, recovery, and backend health.
-- **Compact approvals** - seven decision facts by default (command, directory, backend, access, limits, risk, scope), with the full capability contract behind the expander.
-- **Safe shutdown** - closing the interface resolves any awaited approval, cancels active executions by id, and waits a bounded window for cleanup and audit finalization.
-- **Cross-platform local execution** - POSIX process groups manage Linux and macOS commands, Windows Job Objects manage Windows process trees, and every native backend is exercised in CI on its own operating system.
-- **Honest platform reporting** - unsupported capabilities remain explicit; for example, macOS reports `process_limits` as unsupported rather than applying a per-user rlimit as if it bounded a process tree.
-- **Trusted-command rules** - versioned, user-editable rules that can only tighten policy, stored privately and parsed strictly.
-- **Audit viewer** - filter runs by outcome, backend, recency, and text, with redacted secret-shaped details and cleanup status surfaced ahead of the exit code.
-- **Project instructions** - `AGENTS.md` and `AGENTS.override.md` are discovered from the Git project root down to the launch directory and injected into the system prompt.
+- **Auditable execution** - every command is policy-classified, approval-gated when needed, bounded by explicit limits, and recorded with immutable execution evidence.
+- **Reviewable, undoable changes** - file mutations render as unified diffs, every turn starts from a git-backed checkpoint, and restores create their own safety checkpoint first.
+- **Flexible model access** - connect direct OpenAI with ChatGPT or API credentials, use native Anthropic and Google transports, or choose another supported Models.dev provider.
+- **State that stays under your control** - project-scoped sessions, visible durable memory, rolling context compaction, and workspace-local instructions survive long-running work without silently crossing repositories.
+- **A complete coding toolkit** - fifteen built-in tools cover files, shell, web, code intelligence, planning, memory, and delegation; bounded MCP servers can add more without bypassing approvals.
+- **Cross-platform by design** - Linux and macOS use POSIX process supervision, Windows uses Job Objects, and an optional digest-pinned Docker sandbox supplies stronger isolation on supported Linux hosts.
+
+[Explore all features](#all-features).
 
 ## Repository structure
 
@@ -360,42 +316,6 @@ TrueCoder/
     └── helpers/                       # Real child programs, including language and tool servers
 ```
 
-### Where to make common changes
-
-| Change                                | Primary location                                  | Usually also check                                                     |
-| ------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------- |
-| Terminal UI, transcript, or approvals | `src/truecoder/tui`                               | `styles.tcss`, agent events, and the TUI integration tests             |
-| Agent loop or turn lifecycle          | `src/truecoder/agent/agent.py` and `state.py`     | Context builder, session codec, and unit agent tests                   |
-| Providers, credentials, or models     | `src/truecoder/providers`                         | `client`, `tui/credentials.py`, and provider tests                     |
-| A new tool                            | `src/truecoder/tools/builtin`                     | `builtin/__init__.py`, registration in `agent.py`, and tool tests      |
-| Plan shape or invariants              | `src/truecoder/planning`                          | `builtin/plan.py`, `PlanCard`, plan projection in `context.py`         |
-| Code intelligence                     | `src/truecoder/lsp`                               | `builtin/code_intelligence.py` and the fake server in `tests/helpers`  |
-| MCP tool servers                      | `src/truecoder/mcp`                               | Schema bounds, the registry adapter, and the fake server in `tests/helpers` |
-| JSON-RPC transport or framing         | `src/truecoder/jsonrpc`                           | Both `lsp/protocol.py` and `mcp/protocol.py`, and their transport tests |
-| Context budgeting                     | `src/truecoder/agent/budget.py`                   | `context.py` assembly and `compaction.py` for long histories           |
-| Token counting or launch latency      | `src/truecoder/agent/tokenizer.py`                | `TiktokenTokenCounter` in `context.py` and `run_interactive` in `agent.py` |
-| Loop and stall behaviour              | `src/truecoder/agent/progress.py`                 | `_agentic_loop` in `agent.py` and the loop-detection tests             |
-| Checkpoints and restore               | `src/truecoder/checkpoint`                        | `tui/checkpoints.py` and capture in `agent.py`                         |
-| What a turn changed                   | `src/truecoder/checkpoint/changes.py`             | `tui/changes.py` and `turn_changes` in `agent.py`                      |
-| Memory shape or scoping               | `src/truecoder/memory`                            | `builtin/memory.py`, `tui/memory.py`, projection in `context.py`       |
-| Hook events or execution              | `src/truecoder/hooks`                             | `_run_hooks` and `pre_authorise` in `agent.py`                         |
-| Outbound network rules                | `src/truecoder/web/policy.py`                     | `fetch.py` redirect handling and the SSRF refusal tests                |
-| Diff rendering or bounds              | `src/truecoder/mutation`                          | `ToolCallCard` diff view, `styles.tcss`, preview tests                 |
-| Mutation evidence                     | `src/truecoder/tools/mutation_audit.py`           | `write_file.py`, `edit_file.py`, and the schema immutability triggers  |
-| Filesystem safety rules               | `src/truecoder/tools/builtin/filesystem.py`       | Every filesystem tool and its sensitive-path tests                     |
-| Command classification or limits      | `src/truecoder/execution/policy.py`               | `defaults.py`, approval display, and policy unit tests                 |
-| Host detection                        | `src/truecoder/execution/discovery.py`            | `selection.py`, `bootstrap.py`, and discovery integration tests        |
-| Process lifecycle on POSIX            | `src/truecoder/execution/backends/posix*.py`      | The backend contract suite and POSIX integration tests                 |
-| Process lifecycle on Windows          | `src/truecoder/execution/backends/windows*.py`    | Native contract and integration suites on `windows-latest`             |
-| Sandbox flags or mounts               | `src/truecoder/execution/backends/container_plan.py` | `container_dialects.py`, `image.lock`, and the sandbox suite         |
-| Audit schema or evidence              | `src/truecoder/execution/audit`                   | `schema.py` version, recovery handlers, and audit store tests          |
-| Operator execution policy             | `src/truecoder/execution/configuration.py`        | Defaults, bootstrap, trusted rules, health, and configuration tests    |
-| Startup wiring                        | `src/truecoder/execution/bootstrap.py`            | Health report, `prompts.py` shell guidance, and composition tests      |
-| Sandbox image                         | `container/`                                      | `container/image.lock` in the same commit, then rerun the sandbox suite |
-
-Dependencies point toward the core.
-Tools never depend on the agent, client, or UI, and the UI never contains agent logic.
-
 ## Engineering scorecard
 
 Local figures below were measured on 12 August 2026 from this working tree, on Linux with Python 3.14.3 and Docker 29.3.0.
@@ -585,19 +505,11 @@ No route escapes audit.
 TrueCoder runs without Docker.
 The container backend simply reports itself unavailable, and `shell` continues through the supported local backend as long as audit storage and discovery are healthy.
 
-## Local development setup
+## Running TrueCoder
 
-```bash
-git clone https://github.com/Shivam583-hue/TrueCoder.git
-cd TrueCoder
-
-python3 -m venv .venv
-source .venv/bin/activate
-
-pip install -e .
-```
-
-Create your provider configuration:
+Install the project from a source checkout using the
+[development setup](CONTRIBUTING.md#development-setup), then create your
+provider configuration:
 
 ```bash
 cp .env.example .env
@@ -619,17 +531,7 @@ truecoder
 TrueCoder resolves the project root from the current working directory, so launch it from inside the repository you want it to work on.
 Everything the filesystem tools can reach is rooted at that project root.
 
-### Optional: the container sandbox
-
-```bash
-docker build -t truecoder-exec:1 container/
-docker images --no-trunc --format '{{.ID}}' truecoder-exec:1
-```
-
-Write that content ID into both `reference` and `digest` in `container/image.lock`.
-See [Container sandbox image](#container-sandbox-image) for verification and the rebuild policy.
-
-### Terminal shortcuts
+## Terminal shortcuts
 
 | Key      | Action                                            |
 | -------- | ------------------------------------------------- |
@@ -917,31 +819,13 @@ structured executable or deny it above a risk ceiling. It cannot waive an
 existing approval, reduce risk, increase limits, or match arbitrary shell
 scripts.
 
-## Container sandbox image
+## Container sandbox
 
-The runtime never pulls at command time, so the image must already exist locally before the container backend reports itself available.
-
-### Build and lock
-
-```bash
-docker build -t truecoder-exec:1 container/
-docker images --no-trunc --format '{{.ID}}' truecoder-exec:1
-```
-
-Write the printed value into both `reference` and `digest` in `container/image.lock`.
-A locally built image has no registry manifest digest, so its content ID is the pinned identity.
-
-### Verify
-
-```bash
-docker run --rm --network none truecoder-exec:1 --version
-docker run --rm --network none truecoder-exec:1 python3 -c "import os; print(os.getuid(), os.getgid(), os.getcwd())"
-docker run --rm --network none --read-only --cap-drop ALL truecoder-exec:1 sh -c 'echo x > /etc/probe'
-```
-
-The first prints the entrypoint protocol version.
-The second prints `65532 65532 /workspace`.
-The third must fail with a read-only filesystem error.
+The optional container backend provides stronger isolation on supported Linux
+hosts. The runtime never pulls at command time, so its digest-pinned image must
+already exist locally before the backend reports itself available. Contributors
+who change or build the image should follow the
+[sandbox workflow](CONTRIBUTING.md#sandbox-changes).
 
 ### What the sandbox enforces
 
@@ -957,23 +841,12 @@ The third must fail with a read-only filesystem error.
 | CPU seconds      | Best effort through aggregate cgroup accounting in the trusted entrypoint, and advertised as best effort rather than enforced |
 | Image            | Pinned by content digest, launched with `--pull never`, and verified for platform, user, and entrypoint labels |
 
-### Rebuild policy
-
-Rebuilding produces a new content digest.
-Update `container/image.lock` in the same commit, because discovery refuses an image whose digest does not match the lock.
-
 ## Available commands and scripts
 
 | Command                                              | Description                                                     |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
 | `truecoder`                                          | Launch the terminal application in the current project          |
 | `python -m truecoder`                                | Equivalent module entry point                                   |
-| `pip install -e .`                                   | Install the package in editable mode                            |
-| `python -m unittest discover -s tests -t .`          | Run every suite                                                 |
-| `python -m unittest discover -s tests/unit -t .`     | Run the fast unit suite only                                    |
-| `python -m unittest discover -s tests/contract -t .` | Run the backend contract suite                                  |
-| `python -m unittest discover -s tests/integration -t .` | Run real-process, SQLite, and TUI integration scenarios      |
-| `python -m unittest discover -s tests/e2e -t .`      | Run the end-to-end task suite                                   |
 | `truecoder -p "..."`                                 | Run one prompt without the interface                            |
 | `truecoder -p "..." --autonomy edit`                 | Allow file changes and medium-risk commands unattended          |
 | `truecoder --eval`                                   | Score the agent on the shipped tasks                            |
@@ -981,9 +854,6 @@ Update `container/image.lock` in the same commit, because discovery refuses an i
 | `/connect` in the composer                           | Pick a provider, connect it, then choose one of its models       |
 | `/login` in the composer                             | Reconnect the active provider using key, browser, or device auth |
 | `/logout` in the composer                            | Forget the current provider's stored key and OAuth token        |
-| `python -m unittest discover -s tests/sandbox -t .`  | Run the adversarial Docker sandbox suite                        |
-| `ruff check src tests container`                     | Lint source, tests, and the image entrypoint                    |
-| `docker build -t truecoder-exec:1 container/`        | Build the execution sandbox image                               |
 
 ## Runtime data and storage
 
@@ -1024,6 +894,63 @@ replaces a verified database and never removes nonterminal evidence.
 Sessions are isolated by canonical project root.
 One repository cannot list, resume, rename, or delete another repository's sessions.
 Empty sessions are temporary placeholders and are removed automatically when you create another session, switch away, or close the application.
+
+## All features
+
+- **Terminal-native agent** - a Textual TUI with streaming responses, live tool cards, inline approvals, cancellation, and token accounting.
+- **Turn-based conversation model** - only complete, valid turns enter history, so a tool call never survives without its result.
+- **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
+- **Fifteen approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, `get_diagnostics`, `remember`, `forget`, and `delegate`, each with its own validated schema and approval policy. `edit_file` takes a list of edits applied together, so a multi-site change costs one call and one approval and either lands whole or not at all. A tool call the model gets wrong comes back as an error it can read and retry, so a bad argument costs one call rather than the turn.
+- **A context budget that is actually enforced** - a single shell or fetch result can exceed the whole token budget, so oversized tool results are shortened where the request is assembled, into a valid envelope that says how much was dropped. The stored turn and session record keep the complete tool result; the execution and mutation audits retain their independent bounded evidence.
+- **Memory you can read, correct, and delete** - `remember` records a durable fact about the project and `forget` drops one, both approval-gated because they change behaviour in future sessions. A note that stops being true is corrected in one step with `replaces`, so a correction never leaves the old version contradicting the new one on every later turn. Notes are keyed case- and punctuation-insensitively so trivial variants cannot crowd out real facts, they are scoped to one workspace, projected into every request, and `ctrl+n` shows exactly what the model is being told.
+- **Hooks that run inside the execution plane** - a versioned `hooks.json` can run your formatter or linter at turn start or after a turn that changed files. Because you wrote the config, a hook is pre-authorised rather than prompting, but it is still bounded, policy-checked, and written to the same durable audit as any other command.
+- **See what a turn actually changed** - `ctrl+d` diffs the workspace against the pre-turn checkpoint, so a turn's real effect on disk is visible even when files were changed by a shell command rather than by the reviewed edit tools. The mutation audit records what `write_file` and `edit_file` did; this records what happened.
+- **Undoable turns** - a checkpoint of the whole workspace is captured before every turn using git plumbing, so a turn can be reversed even when the agent changed files through `shell` rather than through the reviewed edit tools. Restoring first captures the current state, so a restore is itself undoable.
+- **Loop detection, not just a cap** - identical tool calls returning identical results are recognised as a stall, the tools are withdrawn so the model must answer with what it has, and a model that ignores the withdrawal is stopped rather than allowed to keep spending. A stuck agent that previously burned 25 model requests and then failed the turn now costs 4 and still answers.
+- **Rolling compaction instead of silent forgetting** - when history outgrows the budget, the oldest turns are summarised into a running summary rather than dropped, and the summary is labelled as history so it is never mistaken for instructions.
+- **Language-server code intelligence** - `find_symbol`, `goto_definition`, `find_references`, and `get_diagnostics` resolve names the way a compiler does instead of by text match, over a real LSP session with server discovery, stdio JSON-RPC framing, document synchronisation, and lifecycle management. This first version is strictly read-only.
+- **A task planner that survives context eviction** - `update_plan` keeps an ordered checklist with exactly one step in progress, and the current plan is reprojected into every model request instead of being left in history to roll off the token budget.
+- **SSRF-resistant web access** - `web_fetch` allows only publicly routable addresses rather than blocking a list of bad ones, validates every DNS record before connecting, pins the connection to a validated address, and re-validates each redirect hop, so loopback, private ranges, and cloud metadata are refused by construction.
+- **Fetched text is data, never instructions** - a page arrives with an explicit untrusted-content notice and prompt guidance that forbids following instructions found inside it.
+- **Reviewable file mutations** - `write_file` and `edit_file` render a real unified diff in the approval card, with hunk headers, line numbers, and colored gutters, so a code change is reviewed as a diff rather than as escaped JSON arguments.
+- **Durable mutation evidence** - every applied write and edit is recorded in its own immutable SQLite store with SHA-256 digests of the file before and after, byte counts, line deltas, and the originating call, turn, session, and workspace.
+- **Atomic filesystem edits** - `write_file` and `edit_file` write beside the destination and install with `os.replace()`, so a reader sees the old complete file or the new complete file and never a partial one.
+- **Concurrency-aware editing** - `edit_file` verifies device, inode, size, and modification time before replacement and reports `file_changed` instead of overwriting a file that moved underneath it.
+- **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
+- **Policy-evaluated execution** - ordered rules classify read-only, test, build, package, network, deletion, permission, Git, script, and unknown commands, and requested limits can only tighten the configured ceiling.
+- **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
+- **Switch models without restarting** - type `/models` to search the bounded Models.dev directory across supported providers, with the active provider and the popular OpenAI, Anthropic, Google, and OpenRouter groups first. Every row retains both its provider ID and wire model ID, so `openrouter/openai/gpt-5.6-sol` can never be mistaken for direct `openai/gpt-5.6-sol`. The five-minute directory cache falls back to its last valid copy offline; custom endpoints and authenticated subscription catalogs keep separate six-hour live caches, and one failing provider never hides the others. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type, and `/quit` (or `/exit`) closes TrueCoder exactly as `ctrl+q` does. The status line always names the model that will actually answer, not whatever `MODEL` happens to say in your `.env`.
+- **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit`, `/e` leaves `exit`, and `/mo` leaves `models` and `model`. Tab completes to the longest prefix the remaining matches share: `/q` becomes `/quit` outright, `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
+- **It asks for what the model needs** - `/connect` starts with a searchable provider picker, collects that provider's credential, then opens only its models. `/models` remains the global searchable catalog, but selecting an unconnected model immediately runs the same connection flow instead of accepting a choice that cannot answer. A key-only provider goes straight to the masked prompt; a provider with OAuth asks which method you want. `/login` reconnects the current provider for compatibility, and `/logout` forgets its stored key and token.
+- **Refusals you can act on** - when a provider turns a request down you get a sentence, not its wire format: what happened, the provider's own explanation, and the next step. A rejected credential opens the way to replace it, offering every method that provider supports; running out of credit offers none, because a new credential does not buy anything. A failure that does not classify gets no invented advice.
+- **A sign-in you can complete anywhere** - direct OpenAI offers ChatGPT browser sign-in, ChatGPT device authorization, and a manual API key. The browser opens automatically while the full link remains copyable; its authorization-code exchange uses PKCE and the fixed Codex CLI redirect. The headless path follows OpenAI's brokered device flow: request a short code, poll for approval, then exchange the returned authorization code and verifier. Other configured providers can use standard RFC 8628 device grants. Links also land in the transcript, and closing a dialog cancels its work and releases the callback listener.
+- **Sessions that do not expire under you** - an OAuth token is renewed from its refresh token before the request that would have failed, once even when several turns notice at the same moment, and written back so a restart picks up the fresh one. A refresh that fails changes nothing rather than leaving a half-updated credential.
+- **Provider-aware authentication** - credentials are stored and resolved by provider ID, never inferred from a model prefix. Models.dev supplies each provider's documented environment variable names and transport metadata; a typed key or token outranks the environment for that provider. Direct OpenAI's subscription token is scoped to its Codex endpoint and account header, while an OpenAI API key stays on the public API. Keys and tokens are written privately in your config directory, `0600` on POSIX and ACL-restricted to your user and LocalSystem on Windows. Stored credentials are never inserted into child environments, and inherited credential-shaped variables are stripped.
+- **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. With nobody watching, what may proceed is a configured decision rather than an accident: `--autonomy read-only|edit|full` sets a risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
+- **Scored, not vibed** - `truecoder --eval` runs a fixed set of tasks in throwaway workspaces and reports how many passed, so "did that change help?" has an answer. Each task asserts an outcome on disk rather than which calls were made.
+- **Delegation with a hard boundary** - `delegate` hands a self-contained subtask to a fresh agent that shares the workspace but starts with an empty conversation. Only its final reply crosses back, never its transcript, it cannot delegate again, and it is approval-gated like any other tool.
+- **MCP servers, treated as untrusted** - configured servers contribute their tools through the same registry, approval fingerprint, and audit as everything else. Their schemas are bounded before the model ever sees them, their names are namespaced so nothing can shadow a built-in, and their output is labelled as third-party data the model must never take instructions from. A server that fails to start is reported and skipped; it never stops the others or the application.
+- **A system prompt that teaches the agent to work** - learn how the repository builds and tests itself before running anything, never install a tool to make a command succeed, treat a shortened result as an instruction to read a narrower range rather than the same one again, and remember that every call spends a human approval. Each rule is there because its absence was observed costing a turn.
+- **The agent knows what machine it is on** - the working directory, operating system, interpreter, and any workspace virtual environment are gathered at startup and stated in the system prompt, so the model runs your test suite through the right interpreter instead of probing for it or guessing.
+- **Nothing is downloaded between typing `truecoder` and seeing it** - the token encoding that context budgeting needs is a 3.6 MB fetch, so it is loaded on first use rather than at construction, warmed on a background thread while the interface paints, and cached in your cache directory instead of the temporary directory that a reboot clears. If it cannot be fetched at all, counting falls back to an estimate that over-counts rather than under-counts, so an offline launch degrades instead of failing.
+- **Useful by default, isolated on request** - shell commands run locally so the project's dependencies are actually present; asking for the container, for a non-host filesystem mode, or for no network opts into the sandbox instead. A request no backend can satisfy names the backend that refused it and why, rather than failing as a generic infrastructure error.
+- **Critical commands cannot run unprotected** - a command that reaches critical risk and is still permitted has its isolation raised beyond anything a local backend provides, so it is refused on the host and must be moved into the sandbox deliberately. Set `unknown_risk` to `critical` and every unrecognised command is held to that bar.
+- **Proven container sandbox** - non-root UID 65532, read-only root filesystem, approved tmpfs only, denied network, all capabilities dropped, no-new-privileges, and a digest-pinned image that launch never pulls.
+- **Durable execution audit** - a WAL-journaled SQLite evidence store with an immutable event log, trigger-protected rows, exactly one terminal outcome per run, and SHA-256 digests over the full raw output streams.
+- **Operational evidence controls** - startup recovers nonterminal runs first, then atomically compacts expired terminal evidence while preserving schema triggers and every unresolved record.
+- **Launch gating** - project-controlled code stays blocked behind a private gate until its exact backend resource identity is committed to the audit store.
+- **Crash recovery** - startup leases every nonterminal audit row and acts only on exact persisted identities, never on a guessed or reused PID.
+- **Bounded everything** - output, previews, environment allowlists, scan limits, match counts, and lifecycle event buffers all stay bounded as the underlying quantity grows.
+- **Secret hygiene** - child environments are built from an allowlist rather than copied, credential-shaped names are removed, and values are never copied into audit metadata or tool results.
+- **Live execution cards** - one evolving card per command, driven entirely by typed lifecycle stages, with bounded streaming output, responsive cancel by execution id, and the audit id on completion.
+- **Actionable execution status** - refused and failed-start results carry bounded reason codes and messages, while `ctrl+e` explains audit, recovery, and backend health.
+- **Compact approvals** - seven decision facts by default (command, directory, backend, access, limits, risk, scope), with the full capability contract behind the expander.
+- **Safe shutdown** - closing the interface resolves any awaited approval, cancels active executions by id, and waits a bounded window for cleanup and audit finalization.
+- **Cross-platform local execution** - POSIX process groups manage Linux and macOS commands, Windows Job Objects manage Windows process trees, and every native backend is exercised in CI on its own operating system.
+- **Honest platform reporting** - unsupported capabilities remain explicit; for example, macOS reports `process_limits` as unsupported rather than applying a per-user rlimit as if it bounded a process tree.
+- **Trusted-command rules** - versioned, user-editable rules that can only tighten policy, stored privately and parsed strictly.
+- **Audit viewer** - filter runs by outcome, backend, recency, and text, with redacted secret-shaped details and cleanup status surfaced ahead of the exit code.
+- **Project instructions** - `AGENTS.md` and `AGENTS.override.md` are discovered from the Git project root down to the launch directory and injected into the system prompt.
 
 ## Known limitations
 
