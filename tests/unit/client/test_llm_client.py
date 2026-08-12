@@ -169,6 +169,16 @@ def make_rate_limit_error() -> RateLimitError:
 
 class LLMClientTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
+        environment = patch.dict(
+            os.environ,
+            {
+                "API_KEY": "test-key",
+                "BASE_URL": "https://api.example.com/v1",
+            },
+            clear=True,
+        )
+        environment.start()
+        self.addCleanup(environment.stop)
         isolation = patch(
             "truecoder.client.llm_client.resolve_settings",
             side_effect=lambda: settings_from_environment(),
