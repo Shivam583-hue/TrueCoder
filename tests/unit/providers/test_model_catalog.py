@@ -199,6 +199,90 @@ class ModelsDevTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(provider.is_supported)
 
+    def test_a_compatible_provider_without_an_endpoint_is_not_guessed(self):
+        payload = {
+            "mystery": {
+                "name": "Mystery",
+                "npm": "@ai-sdk/openai-compatible",
+                "env": ["MYSTERY_API_KEY"],
+                "models": {},
+            }
+        }
+
+        provider = parse_models_dev(payload)[0].provider
+
+        self.assertFalse(provider.is_supported)
+
+    def test_cohere_uses_its_compatibility_endpoint(self):
+        payload = {
+            "cohere": {
+                "name": "Cohere",
+                "npm": "@ai-sdk/cohere",
+                "env": ["COHERE_API_KEY"],
+                "models": {},
+            }
+        }
+
+        provider = parse_models_dev(payload)[0].provider
+
+        self.assertTrue(provider.is_supported)
+        self.assertEqual(
+            provider.base_url,
+            "https://api.cohere.com/compatibility/v1",
+        )
+
+    def test_a_model_can_override_its_providers_endpoint_and_transport(self):
+        payload = {
+            "gateway": {
+                "name": "Gateway",
+                "npm": "@ai-sdk/openai-compatible",
+                "api": "https://gateway.invalid/v1",
+                "env": ["GATEWAY_API_KEY"],
+                "models": {
+                    "claude": {
+                        "name": "Claude",
+                        "provider": {
+                            "npm": "@ai-sdk/anthropic",
+                            "api": "https://gateway.invalid/anthropic/v1",
+                        },
+                    }
+                },
+            }
+        }
+
+        entry = parse_models_dev(payload)[0]
+        resolved = entry.models[0].provider_config(entry.provider)
+
+        self.assertEqual(resolved.name, "gateway")
+        self.assertEqual(resolved.adapter, "anthropic")
+        self.assertEqual(
+            resolved.base_url,
+            "https://gateway.invalid/anthropic/v1",
+        )
+
+    def test_an_openai_model_override_selects_responses(self):
+        payload = {
+            "gateway": {
+                "name": "Gateway",
+                "npm": "@ai-sdk/openai-compatible",
+                "api": "https://gateway.invalid/v1",
+                "models": {
+                    "gpt": {
+                        "provider": {
+                            "npm": "@ai-sdk/openai",
+                            "api": "https://gateway.invalid/openai/v1",
+                        }
+                    }
+                },
+            }
+        }
+
+        entry = parse_models_dev(payload)[0]
+        resolved = entry.models[0].provider_config(entry.provider)
+
+        self.assertEqual(resolved.adapter, "openai")
+        self.assertEqual(resolved.wire_api, "responses")
+
     def test_deprecated_models_are_not_offered(self):
         slices = parse_models_dev(MODELS_DEV)
         openai = next(item for item in slices if item.provider.name == "openai")

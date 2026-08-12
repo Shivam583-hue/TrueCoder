@@ -8,13 +8,16 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
+from urllib.parse import urlparse
 
 from platformdirs import user_cache_path
 
 from truecoder.providers.models import (
+    ADAPTERS,
     MAX_MODEL_ID_CHARACTERS,
     MAX_MODEL_NAME_CHARACTERS,
     MAX_RELEASE_DATE_CHARACTERS,
+    WIRE_APIS,
     Credential,
     ModelInfo,
     Provider,
@@ -34,6 +37,7 @@ MODELS_DEV_URL: Final = "https://models.opencode.ai/api.json"
 _DEFAULT_PROVIDER_ENDPOINTS: Final = {
     "anthropic": "https://api.anthropic.com/v1",
     "cerebras": "https://api.cerebras.ai/v1",
+    "cohere": "https://api.cohere.com/compatibility/v1",
     "deepinfra": "https://api.deepinfra.com/v1/openai",
     "google": "https://generativelanguage.googleapis.com/v1beta",
     "groq": "https://api.groq.com/openai/v1",
@@ -51,9 +55,11 @@ _UNSUPPORTED_PACKAGES: Final = frozenset(
         "@ai-sdk/google-vertex",
         "@ai-sdk/google-vertex/anthropic",
         "@ai-sdk/vercel",
+        "@aihubmix/ai-sdk-provider",
         "@jerome-benoit/sap-ai-provider-v2",
         "ai-gateway-provider",
         "gitlab-ai-provider",
+        "merge-gateway-ai-sdk-provider",
     }
 )
 
@@ -95,6 +101,11 @@ def _bounded(value: object, limit: int) -> str:
     return collapsed[:limit]
 
 
+def _api_url(value: object) -> str:
+    candidate = _bounded(value, 2048)
+    return candidate if urlparse(candidate).scheme == "https" else ""
+
+
 def _context_window(entry: dict[str, Any]) -> int | None:
     for key in _CONTEXT_KEYS:
         value = entry.get(key)
@@ -129,7 +140,7 @@ def _models_dev_provider(identifier: str, entry: dict[str, Any]) -> Provider:
     from truecoder.providers.openai import openai_provider
     from truecoder.providers.registry import openrouter_provider
 
-    api = _bounded(entry.get("api"), 2048) or _DEFAULT_PROVIDER_ENDPOINTS.get(
+    api = _api_url(entry.get("api")) or _DEFAULT_PROVIDER_ENDPOINTS.get(
         identifier
     )
     env = entry.get("env")
@@ -154,13 +165,33 @@ def _models_dev_provider(identifier: str, entry: dict[str, Any]) -> Provider:
             adapter=provider.adapter,
             env_names=env_names or provider.env_names,
         )
+    adapter = _models_dev_adapter(package)
+    if api is None:
+        adapter = "unsupported"
     return Provider(
         name=identifier,
         display_name=label,
         base_url=api,
-        adapter=_models_dev_adapter(package),
+        adapter=adapter,
+        wire_api="responses" if adapter == "openai" else "chat",
         env_names=env_names,
     )
+
+
+def _model_transport(
+    provider: Provider,
+    entry: dict[str, Any],
+) -> tuple[str, str, str]:
+    override = entry.get("provider")
+    if not isinstance(override, dict):
+        return "", "", ""
+    api = _api_url(override.get("api"))
+    package = override.get("npm")
+    adapter = _models_dev_adapter(package) if isinstance(package, str) else ""
+    if adapter == "openai-compatible" and not (api or provider.base_url):
+        adapter = "unsupported"
+    wire_api = "responses" if adapter == "openai" else ""
+    return api, adapter, wire_api
 
 
 def parse_models_dev(payload: object) -> tuple[CatalogSlice, ...]:
@@ -192,6 +223,7 @@ def parse_models_dev(payload: object) -> tuple[CatalogSlice, ...]:
             )
             if not model_id:
                 continue
+            base_url, adapter, wire_api = _model_transport(provider, model_entry)
             models.append(
                 ModelInfo(
                     identifier=model_id,
@@ -205,6 +237,9 @@ def parse_models_dev(payload: object) -> tuple[CatalogSlice, ...]:
                         model_entry.get("release_date"),
                         MAX_RELEASE_DATE_CHARACTERS,
                     ),
+                    base_url=base_url,
+                    adapter=adapter,
+                    wire_api=wire_api,
                 )
             )
         slices.append(
@@ -367,6 +402,9 @@ def encode_cache(models: tuple[ModelInfo, ...], *, fetched_at: float) -> str:
                     "name": model.display_name,
                     "context_window": model.context_window,
                     "release_date": model.release_date,
+                    "base_url": model.base_url,
+                    "adapter": model.adapter,
+                    "wire_api": model.wire_api,
                 }
                 for model in models
             ],
@@ -414,6 +452,17 @@ def decode_cache(
                 release_date=_bounded(
                     entry.get("release_date"),
                     MAX_RELEASE_DATE_CHARACTERS,
+                ),
+                base_url=_api_url(entry.get("base_url")),
+                adapter=(
+                    _bounded(entry.get("adapter"), 40)
+                    if _bounded(entry.get("adapter"), 40) in ADAPTERS
+                    else ""
+                ),
+                wire_api=(
+                    _bounded(entry.get("wire_api"), 20)
+                    if _bounded(entry.get("wire_api"), 20) in WIRE_APIS
+                    else ""
                 ),
             )
         )
@@ -516,6 +565,19 @@ class CatalogSlice:
     models: tuple[ModelInfo, ...] = ()
     reason: str | None = None
 
+    @property
+    def supported_models(self) -> tuple[ModelInfo, ...]:
+        return tuple(
+            model
+            for model in self.models
+            if model.provider == self.provider.name
+            and model.provider_config(self.provider).is_supported
+        )
+
+    @property
+    def is_supported(self) -> bool:
+        return self.provider.is_supported or bool(self.supported_models)
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderCatalog:
@@ -616,14 +678,14 @@ async def discover_catalog(
 
 
 def merge_models(slices: tuple[CatalogSlice, ...]) -> tuple[ModelInfo, ...]:
-    listed = [model for entry in slices for model in entry.models]
+    listed = [model for entry in slices for model in entry.supported_models]
     return tuple(
         sorted(listed, key=lambda model: (model.provider, model.identifier))
     )
 
 
 def catalog_problem(slices: tuple[CatalogSlice, ...]) -> str | None:
-    if any(entry.models for entry in slices):
+    if any(entry.supported_models for entry in slices):
         return None
     reasons = [entry for entry in slices if entry.reason is not None]
     if not reasons:

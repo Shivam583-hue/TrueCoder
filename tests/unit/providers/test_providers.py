@@ -120,6 +120,20 @@ class SessionSettingsTests(unittest.TestCase):
 
         self.assertEqual(len(invalidations), 1)
 
+    def test_changing_the_transport_invalidates_the_connection(self):
+        settings = _settings()
+        invalidations: list[int] = []
+        settings.on_connection_change(lambda: invalidations.append(1))
+        native = Provider(
+            name=settings.provider.name,
+            base_url=settings.provider.base_url,
+            adapter="anthropic",
+        )
+
+        settings.use(native, settings.credential)
+
+        self.assertEqual(len(invalidations), 1)
+
     def test_reusing_the_same_connection_does_not_invalidate(self):
         settings = _settings()
         invalidations: list[int] = []
@@ -326,7 +340,15 @@ class CacheTests(unittest.TestCase):
         self.addCleanup(self._directory.cleanup)
 
     def test_a_cache_round_trips(self):
-        models = (ModelInfo(identifier="a", context_window=100),)
+        models = (
+            ModelInfo(
+                identifier="a",
+                context_window=100,
+                base_url="https://gateway.invalid/anthropic/v1",
+                adapter="anthropic",
+                wire_api="chat",
+            ),
+        )
 
         decoded = decode_cache(encode_cache(models, fetched_at=1000.0), now=1001.0)
 

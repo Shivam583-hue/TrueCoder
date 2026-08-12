@@ -190,6 +190,39 @@ class ModelCommandTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app._model_name, "test/openai/gpt-5")
                 self.assertIn("openai/gpt-5", self.config.read_text())
 
+    async def test_choosing_a_model_applies_its_transport_override(self):
+        app = self._app()
+        model = ModelInfo(
+            identifier="claude-via-gateway",
+            provider="test",
+            base_url="https://x.invalid/anthropic/v1",
+            adapter="anthropic",
+        )
+
+        with (
+            patch.dict(os.environ, {"MODEL": "anthropic/claude-opus-5"}),
+            patch(
+                "truecoder.providers.catalog.load_models",
+                return_value=(model,),
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._type(app, pilot, "/models")
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ModelPickerScreen),
+                    description="the model picker",
+                )
+                app.screen.dismiss(model)
+                await pilot.pause()
+
+                provider = app.agent.llm_client.settings.provider
+                self.assertEqual(provider.adapter, "anthropic")
+                self.assertEqual(
+                    provider.base_url,
+                    "https://x.invalid/anthropic/v1",
+                )
+
     async def test_an_unreachable_provider_explains_itself(self):
         app = self._app()
 

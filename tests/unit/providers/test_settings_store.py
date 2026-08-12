@@ -8,7 +8,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from truecoder.providers.models import resolve_settings, settings_from_environment
+from truecoder.providers.catalog import CatalogSlice
+from truecoder.providers.models import (
+    ModelInfo,
+    Provider,
+    resolve_settings,
+    settings_from_environment,
+)
 from truecoder.providers.store import (
     SettingsError,
     StoredSelection,
@@ -223,6 +229,42 @@ class ResolutionTests(unittest.TestCase):
 
         self.assertEqual(settings.provider.name, "openai")
         self.assertEqual(settings.credential, key)
+
+    def test_a_stored_model_restores_its_transport_override(self):
+        provider = Provider(
+            name="gateway",
+            base_url="https://gateway.invalid/v1",
+        )
+        model = ModelInfo(
+            identifier="claude",
+            provider="gateway",
+            base_url="https://gateway.invalid/anthropic/v1",
+            adapter="anthropic",
+        )
+        directory = (CatalogSlice(provider, (model,)),)
+
+        with (
+            patch.dict("os.environ", {"MODEL": "fallback"}, clear=True),
+            patch(
+                "truecoder.providers.store.load_selection",
+                return_value=StoredSelection(model="claude", provider="gateway"),
+            ),
+            patch("truecoder.providers.configuration.load_providers", return_value=()),
+            patch(
+                "truecoder.providers.catalog.read_models_dev_cache",
+                return_value=directory,
+            ),
+            patch("truecoder.providers.tokens.load_tokens", return_value={}),
+            patch("truecoder.providers.keys.load_keys", return_value={}),
+        ):
+            settings = resolve_settings()
+
+        self.assertEqual(settings.provider.name, "gateway")
+        self.assertEqual(settings.provider.adapter, "anthropic")
+        self.assertEqual(
+            settings.provider.base_url,
+            "https://gateway.invalid/anthropic/v1",
+        )
 
 
 if __name__ == "__main__":

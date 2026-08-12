@@ -425,10 +425,10 @@ class TrueCoderApp(App[None]):
             ProviderChoice(
                 entry.provider,
                 connected=_usable(catalog.credentials.get(entry.provider.name)),
-                model_count=len(entry.models),
+                model_count=len(entry.supported_models),
             )
             for entry in catalog.slices
-            if entry.provider.is_supported
+            if entry.is_supported
         )
         self.push_screen(ProviderPickerScreen(choices), self._apply_provider_choice)
 
@@ -461,7 +461,7 @@ class TrueCoderApp(App[None]):
         slices = tuple(
             entry
             for entry in catalog.slices
-            if entry.provider.is_supported
+            if entry.is_supported
             and (not provider_name or entry.provider.name == provider_name)
         )
         credentials = catalog.credentials
@@ -509,7 +509,8 @@ class TrueCoderApp(App[None]):
         missing = [
             entry
             for entry in slices
-            if not entry.models and not _usable(credentials.get(entry.provider.name))
+            if not entry.supported_models
+            and not _usable(credentials.get(entry.provider.name))
         ]
         return tuple(
             ProviderInvite(
@@ -550,8 +551,8 @@ class TrueCoderApp(App[None]):
 
         settings = self.agent.llm_client.settings
         provider = self._provider_named(choice.provider)
-        if provider.name != settings.provider.name:
-            settings.use(provider, credential_for_provider(provider, settings))
+        provider = choice.provider_config(provider)
+        settings.use(provider, credential_for_provider(provider, settings))
 
         model = choice.identifier
         settings.select_model(model)

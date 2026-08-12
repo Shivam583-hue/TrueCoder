@@ -178,6 +178,9 @@ class ModelInfo:
     display_name: str = ""
     context_window: int | None = None
     release_date: str = ""
+    base_url: str = ""
+    adapter: str = ""
+    wire_api: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.identifier, str) or not self.identifier.strip():
@@ -186,6 +189,14 @@ class ModelInfo:
             raise CredentialError("release_date must be text")
         if len(self.release_date) > MAX_RELEASE_DATE_CHARACTERS:
             raise CredentialError("release_date is longer than allowed")
+        if not isinstance(self.base_url, str):
+            raise CredentialError("model base_url must be text")
+        if self.adapter and self.adapter not in ADAPTERS:
+            raise CredentialError(f"model adapter must be one of {sorted(ADAPTERS)}")
+        if self.wire_api and self.wire_api not in WIRE_APIS:
+            raise CredentialError(
+                f"model wire_api must be one of {sorted(WIRE_APIS)}"
+            )
 
     @property
     def label(self) -> str:
@@ -214,6 +225,20 @@ class ModelInfo:
         haystack = f"{self.identifier} {self.display_name} {self.provider}".casefold()
         return all(part in haystack for part in needle.split())
 
+    def provider_config(self, provider: Provider) -> Provider:
+        if provider.name != self.provider:
+            raise CredentialError("a model can only configure its own provider")
+        return Provider(
+            name=provider.name,
+            base_url=self.base_url or provider.base_url,
+            oauth=provider.oauth,
+            header_pairs=provider.header_pairs,
+            display_name=provider.display_name,
+            wire_api=self.wire_api or provider.wire_api,
+            adapter=self.adapter or provider.adapter,
+            env_names=provider.env_names,
+        )
+
 
 @dataclass(slots=True)
 class SessionSettings:
@@ -229,10 +254,12 @@ class SessionSettings:
             raise CredentialError("a model identifier is required")
 
     @property
-    def fingerprint(self) -> tuple[str, str | None, str]:
+    def fingerprint(self) -> tuple[str, str | None, str, str, str]:
         return (
             self.provider.name,
             self.provider.base_url,
+            self.provider.adapter,
+            self.provider.wire_api,
             "" if self.credential is None else self.credential.redacted(),
         )
 
@@ -252,6 +279,8 @@ class SessionSettings:
         changed = self.fingerprint != (
             provider.name,
             provider.base_url,
+            provider.adapter,
+            provider.wire_api,
             "" if credential is None else credential.redacted(),
         )
         self.provider = provider
@@ -357,6 +386,21 @@ def resolve_settings() -> SessionSettings:
             None,
         )
     if chosen is not None:
+        from truecoder.providers.catalog import models_dev_path, read_models_dev_cache
+
+        cached = read_models_dev_cache(models_dev_path(), allow_stale=True) or ()
+        selected = next(
+            (
+                model
+                for entry in cached
+                if entry.provider.name == chosen.name
+                for model in entry.models
+                if model.identifier == settings.model
+            ),
+            None,
+        )
+        if selected is not None:
+            chosen = selected.provider_config(chosen)
         settings.provider = chosen
 
     remembered = credential_for_provider(settings.provider)
