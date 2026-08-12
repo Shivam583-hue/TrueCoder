@@ -38,6 +38,11 @@ MIXED = (
 )
 
 
+async def _catalog_for(provider, credential, *, refresh=False):
+    del credential, refresh
+    return CATALOG if provider.name == "test" else ()
+
+
 class _Client(ScriptedLLMClient):
     def __init__(self) -> None:
         super().__init__([])
@@ -122,7 +127,7 @@ class ModelCommandTests(unittest.IsolatedAsyncioTestCase):
             patch.dict(os.environ, {"MODEL": "anthropic/claude-opus-5"}),
             patch(
                 "truecoder.providers.catalog.load_models",
-                return_value=CATALOG,
+                side_effect=_catalog_for,
             ),
         ):
             async with app.run_test(size=(120, 40)) as pilot:
@@ -146,7 +151,7 @@ class ModelCommandTests(unittest.IsolatedAsyncioTestCase):
             patch.dict(os.environ, {"MODEL": "anthropic/claude-opus-5"}),
             patch(
                 "truecoder.providers.catalog.load_models",
-                return_value=CATALOG,
+                side_effect=_catalog_for,
             ),
         ):
             async with app.run_test(size=(120, 40)) as pilot:
