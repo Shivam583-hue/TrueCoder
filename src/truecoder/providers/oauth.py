@@ -14,6 +14,7 @@ VERIFIER_BYTES: Final = 64
 STATE_BYTES: Final = 32
 MAX_CLAIM_CHARACTERS: Final = 8 * 1024
 MAX_ACCOUNT_CHARACTERS: Final = 200
+MAX_PORT: Final = 65535
 REFRESH_MARGIN_SECONDS: Final = 60.0
 CALLBACK_TIMEOUT_SECONDS: Final = 300.0
 MAX_CALLBACK_BYTES: Final = 16 * 1024
@@ -43,6 +44,7 @@ class OAuthClient:
     account_header: str = ""
     api_base_url: str = ""
     extra_parameters: tuple[tuple[str, str], ...] = ()
+    redirect_port: int = 0
 
     def __post_init__(self) -> None:
         for name in ("client_id", "authorize_url", "token_url"):
@@ -61,6 +63,12 @@ class OAuthClient:
             )
         if self.account_header and self.account_header.casefold() == "authorization":
             raise OAuthError("account_header cannot be the authorisation header")
+        if isinstance(self.redirect_port, bool) or not isinstance(
+            self.redirect_port, int
+        ):
+            raise OAuthError("redirect_port must be a whole number")
+        if not 0 <= self.redirect_port <= MAX_PORT:
+            raise OAuthError(f"redirect_port must be between 0 and {MAX_PORT}")
 
     @property
     def carries_account(self) -> bool:

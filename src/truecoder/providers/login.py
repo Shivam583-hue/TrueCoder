@@ -56,11 +56,18 @@ class CallbackServer:
 
     async def start(self) -> None:
         self._done = asyncio.Event()
-        self._server = await asyncio.start_server(
-            self._handle,
-            host=CALLBACK_HOST,
-            port=0,
-        )
+        try:
+            self._server = await asyncio.start_server(
+                self._handle,
+                host=CALLBACK_HOST,
+                port=self.port,
+            )
+        except OSError as error:
+            if self.port == 0:
+                raise OAuthError(f"the callback port could not be opened: {error}") from None
+            raise OAuthError(
+                f"port {self.port} is required by this provider but is already in use"
+            ) from None
         self.port = self._server.sockets[0].getsockname()[1]
 
     async def _handle(self, reader, writer) -> None:
@@ -146,7 +153,7 @@ async def begin_login(client: OAuthClient, *, provider: str = "") -> PendingLogi
 
     pkce = generate_pkce()
     state = generate_state()
-    server = CallbackServer(expected_state=state)
+    server = CallbackServer(expected_state=state, port=client.redirect_port)
     await server.start()
 
     try:

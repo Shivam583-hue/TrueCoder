@@ -28,6 +28,7 @@ _OAUTH_FIELDS: Final = frozenset(
         "account_header",
         "api_base_url",
         "extra_parameters",
+        "redirect_port",
     }
 )
 
@@ -170,6 +171,12 @@ def _oauth(name: str, value: object) -> OAuthClient | None:
             f"provider {name!r} declares too many oauth extra_parameters"
         )
 
+    port = value.get("redirect_port", 0)
+    if isinstance(port, bool) or not isinstance(port, int):
+        raise ProviderConfigError(
+            f"provider {name!r} oauth redirect_port must be a whole number"
+        )
+
     try:
         return OAuthClient(
             client_id=str(value.get("client_id", "")),
@@ -182,6 +189,7 @@ def _oauth(name: str, value: object) -> OAuthClient | None:
             extra_parameters=tuple(
                 (str(key), str(item)) for key, item in sorted((extra or {}).items())
             ),
+            redirect_port=port,
         )
     except OAuthError as error:
         raise ProviderConfigError(
