@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import ClassVar, Final
 
 from textual import on
@@ -11,6 +12,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, ListItem, ListView, Static
 
 from truecoder.providers.models import ModelInfo, Provider
+from truecoder.providers.openai import is_openai_provider
 
 MAX_VISIBLE_MODELS: Final = 200
 IDENTIFIER_COLUMN: Final = 38
@@ -33,7 +35,18 @@ class ProviderChoice:
 
     @property
     def searchable(self) -> str:
-        return f"{self.provider.name} {self.provider.label}"
+        return (
+            f"{self.provider.name} {self.provider.label} "
+            f"{self.connection_hint}"
+        )
+
+    @property
+    def connection_hint(self) -> str:
+        if is_openai_provider(self.provider):
+            return "ChatGPT Plus/Pro or API key"
+        if self.provider.oauth is not None:
+            return "Browser sign-in or API key"
+        return "API key"
 
     def matches(self, query: str) -> bool:
         needle = query.strip().casefold()
@@ -47,9 +60,13 @@ class ProviderListItem(ListItem):
 
     def line(self) -> str:
         marker = "✓ " if self.choice.connected else "  "
-        suffix = "connected" if self.choice.connected else "API key"
-        if self.choice.provider.oauth is not None:
-            suffix = "ChatGPT or API key"
+        suffix = self.choice.connection_hint
+        if self.choice.connected:
+            if self.choice.model_count:
+                noun = "model" if self.choice.model_count == 1 else "models"
+                suffix = f"{self.choice.model_count} {noun}"
+            else:
+                suffix = "connected"
         return f"{marker}{self.choice.provider.label}  {suffix}"
 
     def compose(self) -> ComposeResult:
@@ -61,7 +78,13 @@ class ProviderPickerScreen(ModalScreen["ProviderChoice | None"]):
         Binding("escape", "cancel", "Close", show=False),
     ]
 
-    def __init__(self, providers: tuple[ProviderChoice, ...]) -> None:
+    def __init__(
+        self,
+        providers: tuple[ProviderChoice, ...],
+        *,
+        dialog_title: str = "All providers",
+        cancel_label: str = "close",
+    ) -> None:
         self.providers = tuple(
             sorted(
                 providers,
@@ -71,14 +94,24 @@ class ProviderPickerScreen(ModalScreen["ProviderChoice | None"]):
                 ),
             )
         )
+        self.dialog_title = dialog_title
+        self.cancel_label = cancel_label
         super().__init__()
 
     def compose(self) -> ComposeResult:
         with Vertical(id="provider-picker-dialog"):
-            yield Static("Connect a provider", classes="model-dialog-title")
+            yield Static(
+                self.dialog_title,
+                classes="model-dialog-title",
+                markup=False,
+            )
             yield Input(placeholder="Search providers", id="provider-filter")
             yield ListView(*self._items(self.providers), id="provider-list")
-            yield Static("enter select   esc close", classes="model-dialog-help")
+            yield Static(
+                f"enter select   esc {self.cancel_label}",
+                classes="model-dialog-help",
+                markup=False,
+            )
 
     @staticmethod
     def _items(providers: tuple[ProviderChoice, ...]) -> list[ProviderListItem]:
@@ -174,9 +207,27 @@ class ModelListItem(ListItem):
         yield Static(self.line(), classes="model-item-line", markup=False)
 
 
-class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
+class SectionListItem(ListItem):
+    def __init__(self, label: str) -> None:
+        self.label = label
+        super().__init__(classes="model-section", disabled=True)
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.label, classes="model-section-line", markup=False)
+
+
+class ModelPickerAction(Enum):
+    ALL_PROVIDERS = auto()
+
+
+class ModelPickerScreen(
+    ModalScreen[
+        "ModelInfo | ProviderChoice | ProviderInvite | ModelPickerAction | None"
+    ]
+):
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("escape", "cancel", "Close", show=False),
+        Binding("ctrl+a", "all_providers", "All providers", show=False),
     ]
 
     def __init__(
@@ -186,17 +237,31 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
         *,
         active_provider: str = "",
         invitations: tuple[ProviderInvite, ...] = (),
+        providers: tuple[ProviderChoice, ...] = (),
         sources: dict[str, str] | None = None,
         unavailable_reason: str | None = None,
         dialog_title: str = "Models",
+        allow_provider_browser: bool = False,
+        cancel_label: str = "close",
     ) -> None:
         self.active_model = active_model
         self.active_provider = active_provider
         self.invitations = invitations
+        self.providers = tuple(
+            sorted(
+                providers,
+                key=lambda choice: (
+                    PROVIDER_PRIORITY.get(choice.provider.name, 99),
+                    choice.provider.label.casefold(),
+                ),
+            )
+        )
         self.sources = sources or {}
         self.models = self._ordered_models(models)
         self.unavailable_reason = unavailable_reason
         self.dialog_title = dialog_title
+        self.allow_provider_browser = allow_provider_browser
+        self.cancel_label = cancel_label
         super().__init__()
 
     def source_of(self, provider: str) -> str:
@@ -244,7 +309,7 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
 
     @property
     def has_list(self) -> bool:
-        return bool(self.models or self.invitations)
+        return bool(self.models or self.invitations or self.providers)
 
     def compose(self) -> ComposeResult:
         served = self.served_by()
@@ -269,12 +334,21 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
             if self.has_list:
                 yield Input(placeholder="Filter", id="model-filter")
                 yield ListView(
-                    *self._items(self.models, self.invitations),
+                    *self._items(
+                        self.models,
+                        self.invitations,
+                        self.providers,
+                    ),
                     id="model-list",
                 )
             yield Static(
-                "enter select   esc close",
+                (
+                    f"ctrl+a all providers   enter select   esc {self.cancel_label}"
+                    if self.allow_provider_browser
+                    else f"enter select   esc {self.cancel_label}"
+                ),
                 classes="model-dialog-help",
+                markup=False,
             )
 
     def columns(self) -> tuple[int, int]:
@@ -297,34 +371,59 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
         self,
         models: tuple[ModelInfo, ...],
         invitations: tuple[ProviderInvite, ...] = (),
+        provider_choices: tuple[ProviderChoice, ...] = (),
     ) -> list[ListItem]:
-        identifiers, providers = self.columns()
-        rows: list[ListItem] = [
+        identifiers, provider_width = self.columns()
+        rows: list[ListItem] = []
+        has_provider_sections = bool(invitations or provider_choices)
+        if models and has_provider_sections:
+            rows.append(SectionListItem("Models"))
+        rows.extend(
             ModelListItem(
                 model,
                 active=self.is_active(model),
                 identifier_width=identifiers,
-                provider_width=providers,
+                provider_width=provider_width,
                 source=self.source_of(model.provider),
             )
             for model in models[:MAX_VISIBLE_MODELS]
-        ]
-        rows.extend(InviteListItem(invitation) for invitation in invitations)
+        )
+        if provider_choices:
+            rows.append(SectionListItem("Popular providers"))
+            rows.extend(ProviderListItem(choice) for choice in provider_choices)
+        if invitations:
+            rows.append(SectionListItem("More providers"))
+            rows.extend(InviteListItem(invitation) for invitation in invitations)
         return rows
+
+    @staticmethod
+    def _selected_index(rows: list[ListItem]) -> int | None:
+        active = next(
+            (
+                index
+                for index, row in enumerate(rows)
+                if isinstance(row, ModelListItem) and row.active
+            ),
+            None,
+        )
+        if active is not None:
+            return active
+        return next(
+            (
+                index
+                for index, row in enumerate(rows)
+                if not isinstance(row, SectionListItem)
+            ),
+            None,
+        )
 
     def on_mount(self) -> None:
         if not self.has_list:
             return
         model_list = self.query_one("#model-list", ListView)
-        active_index = next(
-            (
-                index
-                for index, model in enumerate(self.models[:MAX_VISIBLE_MODELS])
-                if self.is_active(model)
-            ),
-            0,
+        model_list.index = self._selected_index(
+            self._items(self.models, self.invitations, self.providers)
         )
-        model_list.index = active_index
         self.query_one("#model-filter", Input).focus()
 
     def visible_models(self, query: str) -> tuple[ModelInfo, ...]:
@@ -346,15 +445,22 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
             if invitation.matches(query)
         )
 
+    def visible_providers(self, query: str) -> tuple[ProviderChoice, ...]:
+        return tuple(choice for choice in self.providers if choice.matches(query))
+
     @on(Input.Changed, "#model-filter")
     async def filter_models(self, event: Input.Changed) -> None:
         model_list = self.query_one("#model-list", ListView)
         await model_list.clear()
         matches = self.visible_models(event.value)
-        rows = self._items(matches, self.visible_invitations(event.value))
+        rows = self._items(
+            matches,
+            self.visible_invitations(event.value),
+            self.visible_providers(event.value),
+        )
         for item in rows:
             await model_list.append(item)
-        model_list.index = 0 if rows else None
+        model_list.index = self._selected_index(rows)
 
     @on(Input.Submitted, "#model-filter")
     def choose_first_match(self, event: Input.Submitted) -> None:
@@ -365,6 +471,10 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
         invitations = self.visible_invitations(event.value)
         if invitations:
             self.dismiss(invitations[0])
+            return
+        providers = self.visible_providers(event.value)
+        if providers:
+            self.dismiss(providers[0])
 
     @on(ListView.Selected)
     def choose_model(self, event: ListView.Selected) -> None:
@@ -372,6 +482,12 @@ class ModelPickerScreen(ModalScreen["ModelInfo | ProviderInvite | None"]):
             self.dismiss(event.item.model)
         elif isinstance(event.item, InviteListItem):
             self.dismiss(event.item.invitation)
+        elif isinstance(event.item, ProviderListItem):
+            self.dismiss(event.item.choice)
+
+    def action_all_providers(self) -> None:
+        if self.allow_provider_browser:
+            self.dismiss(ModelPickerAction.ALL_PROVIDERS)
 
     def action_cancel(self) -> None:
         self.dismiss(None)

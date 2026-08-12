@@ -46,7 +46,7 @@ Coming soon...
 
 - **Auditable execution** - every command is policy-classified, approval-gated when needed, bounded by explicit limits, and recorded with immutable execution evidence.
 - **Reviewable, undoable changes** - file mutations render as unified diffs, every turn starts from a git-backed checkpoint, and restores create their own safety checkpoint first.
-- **Flexible model access** - connect direct OpenAI with ChatGPT or API credentials, use native Anthropic and Google transports, or choose another supported Models.dev provider.
+- **Flexible model access** - one `/models` workflow connects direct OpenAI with ChatGPT or API credentials, uses native Anthropic and Google transports, and reaches every supported Models.dev provider.
 - **State that stays under your control** - project-scoped sessions, visible durable memory, rolling context compaction, and workspace-local instructions survive long-running work without silently crossing repositories.
 - **A complete coding toolkit** - fifteen built-in tools cover files, shell, web, code intelligence, planning, memory, and delegation; bounded MCP servers can add more without bypassing approvals.
 - **Cross-platform by design** - Linux and macOS use POSIX process supervision, Windows uses Job Objects, and an optional digest-pinned Docker sandbox supplies stronger isolation on supported Linux hosts.
@@ -518,7 +518,7 @@ cp .env.example .env
 ```
 
 Fill in `MODEL`. You can also set a provider-specific key, or leave credentials
-empty and use `/connect` in the interface. `BASE_URL` remains the compatibility
+empty and use `/models` in the interface. `BASE_URL` remains the compatibility
 path for OpenRouter or a custom endpoint. Direct OpenAI offers browser sign-in,
 headless device authorization, or an API key; a custom endpoint uses the
 authentication methods configured for it. Then
@@ -542,7 +542,7 @@ Everything the filesystem tools can reach is rooted at that project root.
 | `tab`    | Complete the command being typed, otherwise move focus |
 | `ctrl+l` | Start a new chat                                  |
 | `ctrl+p` | Open the session browser                          |
-| `ctrl+a` | Open the workspace execution audit                |
+| `ctrl+a` | Show all providers inside `/models`; otherwise open the audit |
 | `ctrl+e` | Show execution and backend health                 |
 | `ctrl+r` | Browse and restore workspace checkpoints          |
 | `ctrl+d` | Review what this turn changed on disk             |
@@ -642,11 +642,14 @@ fails is reported and never blocks the turn.
 
 ### Providers and browser sign-in
 
-`/connect` is the normal entry point. It opens a searchable provider directory,
-marks providers that already have a usable credential, and orders OpenAI,
-Anthropic, Google, and OpenRouter first. Selecting one connects it and then opens
-that provider's model list. `/models` searches the combined supported catalog;
-choosing an unconnected row immediately starts the same credential flow.
+`/models` is the single entry point for choosing both a provider and a model.
+The first dialog lists models from providers that are already connected, followed
+by convenient OpenAI, Anthropic, Google, and OpenRouter provider rows. Press
+`ctrl+a` in that dialog to search the complete supported provider directory.
+Connected providers open their model list immediately. A disconnected provider
+first offers its supported sign-in methods, refreshes its account-specific model
+catalog after authentication, and then shows only that provider's models. Nothing
+changes in the active session until a model is actually chosen.
 
 The directory is the bounded Models.dev data used by OpenCode, fetched from
 `https://models.opencode.ai/api.json`. Its valid response is cached for five
@@ -660,10 +663,12 @@ route different model families through different wire protocols.
 Cloud SDK providers that require structured account, project, region, or workload
 credentials are excluded until TrueCoder has the corresponding native adapter.
 
-OpenAI is always available as a direct provider. Connecting it, selecting one of
-its models without a credential, or running `/login` while it is active offers
-**ChatGPT browser sign-in**, **Enter a code**, and **API key**. Browser sign-in
-uses the public Codex CLI client, opens the OpenAI authorization page, and listens
+OpenAI is always available as a direct provider. Selecting it in `/models`, or
+running `/login` while it is active, offers
+**ChatGPT browser sign-in**, **Enter a code**, and **API key**. The provider row
+labels a ChatGPT Plus or Pro subscription separately from an API key so the
+billing path is explicit. Browser sign-in uses the public Codex CLI client, opens
+the OpenAI authorization page, and listens
 at `http://localhost:1455/auth/callback`. Headless sign-in opens
 `https://auth.openai.com/codex/device`, polls OpenAI's device broker, and exchanges
 the approved authorization code with its returned PKCE verifier. The resulting
@@ -712,8 +717,9 @@ variables as well as, when available, its browser OAuth client:
 }
 ```
 
-With that in place, selecting Acme through `/connect`, choosing one of its models,
-or running `/login` while Acme is active opens the configured flow. Browser login displays the complete
+With that in place, selecting Acme through `/models` (use `ctrl+a` to open the
+full provider directory), or running `/login` while Acme is active, opens the
+configured flow. Browser login displays the complete
 authorization link with controls to copy it or open it again. TrueCoder listens
 on a loopback port for the single redirect, verifies the `state` it issued,
 exchanges the code together with the PKCE verifier, and stores the result in
@@ -852,8 +858,7 @@ who change or build the image should follow the
 | `truecoder -p "..."`                                 | Run one prompt without the interface                            |
 | `truecoder -p "..." --autonomy edit`                 | Allow file changes and medium-risk commands unattended          |
 | `truecoder --eval`                                   | Score the agent on the shipped tasks                            |
-| `/models` in the composer                            | Choose a model and collect its provider credential if needed    |
-| `/connect` in the composer                           | Pick a provider, connect it, then choose one of its models       |
+| `/models` in the composer                            | Choose or connect a provider, then select one of its models      |
 | `/login` in the composer                             | Reconnect the active provider using key, browser, or device auth |
 | `/logout` in the composer                            | Forget the current provider's stored key and OAuth token        |
 
@@ -921,9 +926,9 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
 - **Policy-evaluated execution** - ordered rules classify read-only, test, build, package, network, deletion, permission, Git, script, and unknown commands, and requested limits can only tighten the configured ceiling.
 - **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
-- **Switch models without restarting** - type `/models` to search the bounded Models.dev directory across supported providers, with the active provider and the popular OpenAI, Anthropic, Google, and OpenRouter groups first. Every row retains both its provider ID and wire model ID, so `openrouter/openai/gpt-5.6-sol` can never be mistaken for direct `openai/gpt-5.6-sol`. The five-minute directory cache falls back to its last valid copy offline; custom endpoints and authenticated subscription catalogs keep separate six-hour live caches, and one failing provider never hides the others. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type, and `/quit` (or `/exit`) closes TrueCoder exactly as `ctrl+q` does. The status line always names the model that will actually answer, not whatever `MODEL` happens to say in your `.env`.
-- **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit`, `/e` leaves `exit`, and `/mo` leaves `models` and `model`. Tab completes to the longest prefix the remaining matches share: `/q` becomes `/quit` outright, `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
-- **It asks for what the model needs** - `/connect` starts with a searchable provider picker, collects that provider's credential, then opens only its models. `/models` remains the global searchable catalog, but selecting an unconnected model immediately runs the same connection flow instead of accepting a choice that cannot answer. A key-only provider goes straight to the masked prompt; a provider with OAuth asks which method you want. `/login` reconnects the current provider for compatibility, and `/logout` forgets its stored key and token.
+- **Switch models without restarting** - type `/models` to see models from connected providers and the popular OpenAI, Anthropic, Google, and OpenRouter connection options in one dialog; press `ctrl+a` there for the complete provider directory. Every row retains both its provider ID and wire model ID, so `openrouter/openai/gpt-5.6-sol` can never be mistaken for direct `openai/gpt-5.6-sol`. The five-minute directory cache falls back to its last valid copy offline; custom endpoints and authenticated subscription catalogs keep separate six-hour live caches, and one failing provider never hides the others. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/help` lists what you can type, and `/quit` (or `/exit`) closes TrueCoder exactly as `ctrl+q` does. The status line always names the model that will actually answer, not whatever `MODEL` happens to say in your `.env`.
+- **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit`, `/e` leaves `exit`, and `/mo` leaves the single `models` workflow. Tab completes a unique match outright; when several commands remain, it completes only their shared prefix, so `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
+- **It asks for what the model needs** - `/models` keeps provider connection and model choice in one flow. A connected provider goes straight to its models; a key-only provider goes to the masked prompt; and a provider with OAuth names the available subscription and API-key choices before refreshing its model catalog. Canceling leaves the active selection alone. `/login` reconnects the current provider, and `/logout` forgets its stored key and token.
 - **Refusals you can act on** - when a provider turns a request down you get a sentence, not its wire format: what happened, the provider's own explanation, and the next step. A rejected credential opens the way to replace it, offering every method that provider supports; running out of credit offers none, because a new credential does not buy anything. A failure that does not classify gets no invented advice.
 - **A sign-in you can complete anywhere** - direct OpenAI offers ChatGPT browser sign-in, ChatGPT device authorization, and a manual API key. The browser opens automatically while the full link remains copyable; its authorization-code exchange uses PKCE and the fixed Codex CLI redirect. The headless path follows OpenAI's brokered device flow: request a short code, poll for approval, then exchange the returned authorization code and verifier. Other configured providers can use standard RFC 8628 device grants. Links also land in the transcript, and closing a dialog cancels its work and releases the callback listener.
 - **Sessions that do not expire under you** - an OAuth token is renewed from its refresh token before the request that would have failed, once even when several turns notice at the same moment, and written back so a restart picks up the fresh one. A refresh that fails changes nothing rather than leaving a half-updated credential.

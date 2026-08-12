@@ -624,6 +624,7 @@ async def discover_catalog(
     settings,
     *,
     refresh: bool = False,
+    credential_overrides: dict[str, Credential] | None = None,
 ) -> ProviderCatalog:
     from truecoder.providers.configuration import selectable_providers
     from truecoder.providers.models import credential_for_provider
@@ -643,8 +644,16 @@ async def discover_catalog(
         provider = overrides.get(entry.provider.name, entry.provider)
         resolved[provider.name] = CatalogSlice(provider, entry.models, entry.reason)
 
+    overrides_by_name = credential_overrides or {}
+
+    def credential_for(provider: Provider) -> Credential | None:
+        override = overrides_by_name.get(provider.name)
+        if override is not None and override.is_usable:
+            return override
+        return credential_for_provider(provider, settings)
+
     credentials = {
-        provider.name: credential_for_provider(provider, settings)
+        provider.name: credential_for(provider)
         for provider in (*configured, *(entry.provider for entry in directory))
     }
     dynamic = tuple(
@@ -671,7 +680,7 @@ async def discover_catalog(
         )
     )
     credentials = {
-        entry.provider.name: credential_for_provider(entry.provider, settings)
+        entry.provider.name: credential_for(entry.provider)
         for entry in slices
     }
     return ProviderCatalog(slices, credentials, directory_reason)

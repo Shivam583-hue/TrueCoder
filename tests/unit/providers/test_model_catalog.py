@@ -370,6 +370,47 @@ class ModelsDevTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(openai.models[0].identifier, "gpt-subscription")
 
+    async def test_a_session_credential_can_load_a_new_providers_live_catalog(self):
+        token = OAuthToken(access_token="at", provider="openai")
+        settings = type(
+            "Settings",
+            (),
+            {"provider": ACME, "credential": ApiKey("sk-acme")},
+        )()
+        directory = parse_models_dev(MODELS_DEV)
+        subscription = CatalogSlice(
+            openai_provider(),
+            (ModelInfo(identifier="gpt-subscription", provider="openai"),),
+        )
+        seen: dict[str, object] = {}
+
+        async def live(providers, credentials, *, refresh=False):
+            del providers, refresh
+            seen.update(credentials)
+            return (subscription,)
+
+        with (
+            patch(
+                "truecoder.providers.catalog.load_models_dev",
+                return_value=directory,
+            ),
+            patch(
+                "truecoder.providers.configuration.load_providers",
+                return_value=(),
+            ),
+            patch("truecoder.providers.catalog.load_catalog", side_effect=live),
+        ):
+            catalog = await discover_catalog(
+                settings,
+                credential_overrides={"openai": token},
+            )
+
+        self.assertIs(seen["openai"], token)
+        openai = next(
+            entry for entry in catalog.slices if entry.provider.name == "openai"
+        )
+        self.assertEqual(openai.models[0].identifier, "gpt-subscription")
+
 
 class SlugTests(unittest.TestCase):
     def test_a_slug_stays_readable(self):

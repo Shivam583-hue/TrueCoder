@@ -70,17 +70,25 @@ class ParseTests(unittest.TestCase):
 class MessageTests(unittest.TestCase):
     def test_an_unknown_command_lists_the_known_ones(self):
         message = unknown_command_message("/nope")
+        listed = set(message.partition("Try ")[2].removesuffix(".").split(", "))
 
         self.assertIn("/nope", message)
         for command in COMMANDS:
-            self.assertIn(command.invocation, message)
+            if command.visible:
+                self.assertIn(command.invocation, listed)
+            else:
+                self.assertNotIn(command.invocation, listed)
 
     def test_help_lists_every_command_with_a_summary(self):
         text = help_text()
+        invocations = {line.split()[0] for line in text.splitlines()}
 
         for command in COMMANDS:
-            self.assertIn(command.invocation, text)
-            self.assertIn(command.summary, text)
+            if command.visible:
+                self.assertIn(command.invocation, invocations)
+                self.assertIn(command.summary, text)
+            else:
+                self.assertNotIn(command.invocation, invocations)
 
 
 class FilterTests(unittest.TestCase):
@@ -90,13 +98,13 @@ class FilterTests(unittest.TestCase):
     def test_a_letter_narrows_to_that_letter(self):
         self.assertEqual(_names("/q"), ["quit"])
         self.assertEqual(_names("/e"), ["exit"])
-        self.assertEqual(_names("/m"), ["models", "model"])
+        self.assertEqual(_names("/m"), ["models"])
         self.assertEqual(_names("/l"), ["login", "logout"])
 
     def test_narrowing_continues_as_more_is_typed(self):
-        self.assertEqual(_names("/mo"), ["models", "model"])
-        self.assertEqual(_names("/mod"), ["models", "model"])
-        self.assertEqual(_names("/model"), ["models", "model"])
+        self.assertEqual(_names("/mo"), ["models"])
+        self.assertEqual(_names("/mod"), ["models"])
+        self.assertEqual(_names("/model"), ["models"])
         self.assertEqual(_names("/models"), ["models"])
 
     def test_case_is_ignored_while_filtering(self):
@@ -129,11 +137,11 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(completion("/h"), "/help")
 
     def test_several_matches_complete_to_what_they_share(self):
-        self.assertEqual(completion("/m"), "/model")
+        self.assertEqual(completion("/m"), "/models")
         self.assertEqual(completion("/l"), "/log")
 
     def test_nothing_is_added_when_the_shared_part_is_typed(self):
-        self.assertIsNone(completion("/model"))
+        self.assertIsNone(completion("/models"))
         self.assertIsNone(completion("/log"))
 
     def test_a_bare_slash_shares_nothing_to_add(self):
@@ -180,6 +188,17 @@ class AliasTests(unittest.TestCase):
         for spelling in SPELLINGS:
             self.assertIn(f"/{spelling}", text)
 
+    def test_old_model_commands_remain_parseable_but_are_not_advertised(self):
+        current = parse_command("/model")
+        connect = parse_command("/connect")
+
+        assert current is not None
+        assert connect is not None
+        self.assertEqual(current.name, "model")
+        self.assertEqual(connect.name, "connect")
+        self.assertNotIn("model", SPELLINGS)
+        self.assertNotIn("connect", SPELLINGS)
+
     def test_an_alias_may_not_collide_with_another_spelling(self):
         with self.assertRaises(ValueError):
             SlashCommand("thing", "does a thing", aliases=("thing",))
@@ -196,7 +215,11 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
 
     def test_every_spelling_across_commands_is_unique(self):
-        self.assertEqual(len(SPELLINGS), len(set(SPELLINGS)))
+        spellings = [
+            spelling for command in COMMANDS for spelling in command.names
+        ]
+
+        self.assertEqual(len(spellings), len(set(spellings)))
 
     def test_a_command_name_must_be_one_word(self):
         with self.assertRaises(ValueError):

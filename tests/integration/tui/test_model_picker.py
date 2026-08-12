@@ -26,7 +26,7 @@ from truecoder.providers.openai import openai_provider
 from truecoder.providers.registry import openrouter_provider
 from truecoder.providers.store import StoredSelection
 from truecoder.tui.app import TrueCoderApp
-from truecoder.tui.credentials import CredentialChoiceScreen
+from truecoder.tui.credentials import ApiKeyScreen, CredentialChoiceScreen
 from truecoder.tui.model_picker import (
     ModelPickerScreen,
     ProviderChoice,
@@ -466,11 +466,22 @@ class ProviderPickerTests(unittest.IsolatedAsyncioTestCase):
             "openrouter",
         )
 
+    def test_provider_rows_name_their_real_authentication_options(self):
+        self.assertEqual(
+            ProviderChoice(openai_provider()).connection_hint,
+            "ChatGPT Plus/Pro or API key",
+        )
+        self.assertEqual(
+            ProviderChoice(openrouter_provider()).connection_hint,
+            "API key",
+        )
+
 
 class ConnectCommandTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._directory = tempfile.TemporaryDirectory()
         root = Path(self._directory.name).resolve()
+        self.config = root / "settings.json"
         self.addCleanup(self._directory.cleanup)
         for target, name in (
             ("truecoder.providers.store.default_settings_path", "settings.json"),
@@ -555,6 +566,123 @@ class ConnectCommandTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.screen.provider, "OpenAI")
                 app.screen.dismiss(None)
                 await pilot.pause()
+
+    async def test_ctrl_a_inside_models_opens_the_complete_provider_directory(self):
+        app = self._app()
+        directory = (
+            CatalogSlice(
+                Provider(name="test", base_url="https://x.invalid/v1"),
+                CATALOG,
+            ),
+            CatalogSlice(
+                openai_provider(),
+                (ModelInfo(identifier="gpt-5.2", provider="openai"),),
+            ),
+            CatalogSlice(
+                openrouter_provider(),
+                (ModelInfo(identifier="openai/gpt-5.2", provider="openrouter"),),
+            ),
+        )
+
+        with (
+            patch.dict(os.environ, {"MODEL": "anthropic/claude-opus-5"}),
+            patch(
+                "truecoder.providers.catalog.load_models_dev",
+                return_value=directory,
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._type(app, pilot, "/models")
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ModelPickerScreen),
+                    description="the combined model picker",
+                    timeout=20,
+                )
+
+                await pilot.press("ctrl+a")
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ProviderPickerScreen),
+                    description="the complete provider directory",
+                )
+
+                self.assertEqual(
+                    {choice.provider.name for choice in app.screen.providers},
+                    {"test", "openai", "openrouter"},
+                )
+                app.screen.dismiss(None)
+                await pilot.pause()
+
+    async def test_a_popular_provider_connects_before_showing_only_its_models(self):
+        app = self._app()
+        directory = (
+            CatalogSlice(
+                Provider(name="test", base_url="https://x.invalid/v1"),
+                CATALOG,
+            ),
+            CatalogSlice(
+                openrouter_provider(),
+                (
+                    ModelInfo(
+                        identifier="openai/gpt-5.2",
+                        provider="openrouter",
+                    ),
+                ),
+            ),
+        )
+
+        with (
+            patch.dict(os.environ, {"MODEL": "anthropic/claude-opus-5"}),
+            patch(
+                "truecoder.providers.catalog.load_models_dev",
+                return_value=directory,
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._type(app, pilot, "/models")
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ModelPickerScreen),
+                    description="the combined model picker",
+                    timeout=20,
+                )
+                openrouter = next(
+                    choice
+                    for choice in app.screen.providers
+                    if choice.provider.name == "openrouter"
+                )
+                app.screen.dismiss(openrouter)
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ApiKeyScreen),
+                    description="the OpenRouter key prompt",
+                )
+
+                app.screen.dismiss("sk-openrouter")
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ModelPickerScreen),
+                    description="the OpenRouter model picker",
+                )
+
+                self.assertEqual(app.screen.dialog_title, "OpenRouter")
+                self.assertEqual(
+                    [model.provider for model in app.screen.models],
+                    ["openrouter"],
+                )
+                self.assertEqual(
+                    app.agent.llm_client.settings.provider.name,
+                    "test",
+                )
+                app.screen.dismiss(app.screen.models[0])
+                await wait_until(
+                    pilot,
+                    lambda: app.agent.llm_client.settings.provider.name
+                    == "openrouter",
+                    description="the provider and model selection to be applied",
+                )
+                self.assertIn("openrouter", self.config.read_text())
 
 
 if __name__ == "__main__":

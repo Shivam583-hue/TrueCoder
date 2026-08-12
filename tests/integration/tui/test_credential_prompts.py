@@ -282,7 +282,7 @@ class CrossProviderTests(_Base):
             side_effect=self._listing,
         )
 
-    async def test_the_picker_lists_models_from_every_provider(self):
+    async def test_the_picker_lists_models_only_from_connected_providers(self):
         self._configure(brio_oauth=False)
         app = self._app(_settings(credential=ApiKey("sk-acme")))
 
@@ -297,12 +297,14 @@ class CrossProviderTests(_Base):
                 )
 
                 listed = [model.identifier for model in app.screen.models]
-                self.assertEqual(listed, ["acme/starter", "brio/large"])
-                self.assertTrue(app.screen.spans_providers)
+                self.assertEqual(listed, ["acme/starter"])
+                self.assertFalse(app.screen.spans_providers)
                 app.screen.dismiss(None)
                 await pilot.pause()
 
-    async def test_a_model_from_another_provider_moves_the_session_to_it(self):
+    async def test_authentication_does_not_move_the_session_before_a_model_is_chosen(
+        self,
+    ):
         self._configure(brio_oauth=False)
         app = self._app(_settings(credential=ApiKey("sk-acme")))
 
@@ -320,10 +322,10 @@ class CrossProviderTests(_Base):
                 )
 
                 settings = app.agent.llm_client.settings
-                self.assertEqual(settings.provider.name, "brio")
-                self.assertEqual(settings.model, "brio/large")
+                self.assertEqual(settings.provider.name, "acme")
+                self.assertEqual(settings.model, "acme/starter")
                 self.assertEqual(app.screen.provider, "brio")
-                self.assertIn("brio", (self.root / "settings.json").read_text())
+                self.assertFalse((self.root / "settings.json").exists())
 
                 app.screen.dismiss(None)
                 await pilot.pause()
@@ -521,7 +523,7 @@ class CrossProviderTests(_Base):
                     description="the authorisation screen",
                 )
 
-                self.assertEqual(app.agent.llm_client.settings.provider.name, "brio")
+                self.assertEqual(app.agent.llm_client.settings.provider.name, "acme")
                 self.assertEqual(opened, [pending.url])
 
                 app.screen.dismiss(False)
@@ -545,7 +547,7 @@ class CredentialChoiceTests(_Base):
                 )
 
                 self.assertEqual(app.screen.provider, "acme")
-                self.assertIn("openai/gpt-5", app.screen._explanation())
+                self.assertIn("needs acme connected", app.screen._explanation())
 
                 app.screen.dismiss(None)
                 await pilot.pause()

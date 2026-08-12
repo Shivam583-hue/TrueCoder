@@ -111,10 +111,10 @@ class CommandMenuTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, {"MODEL": "test/model"}):
             async with app.run_test(size=(120, 40)) as pilot:
                 await self._type(pilot, "/m")
-                self.assertEqual(_offered(app), ["models", "model"])
+                self.assertEqual(_offered(app), ["models"])
 
                 await self._type(pilot, "o")
-                self.assertEqual(_offered(app), ["models", "model"])
+                self.assertEqual(_offered(app), ["models"])
 
                 await self._type(pilot, "dels")
                 self.assertEqual(_offered(app), ["models"])
@@ -130,7 +130,7 @@ class CommandMenuTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("backspace")
                 await pilot.pause()
 
-                self.assertEqual(_offered(app), ["models", "model"])
+                self.assertEqual(_offered(app), ["models"])
 
     async def test_an_unknown_prefix_offers_nothing(self):
         app = _app()
@@ -184,7 +184,7 @@ class TabCompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self._complete("/q"), "/quit")
 
     async def test_several_matches_complete_to_what_they_share(self):
-        self.assertEqual(await self._complete("/m"), "/model")
+        self.assertEqual(await self._complete("/m"), "/models")
         self.assertEqual(await self._complete("/l"), "/log")
 
     async def test_an_ordinary_prompt_is_left_alone(self):

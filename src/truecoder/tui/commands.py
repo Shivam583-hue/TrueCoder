@@ -12,6 +12,7 @@ class SlashCommand:
     name: str
     summary: str
     aliases: tuple[str, ...] = ()
+    visible: bool = True
 
     def __post_init__(self) -> None:
         for spelling in self.names:
@@ -52,9 +53,9 @@ class ParsedCommand:
 
 
 COMMANDS: Final = (
-    SlashCommand("models", "Choose which model answers"),
-    SlashCommand("model", "Show the model currently answering"),
-    SlashCommand("connect", "Connect an AI provider"),
+    SlashCommand("models", "Choose a provider and model"),
+    SlashCommand("model", "Show the model currently answering", visible=False),
+    SlashCommand("connect", "Connect an AI provider", visible=False),
     SlashCommand("login", "Reconnect the current provider"),
     SlashCommand("logout", "Forget the stored authorisation"),
     SlashCommand("help", "List what you can type here"),
@@ -65,13 +66,13 @@ _BY_NAME: Final = {
     spelling: command for command in COMMANDS for spelling in command.names
 }
 
-SPELLINGS: Final = tuple(_BY_NAME)
-
 ALL_MATCHES: Final = tuple(
     CommandMatch(command, spelling)
     for command in COMMANDS
+    if command.visible
     for spelling in command.names
 )
+SPELLINGS: Final = tuple(match.spelling for match in ALL_MATCHES)
 
 
 def looks_like_command(text: str) -> bool:
@@ -138,7 +139,9 @@ def parse_command(text: str) -> ParsedCommand | None:
 
 def unknown_command_message(text: str) -> str:
     body = text.strip()[len(COMMAND_PREFIX) :].split(" ", 1)[0]
-    known = ", ".join(command.invocation for command in COMMANDS)
+    known = ", ".join(
+        command.invocation for command in COMMANDS if command.visible
+    )
     return f"Unknown command {COMMAND_PREFIX}{body}. Try {known}."
 
 

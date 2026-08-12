@@ -34,6 +34,10 @@ Unreleased until the first release is cut.
 
 ### Changed
 
+- Unified provider connection and model selection under `/models`: the picker
+  now shows connected models and popular providers together, opens the complete
+  provider directory with `ctrl+a`, and waits until authentication and model
+  choice are complete before changing the active session.
 - Reorganized the README around a concise feature overview and user-facing
   runtime guidance, with the complete feature catalog retained separately.
 

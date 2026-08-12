@@ -199,7 +199,7 @@ class KeyOnlyProviderTests(_Base):
 
 
 class OpenAIConnectionTests(_Base):
-    async def test_the_direct_openai_invitation_opens_the_auth_choice(self):
+    async def test_the_direct_openai_provider_opens_the_auth_choice(self):
         app = self._app(ApiKey("sk-or-1"))
 
         async def listing(provider, credential, *, refresh=False):
@@ -213,15 +213,18 @@ class OpenAIConnectionTests(_Base):
         ):
             async with app.run_test(size=(120, 40)) as pilot:
                 await self._open_picker(app, pilot)
-                invitations = app.screen.invitations
-
-                self.assertEqual(len(invitations), 1)
-                self.assertEqual(
-                    invitations[0].label.strip(),
-                    "Connect to OpenAI to list its models",
+                openai = next(
+                    choice
+                    for choice in app.screen.providers
+                    if choice.provider.name == "openai"
                 )
 
-                app.screen.dismiss(invitations[0])
+                self.assertEqual(
+                    openai.connection_hint,
+                    "ChatGPT Plus/Pro or API key",
+                )
+
+                app.screen.dismiss(openai)
                 await wait_until(
                     pilot,
                     lambda: isinstance(app.screen, CredentialChoiceScreen),

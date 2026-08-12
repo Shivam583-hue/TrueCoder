@@ -65,6 +65,7 @@ from truecoder.tui.execution_view import (
 )
 from truecoder.tui.memory import MemoryAction, MemoryBrowserScreen
 from truecoder.tui.model_picker import (
+    ModelPickerAction,
     ModelPickerScreen,
     ProviderChoice,
     ProviderInvite,
@@ -179,7 +180,7 @@ class TrueCoderApp(App[None]):
         Binding("ctrl+q", "quit", "Quit", show=False, priority=True),
         Binding("ctrl+l", "new_chat", "New chat", show=False, priority=True),
         Binding("ctrl+p", "manage_sessions", "Sessions", show=False, priority=True),
-        Binding("ctrl+a", "manage_audit", "Audit", show=False, priority=True),
+        Binding("ctrl+a", "contextual_a", "Audit", show=False, priority=True),
         Binding("ctrl+e", "execution_health", "Execution", show=False, priority=True),
         Binding(
             "ctrl+r", "manage_checkpoints", "Checkpoints", show=False, priority=True
@@ -220,6 +221,7 @@ class TrueCoderApp(App[None]):
         self._plan_calls: dict[str, str] = {}
         self._model_name = MODEL_NOT_CONFIGURED
         self._known_providers: dict[str, object] = {}
+        self._session_credentials: dict[str, object] = {}
         self.agent.set_execution_sinks(
             event_sink=_AppEventSink(self),
             preview_sink=_AppPreviewSink(self),
@@ -375,11 +377,17 @@ class TrueCoderApp(App[None]):
             return
 
         if parsed.name == "models":
-            await self._choose_model(refresh=parsed.argument == "refresh")
+            self.run_worker(
+                self._model_workflow(refresh=parsed.argument == "refresh"),
+                exclusive=False,
+            )
             return
 
         if parsed.name == "connect":
-            self.run_worker(self._choose_provider(), exclusive=False)
+            self.run_worker(
+                self._model_workflow(providers_first=True),
+                exclusive=False,
+            )
             return
 
         if parsed.name == "login":
@@ -399,6 +407,7 @@ class TrueCoderApp(App[None]):
         catalog = await discover_catalog(
             self.agent.llm_client.settings,
             refresh=refresh,
+            credential_overrides=self._session_credentials,
         )
         self._known_providers = {
             entry.provider.name: entry.provider for entry in catalog.slices
@@ -412,16 +421,9 @@ class TrueCoderApp(App[None]):
             )
         return catalog
 
-    async def _choose_provider(self) -> None:
-        catalog = await self._catalog()
-        if not catalog.slices:
-            self.notify(
-                catalog.directory_reason or "No providers are available.",
-                severity="error",
-                timeout=10,
-            )
-            return
-        choices = tuple(
+    @staticmethod
+    def _provider_choices(catalog) -> tuple[ProviderChoice, ...]:
+        return tuple(
             ProviderChoice(
                 entry.provider,
                 connected=_usable(catalog.credentials.get(entry.provider.name)),
@@ -430,78 +432,182 @@ class TrueCoderApp(App[None]):
             for entry in catalog.slices
             if entry.is_supported
         )
-        self.push_screen(ProviderPickerScreen(choices), self._apply_provider_choice)
 
-    def _apply_provider_choice(self, choice: ProviderChoice | None) -> None:
-        if choice is None:
-            return
-        self.run_worker(
-            self._connect_and_choose(choice.provider),
-            exclusive=False,
+    def _featured_provider_choices(self, catalog) -> tuple[ProviderChoice, ...]:
+        from truecoder.tui.model_picker import PROVIDER_PRIORITY
+
+        choices = self._provider_choices(catalog)
+        return tuple(
+            choice
+            for choice in choices
+            if choice.provider.name in PROVIDER_PRIORITY
         )
 
-    async def _connect_and_choose(self, provider) -> None:
-        if not await self._collect_credential(provider):
-            return
-        await self._choose_model(provider_name=provider.name)
-
-    async def _choose_model(
+    async def _model_workflow(
         self,
         *,
         refresh: bool = False,
-        provider_name: str = "",
+        providers_first: bool = False,
     ) -> None:
-        from truecoder.providers.catalog import (
-            catalog_problem,
-            merge_models,
-        )
+        from truecoder.providers.models import ModelInfo
+
+        catalog = await self._catalog(refresh=refresh)
+        if not catalog.slices:
+            self.notify(
+                catalog.directory_reason or "No providers are available.",
+                severity="error",
+                timeout=10,
+            )
+            return
+
+        view = "providers" if providers_first else "models"
+        close_provider_browser = providers_first
+        while True:
+            if view == "providers":
+                choice = await self.push_screen_wait(
+                    ProviderPickerScreen(
+                        self._provider_choices(catalog),
+                        cancel_label=(
+                            "close" if close_provider_browser else "back"
+                        ),
+                    )
+                )
+                if choice is None:
+                    if close_provider_browser:
+                        return
+                    view = "models"
+                    continue
+                connected = await self._connect_for_models(choice, catalog)
+                if connected is None:
+                    if close_provider_browser:
+                        view = "providers"
+                    else:
+                        view = "models"
+                    catalog = await self._catalog()
+                    continue
+                catalog = connected
+                view = choice.provider.name
+                close_provider_browser = False
+                continue
+
+            if view == "models":
+                choice = await self.push_screen_wait(
+                    self._combined_model_screen(catalog)
+                )
+            else:
+                choice = await self.push_screen_wait(
+                    self._provider_model_screen(catalog, view)
+                )
+
+            if choice is None:
+                if view == "models":
+                    return
+                view = "models"
+                continue
+            if choice is ModelPickerAction.ALL_PROVIDERS:
+                view = "providers"
+                close_provider_browser = False
+                continue
+            if isinstance(choice, ModelInfo):
+                provider = self._provider_named(choice.provider)
+                if not _usable(catalog.credentials.get(provider.name)):
+                    connected = await self._connect_for_models(
+                        ProviderChoice(provider),
+                        catalog,
+                    )
+                    if connected is None:
+                        view = "models"
+                        catalog = await self._catalog()
+                        continue
+                    catalog = connected
+                    view = provider.name
+                    continue
+                self._apply_model_choice(choice)
+                return
+
+            provider = (
+                choice.provider
+                if isinstance(choice, ProviderChoice)
+                else self._provider_named(choice.provider)
+            )
+            connected = await self._connect_for_models(
+                ProviderChoice(provider),
+                catalog,
+            )
+            if connected is None:
+                view = "models"
+                catalog = await self._catalog()
+                continue
+            catalog = connected
+            view = provider.name
+
+    async def _connect_for_models(self, choice: ProviderChoice, catalog):
+        provider = choice.provider
+        if _usable(catalog.credentials.get(provider.name)):
+            return catalog
+        if not await self._collect_credential(provider):
+            return None
+        return await self._catalog(refresh=True)
+
+    def _combined_model_screen(self, catalog) -> ModelPickerScreen:
+        from truecoder.providers.catalog import catalog_problem, merge_models
 
         settings = self.agent.llm_client.settings
-        catalog = await self._catalog(refresh=refresh)
-        slices = tuple(
+        connected = tuple(
             entry
             for entry in catalog.slices
             if entry.is_supported
-            and (not provider_name or entry.provider.name == provider_name)
+            and _usable(catalog.credentials.get(entry.provider.name))
         )
-        credentials = catalog.credentials
-        models = merge_models(slices)
-        invitations = self._invitations(slices, credentials)
-        invited = {invitation.provider for invitation in invitations}
+        models = merge_models(connected)
+        featured = self._featured_provider_choices(catalog)
+        featured_names = {choice.provider.name for choice in featured}
+        invitations = tuple(
+            invitation
+            for invitation in self._invitations(catalog.slices, catalog.credentials)
+            if invitation.provider not in featured_names
+        )
+        unavailable = catalog_problem(connected) if connected else None
+        if not models and unavailable is None:
+            unavailable = "Choose a provider to connect and see its models."
+        return ModelPickerScreen(
+            models,
+            settings.model,
+            active_provider=settings.provider.name,
+            invitations=invitations,
+            providers=featured,
+            sources={
+                entry.provider.name: entry.provider.label
+                for entry in catalog.slices
+            },
+            unavailable_reason=unavailable,
+            dialog_title="Select model",
+            allow_provider_browser=True,
+        )
 
-        silent = [
-            entry.provider.name
-            for entry in slices
-            if entry.reason is not None and entry.provider.name not in invited
-        ]
-        if models and silent:
-            self.notify(
-                f"No models listed for {', '.join(silent)}.",
-                severity="warning",
-                timeout=8,
-            )
+    def _provider_model_screen(self, catalog, provider_name: str) -> ModelPickerScreen:
+        from truecoder.providers.catalog import catalog_problem, merge_models
 
-        self.push_screen(
-            ModelPickerScreen(
-                models,
-                settings.model,
-                active_provider=settings.provider.name,
-                invitations=invitations,
-                sources={
-                    entry.provider.name: entry.provider.label for entry in slices
-                },
-                unavailable_reason=(
-                    catalog_problem(slices)
-                    if slices
-                    else catalog.directory_reason or "This provider listed no models."
-                ),
-                dialog_title=(
-                    slices[0].provider.label
-                    if provider_name and len(slices) == 1
-                    else "Models"
-                ),
+        settings = self.agent.llm_client.settings
+        slices = tuple(
+            entry
+            for entry in catalog.slices
+            if entry.is_supported and entry.provider.name == provider_name
+        )
+        provider = self._provider_named(provider_name)
+        return ModelPickerScreen(
+            merge_models(slices),
+            settings.model,
+            active_provider=settings.provider.name,
+            sources={entry.provider.name: entry.provider.label for entry in slices},
+            unavailable_reason=(
+                catalog_problem(slices)
+                if slices
+                else "This provider is no longer available."
             ),
-            self._apply_model_choice,
+            dialog_title=provider.label,
+            allow_provider_browser=True,
+            cancel_label="back",
         )
 
     @staticmethod
@@ -540,19 +646,22 @@ class TrueCoderApp(App[None]):
             current,
         )
 
-    def _apply_model_choice(self, choice: ModelInfo | ProviderInvite | None) -> None:
-        if choice is None:
-            return
-        if isinstance(choice, ProviderInvite):
-            self.run_worker(self._accept_invitation(choice), exclusive=False)
-            return
+    def _apply_model_choice(self, choice: ModelInfo) -> None:
         from truecoder.providers.models import credential_for_provider
         from truecoder.providers.store import StoredSelection, save_selection
 
         settings = self.agent.llm_client.settings
         provider = self._provider_named(choice.provider)
         provider = choice.provider_config(provider)
-        settings.use(provider, credential_for_provider(provider, settings))
+        credential = self._session_credentials.get(provider.name)
+        credential = credential or credential_for_provider(provider, settings)
+        if not _usable(credential):
+            self.notify(
+                f"Connect {provider.label} before choosing one of its models.",
+                severity="warning",
+            )
+            return
+        settings.use(provider, credential)
 
         model = choice.identifier
         settings.select_model(model)
@@ -576,13 +685,8 @@ class TrueCoderApp(App[None]):
     def needs_credential(self) -> bool:
         return not _usable(self.agent.llm_client.settings.credential)
 
-    async def _accept_invitation(self, invitation: ProviderInvite) -> None:
-        provider = self._provider_named(invitation.provider)
-        if not await self._collect_credential(provider):
-            return
-        await self._choose_model(refresh=True)
-
     def _adopt(self, provider, credential) -> None:
+        self._session_credentials[provider.name] = credential
         settings = self.agent.llm_client.settings
         if provider.name == settings.provider.name:
             settings.use(provider, credential)
@@ -595,7 +699,7 @@ class TrueCoderApp(App[None]):
         chosen = await self._ask_how_to_connect(target)
         if chosen is None:
             self.notify(
-                f"{target.name} is still not connected, so requests will fail.",
+                f"{target.name} is still not connected.",
                 severity="warning",
                 timeout=10,
             )
@@ -817,6 +921,7 @@ class TrueCoderApp(App[None]):
 
         settings = self.agent.llm_client.settings
         name = settings.provider.name
+        session_credential = self._session_credentials.pop(name, None)
         forgotten = [
             label
             for label, gone in (
@@ -825,6 +930,8 @@ class TrueCoderApp(App[None]):
             )
             if gone
         ]
+        if session_credential is not None and not forgotten:
+            forgotten.append("session credential")
 
         if not forgotten:
             self.notify(f"Nothing stored for {name!r}.", severity="warning")
@@ -1424,6 +1531,14 @@ class TrueCoderApp(App[None]):
             ),
             self._handle_session_action,
         )
+
+    async def action_contextual_a(self) -> None:
+        if isinstance(self.screen, ModelPickerScreen):
+            self.screen.action_all_providers()
+            return
+        if isinstance(self.screen, ProviderPickerScreen):
+            return
+        await self.action_manage_audit()
 
     async def action_manage_audit(self) -> None:
         runtime = self.agent.execution_runtime

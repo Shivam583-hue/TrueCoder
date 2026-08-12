@@ -28,7 +28,10 @@ RenameSessionScreen,
 DeleteSessionScreen,
 AuditViewerScreen,
 ModelPickerScreen,
+ProviderPickerScreen,
 ApiKeyScreen,
+CredentialChoiceScreen,
+DeviceCodeScreen,
 AuthorisationScreen,
 ExecutionHealthScreen {
     align: center middle;
@@ -1184,6 +1187,18 @@ ExecutionCard.expanded .execution-details {
 .model-item {
     padding: 0 1;
     background: transparent;
+}
+
+.model-section {
+    height: 2;
+    padding: 1 1 0 1;
+    background: transparent;
+}
+
+.model-section-line {
+    width: 100%;
+    color: $tc-orange;
+    text-style: bold;
 }
 
 .model-item.active .model-item-line {
