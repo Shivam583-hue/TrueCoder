@@ -32,6 +32,7 @@ When a command must be isolated instead, the certified sandbox profile runs it i
 - [Runtime data and storage](#runtime-data-and-storage)
 - [All features](#all-features)
 - [Known limitations](#known-limitations)
+- [Changelog](#changelog)
 - [Contributing](#contributing)
 - [Security](#security)
 - [License](#license)
@@ -987,6 +988,11 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **The sandbox suite needs a matching local image.** A rebuilt image with an unlocked digest makes the container backend unavailable, which is correct behavior but easy to trip over during development.
 - **Special provider SDKs are not adapters yet.** Amazon Bedrock, Azure OpenAI, Google Vertex, Vercel AI Gateway, Cloudflare AI Gateway, GitLab, SAP AI, AIHubMix, Merge Gateway, and similar provider-specific SDKs require structured credentials, signing, or wire behavior that has not been proved through the supported transports. Their Models.dev entries are not shown until each has a dedicated contract.
 - **Native coverage is deliberate rather than inferred.** Anthropic Messages and Google Gemini have native translators; OpenAI Responses and OpenAI-compatible Chat Completions cover the remaining supported directory entries. A provider whose Models.dev package names an unsupported special SDK is never presented as if compatibility had been proved.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the current development baseline and all
+future release notes.
 
 ## Contributing
 
