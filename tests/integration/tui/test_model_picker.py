@@ -277,7 +277,15 @@ class DisplayedModelTests(unittest.IsolatedAsyncioTestCase):
         app = self._app()
         patches = self._isolate(stored)
 
-        with patch.dict(os.environ, {"MODEL": environment, "API_KEY": "sk-test"}):
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL": environment,
+                "API_KEY": "sk-test",
+                "BASE_URL": openrouter_provider().base_url or "",
+            },
+            clear=True,
+        ):
             for active in patches:
                 active.start()
                 self.addCleanup(active.stop)
@@ -310,7 +318,12 @@ class DisplayedModelTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.dict(
             os.environ,
-            {"MODEL": "cohere/north-mini-code:free", "API_KEY": "sk-test"},
+            {
+                "MODEL": "cohere/north-mini-code:free",
+                "API_KEY": "sk-test",
+                "BASE_URL": openrouter_provider().base_url or "",
+            },
+            clear=True,
         ):
             for active in patches:
                 active.start()
