@@ -16,7 +16,7 @@ MAX_PROVIDERS: Final = 16
 MAX_SCOPES: Final = 32
 
 _ROOT_FIELDS: Final = frozenset({"version", "providers"})
-_PROVIDER_FIELDS: Final = frozenset({"name", "base_url", "oauth"})
+_PROVIDER_FIELDS: Final = frozenset({"name", "base_url", "oauth", "headers"})
 _OAUTH_FIELDS: Final = frozenset(
     {"client_id", "authorize_url", "token_url", "scopes"}
 )
@@ -116,9 +116,20 @@ def _provider(entry: object) -> Provider:
             name=name.strip(),
             base_url=base_url,
             oauth=_oauth(name, entry.get("oauth")),
+            header_pairs=_headers(name, entry.get("headers")),
         )
     except (CredentialError, OAuthError) as error:
         raise ProviderConfigError(f"provider {name!r} is unusable: {error}") from None
+
+
+def _headers(name: str, value: object) -> tuple[tuple[str, str], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, dict):
+        raise ProviderConfigError(f"provider {name!r} headers must be an object")
+    return tuple(
+        (str(header), str(content)) for header, content in sorted(value.items())
+    )
 
 
 def _oauth(name: str, value: object) -> OAuthClient | None:

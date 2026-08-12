@@ -94,8 +94,13 @@ class LLMClient:
                 **settings.credential.client_options(),
                 "max_retries": 0,
             }
-            if settings.provider.base_url:
-                client_options["base_url"] = settings.provider.base_url
+            base_url = settings.provider.base_url
+            if base_url:
+                client_options["base_url"] = base_url
+
+            headers = dict(settings.provider.headers)
+            if headers:
+                client_options["default_headers"] = headers
 
             self.__client = AsyncOpenAI(**client_options)
 

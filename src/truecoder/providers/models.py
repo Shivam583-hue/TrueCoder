@@ -9,10 +9,43 @@ from truecoder.providers.oauth import OAuthClient
 MAX_MODEL_ID_CHARACTERS: Final = 200
 MAX_MODEL_NAME_CHARACTERS: Final = 120
 DEFAULT_PROVIDER_NAME: Final = "default"
+MAX_HEADERS: Final = 16
+MAX_HEADER_NAME_CHARACTERS: Final = 64
+MAX_HEADER_VALUE_CHARACTERS: Final = 1024
+RESERVED_HEADERS: Final = frozenset({"authorization"})
 
 
 class CredentialError(ValueError):
     pass
+
+
+def validate_headers(pairs: tuple[tuple[str, str], ...]) -> None:
+    if not isinstance(pairs, tuple):
+        raise CredentialError("headers must be a tuple of pairs")
+    if len(pairs) > MAX_HEADERS:
+        raise CredentialError(f"at most {MAX_HEADERS} headers are supported")
+
+    seen: set[str] = set()
+    for pair in pairs:
+        if not isinstance(pair, tuple) or len(pair) != 2:
+            raise CredentialError("each header must be a name and a value")
+        name, value = pair
+        if not isinstance(name, str) or not name.strip():
+            raise CredentialError("a header needs a name")
+        if not isinstance(value, str):
+            raise CredentialError(f"header {name!r} must have a text value")
+        if len(name) > MAX_HEADER_NAME_CHARACTERS:
+            raise CredentialError(f"header {name!r} is longer than allowed")
+        if len(value) > MAX_HEADER_VALUE_CHARACTERS:
+            raise CredentialError(f"header {name!r} has a value longer than allowed")
+        folded = name.casefold()
+        if folded in RESERVED_HEADERS:
+            raise CredentialError(
+                f"header {name!r} is set from the credential and cannot be configured"
+            )
+        if folded in seen:
+            raise CredentialError(f"header {name!r} is set more than once")
+        seen.add(folded)
 
 
 @runtime_checkable
@@ -57,6 +90,7 @@ class Provider:
     name: str = DEFAULT_PROVIDER_NAME
     base_url: str | None = None
     oauth: OAuthClient | None = None
+    header_pairs: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -65,6 +99,11 @@ class Provider:
             raise CredentialError("base_url must be text or None")
         if self.oauth is not None and not isinstance(self.oauth, OAuthClient):
             raise CredentialError("oauth must be an OAuthClient or None")
+        validate_headers(self.header_pairs)
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return dict(self.header_pairs)
 
     @property
     def models_url(self) -> str:
