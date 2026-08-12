@@ -5,7 +5,7 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
-from tests.helpers.tui import wait_until
+from tests.helpers.tui import click_when_ready, wait_until
 from truecoder.agent import Agent, ContextBuilder
 from truecoder.client.response import (
     EventType,
@@ -474,7 +474,7 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(preamble.content_text, "I'll inspect it.")
             self.assertFalse(preamble.query_one(".message-footer").display)
 
-            await pilot.click(".approval-once")
+            await click_when_ready(pilot, app.query_one(".approval-once"))
             await app.workers.wait_for_complete()
             await pilot.pause()
 
@@ -527,7 +527,7 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(tool.runs, 0)
 
-            await pilot.click(".approval-once")
+            await click_when_ready(pilot, app.query_one(".approval-once"))
             await app.workers.wait_for_complete()
             await pilot.pause()
 
@@ -536,7 +536,7 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(card.state, "completed")
             self.assertFalse(card.query_one(".tool-approval-actions").display)
             self.assertTrue(card.query_one(".tool-details-toggle").display)
-            await pilot.click(".tool-details-toggle")
+            await click_when_ready(pilot, card.query_one(".tool-details-toggle"))
             await pilot.pause()
             self.assertTrue(card.has_class("expanded"))
             self.assertIn(
@@ -562,7 +562,7 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
                 description="the tool call to await approval",
             )
 
-            await pilot.click(".approval-reject")
+            await click_when_ready(pilot, app.query_one(".approval-reject"))
             await app.workers.wait_for_complete()
             await pilot.pause()
 
@@ -619,7 +619,10 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(list(app.query(ToolCallCard))), 1)
 
             first_card = app.query_one(ToolCallCard)
-            await pilot.click(first_card.query_one(".approval-session"))
+            await click_when_ready(
+                pilot,
+                first_card.query_one(".approval-session"),
+            )
             await app.workers.wait_for_complete()
             await pilot.pause()
 
@@ -667,7 +670,10 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             )
 
             first_card = app.query_one(ToolCallCard)
-            await pilot.click(first_card.query_one(".approval-session"))
+            await click_when_ready(
+                pilot,
+                first_card.query_one(".approval-session"),
+            )
             await wait_until(
                 pilot,
                 lambda: len(tool_cards(app)) == 2
@@ -681,7 +687,10 @@ class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(cards), 2)
             self.assertEqual(cards[1].state, "awaiting-approval")
 
-            await pilot.click(cards[1].query_one(".approval-reject"))
+            await click_when_ready(
+                pilot,
+                cards[1].query_one(".approval-reject"),
+            )
             await app.workers.wait_for_complete()
 
     async def test_new_chat_cancels_a_pending_approval(self):

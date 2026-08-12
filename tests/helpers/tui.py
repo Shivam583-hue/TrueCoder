@@ -4,6 +4,7 @@ from collections.abc import Callable
 from time import monotonic
 
 from textual.pilot import Pilot
+from textual.widget import Widget
 
 WAIT_TIMEOUT_SECONDS = 10.0
 
@@ -30,3 +31,17 @@ async def wait_until(
                 f"timed out after {timeout} seconds waiting for {description}"
             )
         await pilot.pause()
+
+
+async def click_when_ready(pilot: Pilot, widget: Widget) -> None:
+    await wait_until(
+        pilot,
+        lambda: widget.is_mounted
+        and widget.visible
+        and widget.display
+        and widget.is_on_screen
+        and widget.region.width > 0
+        and widget.region.height > 0,
+        description=f"{widget!r} to be clickable",
+    )
+    await pilot.click(widget)
