@@ -30,7 +30,9 @@ from truecoder.tui.credentials import ApiKeyScreen, CredentialChoiceScreen
 from truecoder.tui.model_picker import (
     ModelPickerScreen,
     ProviderChoice,
+    ProviderListItem,
     ProviderPickerScreen,
+    SectionListItem,
 )
 from truecoder.tui.widgets import ChatMessage, PromptInput
 
@@ -430,6 +432,31 @@ class PickerLayoutTests(unittest.TestCase):
             [model.provider for model in screen.models],
             ["zeta", "openai", "anthropic", "google", "openrouter"],
         )
+
+    def test_popular_provider_actions_are_rendered_before_models(self):
+        choices = (
+            ProviderChoice(openai_provider()),
+            ProviderChoice(openrouter_provider()),
+        )
+        screen = ModelPickerScreen(
+            CATALOG,
+            "openai/gpt-5",
+            providers=choices,
+        )
+
+        rows = screen._items(screen.models, provider_choices=screen.providers)
+
+        self.assertIsInstance(rows[0], SectionListItem)
+        self.assertEqual(rows[0].label, "Popular providers")
+        self.assertIsInstance(rows[1], ProviderListItem)
+        self.assertEqual(rows[1].choice.provider.name, "openai")
+        self.assertEqual(screen._selected_index(rows), 1)
+        model_section = next(
+            index
+            for index, row in enumerate(rows)
+            if isinstance(row, SectionListItem) and row.label == "Models"
+        )
+        self.assertGreater(model_section, 1)
 
     def test_a_million_token_window_is_not_written_as_thousands(self):
         self.assertEqual(

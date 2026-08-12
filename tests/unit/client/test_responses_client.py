@@ -9,7 +9,12 @@ from truecoder.client.response import EventType
 from truecoder.client.responses import responses_input, responses_tools
 from truecoder.providers.models import ApiKey, SessionSettings
 from truecoder.providers.oauth import OAuthToken
-from truecoder.providers.openai import OPENAI_CODEX_BASE_URL, openai_provider
+from truecoder.providers.openai import (
+    OPENAI_CODEX_BASE_URL,
+    OPENAI_CODEX_PROTOCOL_VERSION,
+    OPENAI_CODEX_USER_AGENT,
+    openai_provider,
+)
 from truecoder.tools.base import ToolCall
 
 
@@ -286,6 +291,14 @@ class ResponsesClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(client.base_url).rstrip("/"), OPENAI_CODEX_BASE_URL)
         self.assertEqual(client.default_headers["ChatGPT-Account-Id"], "acct-1")
         self.assertEqual(client.default_headers["originator"], "truecoder")
+        self.assertEqual(
+            client.default_headers["version"],
+            OPENAI_CODEX_PROTOCOL_VERSION,
+        )
+        self.assertEqual(
+            client.default_headers["User-Agent"],
+            OPENAI_CODEX_USER_AGENT,
+        )
         await llm_client.close()
 
 

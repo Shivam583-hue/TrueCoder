@@ -29,7 +29,12 @@ from truecoder.providers import (
 )
 from truecoder.providers.catalog import EMPTY_CATALOG_REASON
 from truecoder.providers.oauth import OAuthToken
-from truecoder.providers.openai import OPENAI_CODEX_MODELS_URL, openai_provider
+from truecoder.providers.openai import (
+    OPENAI_CODEX_MODELS_URL,
+    OPENAI_CODEX_PROTOCOL_VERSION,
+    OPENAI_CODEX_USER_AGENT,
+    openai_provider,
+)
 
 ACME = Provider(name="acme", base_url="https://api.acme.invalid/v1")
 BRIO = Provider(name="brio", base_url="https://api.brio.invalid/v1")
@@ -86,6 +91,8 @@ class FetchCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.headers["Authorization"], "Bearer at-openai")
         self.assertEqual(client.headers["ChatGPT-Account-Id"], "acct-1")
         self.assertEqual(client.headers["originator"], "truecoder")
+        self.assertEqual(client.headers["version"], OPENAI_CODEX_PROTOCOL_VERSION)
+        self.assertEqual(client.headers["User-Agent"], OPENAI_CODEX_USER_AGENT)
         self.assertEqual(models[0].identifier, "gpt-5.2")
 
 

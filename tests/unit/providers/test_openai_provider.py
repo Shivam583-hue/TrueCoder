@@ -9,6 +9,8 @@ from truecoder.providers.openai import (
     OPENAI_CODEX_BASE_URL,
     OPENAI_CODEX_CLIENT_ID,
     OPENAI_CODEX_MODELS_URL,
+    OPENAI_CODEX_PROTOCOL_VERSION,
+    OPENAI_CODEX_USER_AGENT,
     OPENAI_OAUTH_CLIENT,
     openai_provider,
 )
@@ -55,6 +57,21 @@ class OpenAIProviderTests(unittest.TestCase):
         self.assertEqual(provider.base_url, OPENAI_API_BASE_URL)
         self.assertEqual(provider.wire_api, "responses")
         self.assertEqual(provider.headers["originator"], "truecoder")
+        self.assertEqual(
+            provider.headers["version"],
+            OPENAI_CODEX_PROTOCOL_VERSION,
+        )
+        self.assertEqual(
+            provider.headers["User-Agent"],
+            OPENAI_CODEX_USER_AGENT,
+        )
+
+    def test_the_catalog_and_requests_use_the_same_protocol_version(self):
+        self.assertTrue(
+            OPENAI_CODEX_MODELS_URL.endswith(
+                f"client_version={OPENAI_CODEX_PROTOCOL_VERSION}"
+            )
+        )
 
 if __name__ == "__main__":
     unittest.main()

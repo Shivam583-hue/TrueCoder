@@ -376,6 +376,9 @@ class ModelPickerScreen(
         identifiers, provider_width = self.columns()
         rows: list[ListItem] = []
         has_provider_sections = bool(invitations or provider_choices)
+        if provider_choices:
+            rows.append(SectionListItem("Popular providers"))
+            rows.extend(ProviderListItem(choice) for choice in provider_choices)
         if models and has_provider_sections:
             rows.append(SectionListItem("Models"))
         rows.extend(
@@ -388,9 +391,6 @@ class ModelPickerScreen(
             )
             for model in models[:MAX_VISIBLE_MODELS]
         )
-        if provider_choices:
-            rows.append(SectionListItem("Popular providers"))
-            rows.extend(ProviderListItem(choice) for choice in provider_choices)
         if invitations:
             rows.append(SectionListItem("More providers"))
             rows.extend(InviteListItem(invitation) for invitation in invitations)
@@ -398,6 +398,16 @@ class ModelPickerScreen(
 
     @staticmethod
     def _selected_index(rows: list[ListItem]) -> int | None:
+        provider = next(
+            (
+                index
+                for index, row in enumerate(rows)
+                if isinstance(row, ProviderListItem)
+            ),
+            None,
+        )
+        if provider is not None:
+            return provider
         active = next(
             (
                 index
@@ -464,6 +474,10 @@ class ModelPickerScreen(
 
     @on(Input.Submitted, "#model-filter")
     def choose_first_match(self, event: Input.Submitted) -> None:
+        providers = self.visible_providers(event.value)
+        if providers:
+            self.dismiss(providers[0])
+            return
         matches = self.visible_models(event.value)
         if matches:
             self.dismiss(matches[0])
