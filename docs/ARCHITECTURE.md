@@ -18,7 +18,9 @@ Agent
  │   └─ API-key and OAuth login flows
  ├─ LLM client
  │   ├─ OpenAI Responses translation
- │   └─ OpenAI-compatible Chat Completions translation
+ │   ├─ OpenAI-compatible Chat Completions translation
+ │   ├─ Anthropic Messages translation
+ │   └─ Google Gemini translation
  ├─ Approval service
  ├─ Plan store
  └─ Tools
@@ -73,9 +75,10 @@ The UI handles presentation and user input.
 
 The agent owns orchestration.
 
-The provider layer owns configuration, credentials, model discovery, the active
-selection, and the declared wire protocol. The LLM client receives that resolved
-selection and translates either Responses or Chat Completions into the same
+The provider layer owns configuration, credentials, directory and live model
+discovery, explicit provider identity, the active selection, and the declared
+transport adapter. The LLM client receives that resolved selection and translates
+Responses, Chat Completions, Anthropic Messages, or Google Gemini into the same
 internal event types.
 
 Tools are independent units that validate arguments, perform work, and return structured results.
@@ -1785,24 +1788,35 @@ one answer to the question and `/model` and the status line cannot disagree.
 A client that cannot resolve settings at all reports that plainly instead of
 falling back to a value that would be wrong for the same reason.
 
-A provider's model list is third-party JSON and is treated as such: the count is
-capped, identifiers and names are length-bounded, context windows outside a
-plausible range are dropped, and duplicates are collapsed. Both the conventional
-`data` list and OpenAI's subscription `models` list are translated into the same
-`ModelInfo` values; subscription entries use their slug, display name, visibility,
-and context window. The result is cached to disk with a timestamp and a six-hour
-lifetime, because this is a network call and it must not happen at launch or on a
-keystroke. A cache that is corrupt, truncated, or stale is ignored rather than
-repaired.
+Provider and model discovery begins with the Models.dev directory used by
+OpenCode. Its response is third-party JSON and is treated as such: response bytes,
+provider count, models per provider, identifiers, labels, release dates, environment
+names, and context windows are all bounded before parsing produces a value. Alpha
+and deprecated models are not offered. The last valid response is cached as one
+directory snapshot for five minutes, and a failed refresh may use that validated
+snapshot stale so an offline machine retains its picker. A corrupt or truncated
+cache is ignored rather than repaired.
 
-A list covering one provider can only ever offer one provider's models, which
-makes the picker a list of names rather than a place to decide where an answer
-comes from. Every configured provider is asked instead, each with its own stored
-credential, and the answers are merged and labelled. One provider failing is that
-provider failing, not the list failing: its reason stays beside its own entry, the
-providers that answered are still shown, and only a list empty everywhere reports
-why. Caches are per provider for the same reason, since a single shared file would
-mean refreshing one discards the rest.
+The directory describes provider identity as well as model names: stable ID,
+display label, API endpoint, provider-specific environment variables, and the
+package that determines its transport. A model may override its provider's API
+and package; those values travel with `ModelInfo`, configure the provider on
+selection, survive the live cache, and are restored from the directory cache on
+restart. The package maps to native Anthropic, native Google, OpenAI Responses,
+or OpenAI-compatible Chat Completions. Packages
+for special cloud SDKs are explicitly unsupported and hidden rather than treated
+as compatible by wishful inference. Known providers whose directory entry omits
+an endpoint receive a reviewed built-in endpoint; an arbitrary hostname is never
+manufactured.
+
+Directory data is not always authoritative. A custom configured provider has no
+public directory entry, and an OAuth subscription can expose an account-specific
+catalog, so those providers are queried live with their own credential. Both the
+conventional `data` list and OpenAI's subscription `models` list become the same
+`ModelInfo` values. Live results use a separate six-hour cache per provider. A
+configured provider overrides the directory entry with the same ID without
+duplicating it, and one live failure keeps only its own reason; public and other
+successful provider rows remain usable.
 
 A chosen model therefore carries the provider it came from. Selecting it switches
 to that provider, adopts whatever credential is already stored for it, and records
@@ -1811,8 +1825,8 @@ wrote. Two providers may offer the same identifier, so the active row is the one
 whose provider matches as well; without that the marker lands on the wrong row the
 moment two catalogs overlap.
 
-A list says who serves it when there is something to say. A model identifier looks
-like a provider and is not one: a gateway's catalog is full of names like `openai/gpt-5.6-sol` and
+A list always knows who serves it. A model identifier looks like a provider and
+is not one: a gateway's catalog is full of names like `openai/gpt-5.6-sol` and
 `anthropic/claude-opus-5`, all of them served by the gateway and reachable with the
 gateway's key. A list that shows those identifiers and nothing else invites the
 reader to conclude they have picked OpenAI, and then the absence of a sign-in
@@ -1821,28 +1835,32 @@ connected. The column was originally hidden when only one provider contributed, 
 the theory that a repeated value is noise. It is not noise; it is the answer to the
 question the identifiers provoke. A named provider appears once above the list when it is the
 only one and per row when there are several, which spends the width where it
-actually distinguishes something, and an unnamed provider stays invisible.
+actually distinguishes something.
 
-Which provider is named is the product's decision, not the framework's. A provider
-carries a display name, and that is what people see; a provider with no name of its
-own is not mentioned at all rather than described by its host. Deriving the label
-from `BASE_URL` was a mistake worth stating plainly: it answered a developer's
-question by leaking an operational detail to every end user, and someone building
-on TrueCoder does not necessarily want the gateway they route through printed in
-their interface. The name remains the key everything is stored under, while the
-display name is only ever shown, because conflating the two is how storage ends up
-keyed by a string somebody rebrands later.
+Which provider is named is explicit data, not a guess from a host. A provider
+carries a stable name used for storage and routing and a display label used only
+for presentation, because conflating the two is how credentials become keyed by a
+string somebody rebrands later. `BASE_URL` recognizes OpenRouter as `openrouter`;
+every other unconfigured endpoint becomes the named `custom` provider with the
+label `Custom provider`. Nothing is hidden, and operational hostnames are never
+turned into product labels.
 
 Direct OpenAI is a built-in named provider and custom gateways are not aliases for
 it. A gateway model identifier can begin with `openai/`, but provider identity
-comes from the catalog that returned the row, never from that string. The two use
-separate credential names so changing `BASE_URL` cannot send a ChatGPT token to a
-gateway. A legacy key stored under `default` is accepted as a fallback for direct
-OpenAI, preserving the pre-provider key workflow without merging the two
-namespaces going forward.
+comes from the catalog that returned the row, never from that string. The
+qualified display form therefore prepends the provider even when the wire model
+already contains a slash: `openrouter/openai/gpt-5.6-sol` and
+`openai/gpt-5.6-sol` are different selections. They use separate credential
+names, so changing `BASE_URL` cannot send a ChatGPT token to a gateway. A legacy
+key stored under `default` is accepted as a fallback for the initially implied
+provider, preserving the pre-provider key workflow without merging namespaces
+going forward.
 
-Rows are padded to widths computed from the data rather than joined with fixed
-spacing, so identifiers, providers, and context windows line up down the list. A
+Rows are padded to widths computed from display labels rather than joined with
+fixed spacing, so identifiers, providers, and context windows line up down the
+list. The active provider leads the combined catalog, followed by OpenAI,
+Anthropic, Google, OpenRouter, and the remaining providers; the active model leads
+its group so it cannot fall beyond the bounded rendered window. A
 row too wide for a narrow terminal is clipped with an ellipsis rather than wrapped,
 since a wrapped row turns a list into paragraphs and costs more than the character
 it saves.
@@ -1889,6 +1907,13 @@ decided without a widget, a screen, or a running application, and the interface
 layer only applies the result. `/quit` routes to the same application action as
 the keyboard shortcut rather than tearing down the interface itself, which is why
 a command and a keypress cannot drift into two different shutdown paths.
+
+Connection and selection remain separate commands because they answer different
+questions. `/connect` begins with providers and is the shortest path when the user
+knows which account to add. `/models` begins with all supported models and is the
+shortest path when the user knows what should answer. Both converge on the same
+credential collector and the same provider-filtered model screen, while `/login`
+deliberately means reconnect the provider already active.
 
 ## Signing in with a browser
 
@@ -1969,21 +1994,31 @@ CLI client ID, OpenAI's authorization and token endpoints, and the registered
 simplified Codex flow and an offline token. Other providers remain user-supplied,
 which keeps their client registration and terms with the person configuring them.
 
-OpenAI's two credential choices share a provider identity, but not an endpoint.
-An API key targets `https://api.openai.com/v1`; a browser token carries an endpoint
+OpenAI's browser and headless OAuth choices produce the same credential kind;
+the API-key choice shares their provider identity, but not their endpoint. An API
+key targets `https://api.openai.com/v1`; an OAuth token carries an endpoint
 override for `https://chatgpt.com/backend-api/codex` and a bounded
 `ChatGPT-Account-Id` header extracted during exchange. Model discovery follows the
 same split, using the ordinary API catalog for keys and the Codex subscription
 catalog for OAuth tokens.
 
-Both direct OpenAI paths use Responses. Chat history is translated into Responses
+Every direct OpenAI credential path uses Responses. Chat history is translated into Responses
 input items: assistant tool requests become `function_call` items and tool results
 become `function_call_output` items. Chat-style nested function definitions are
 flattened on the request. Text deltas, function-argument deltas, terminal tool
 calls, and usage are translated back into the same events the agent already
 consumes. This adapter lives in `client`, while provider configuration merely
-declares `wire_api="responses"`; every other compatible provider continues on
-Chat Completions unless it declares otherwise.
+declares `wire_api="responses"`.
+
+Transport identity is independent of that wire-model string. Providers mapped to
+`openai-compatible` continue through Chat Completions with their declared endpoint.
+Anthropic maps chat history, system text, function definitions, calls, and results
+to Messages content blocks and translates streamed text, fragmented tool JSON,
+usage, and stop reasons back to internal events. Google maps the same history to
+Gemini contents, `systemInstruction`, function declarations, `functionCall`, and
+`functionResponse`, then normalizes Gemini streaming and usage. These native
+translators use bounded httpx requests and never make the OpenAI client pretend to
+speak a protocol it does not.
 
 Opening a browser and waiting used to be one indivisible call, which meant the
 authorization URL existed only inside a function nobody could see into. That is
@@ -2005,13 +2040,22 @@ property PKCE was designed to give.
 A browser is not always reachable. Over SSH, in a container, or on a server there
 may be no handler to open and no way to receive a loopback redirect at all, and
 the copyable link does not help when the machine that would open it is not the
-machine running the flow. The device code grant answers that case: TrueCoder asks
-the provider for a short code, shows it with the page to enter it on, and polls
-until it is approved. The poll respects the interval the provider states, backs off
-further when told to slow down, and stops at the stated expiry rather than
-spinning; a declined request and an expired code are reported as the different
-things they are. It is offered only by providers that declare a device endpoint,
-because a third button that fails for everyone is worse than two that work.
+machine running the flow. A device authorization answers that case. Standard
+providers use RFC 8628: TrueCoder requests a short code, shows it with the page to
+enter it on, and polls the token endpoint. The poll respects the provider's
+interval, backs off on `slow_down`, and stops at expiry; decline and expiry remain
+different outcomes.
+
+OpenAI's Codex flow is brokered rather than RFC 8628, matching OpenCode's
+implementation. It requests `device_auth_id` and `user_code` from
+`/api/accounts/deviceauth/usercode`, opens `/codex/device`, and polls
+`/api/accounts/deviceauth/token`. Approval returns an authorization code and PKCE
+verifier, which are exchanged at `/oauth/token` with the registered
+`/deviceauth/callback` redirect. Pending `403` and `404` responses continue at the
+bounded interval; any other status stops. The response size and total wait are
+bounded like the standard path. Device authorization is offered only when the
+provider declares a complete device contract, because a third button that fails
+for everyone is worse than two that work.
 
 The link also lands in the transcript, not only in the dialog. A modal is the right
 place to wait and the wrong place to keep something: dismissing it, or finishing in
@@ -2029,11 +2073,11 @@ which point the error came from the provider and named nothing the user could ac
 on.
 
 Selection now asks. When the chosen provider has no usable credential, a provider
-with OAuth opens the browser/API-key choice, while a key-only provider opens the
-masked prompt directly. Direct OpenAI always has the former choice without a
-`providers.json` entry. Nothing is asked when a usable credential already exists,
-because a prompt that appears when it is not needed teaches people to dismiss
-prompts.
+with OAuth opens its available browser, device, and API-key choices, while a
+key-only provider opens the masked prompt directly. Direct OpenAI has all three
+without a `providers.json` entry. Nothing is asked when a usable credential already
+exists, because a prompt that appears when it is not needed teaches people to
+dismiss prompts.
 
 A provider that offers only one way in does not ask which way, but it does say why.
 Someone who expected a choice and got a key prompt has no way to tell whether the
@@ -2048,13 +2092,13 @@ cannot set `Authorization`, because that is the credential's to set and a file t
 could override it would be a quiet way to send requests as someone else.
 
 Configuring an OAuth client used to decide the question rather than widen it. The
-same providers that publish one also sell keys, and the two are not
-interchangeable: a browser sign-in draws on a subscription while a key bills the
-account it belongs to, so which one to use is a decision about money and access
-that only the person at the keyboard can make. Taking the browser silently because
-it happened to be configured also made the key unreachable, since nothing else in
-the interface asks for one. A provider that accepts both is therefore asked about
-rather than assumed, and a provider that accepts one is not, because a question
+same providers that publish one also sell keys, and the credential families are
+not interchangeable: an OAuth sign-in draws on a subscription while a key bills
+the account it belongs to, so which one to use is a decision about money and access
+that only the person at the keyboard can make. Taking OAuth silently because it
+happened to be configured also made the key unreachable, since nothing else in
+the interface asks for one. A provider with multiple available methods is therefore
+asked about rather than assumed, and a provider with one is not, because a question
 with a single answer is a keystroke charged for nothing.
 
 A typed key is a credential like any other, so it is stored with the same
@@ -2066,20 +2110,22 @@ environment, because a choice made deliberately in the application is more recen
 than a file written once. The input is masked, and a key is never rendered, logged,
 or copied into an error message.
 
-`/login` and choosing a model reach the same code, so there is one answer to what
-this provider needs rather than two that can drift. `/logout` forgets every stored
-credential for the provider rather than only the token, because a "log out" that
-leaves a working key behind is not one.
+`/connect` makes the sequence explicit: pick a supported directory provider, run
+its credential flow, then open its filtered models. `/models` begins from the
+combined catalog, but selecting an unconnected model reaches the same credential
+code before committing the model. `/login` remains the compatibility route for
+reconnecting the current provider. `/logout` forgets every stored credential for
+the current provider rather than only the token, because a "log out" that leaves a
+working key behind is not one.
 
-Most providers will not list their models to an anonymous request, which makes the
-obvious design circular: no model can be picked before signing in, and signing in
-is reached by picking a model. A provider that returned nothing and holds no usable
-credential is therefore offered as a row of its own, so the step that is missing is
-the thing that can be selected. Accepting it switches to that provider, runs the
-flow that provider supports, and reopens the list, which is populated by then. A
-provider that returned nothing while holding a usable credential is a different
-fact and is reported as a warning instead, because that is a failure rather than a
-missing step, and offering to sign in again would not fix it.
+The public directory breaks the usual catalog/authentication circle for normal
+providers: their models can be selected before a key exists, and selection then
+collects the key. Custom and subscription catalogs may still require a credential
+before they can list. A provider with no directory models and no usable credential
+is offered as a connection row, so the missing step is selectable; accepting it
+runs that provider's flow and reopens the list. A provider that returned nothing
+while holding a usable credential is a different fact and is reported as a warning,
+because offering to sign in again would not fix it.
 
 Signing in to another provider does not move the session to it. The flow takes the
 provider it is authorising as an argument rather than reading the active one, and
@@ -2109,10 +2155,10 @@ fact, and the second one drifts the first time the wording is improved.
 
 The remedy depends on something the client cannot know: what this provider accepts.
 A rejected credential opens the way to replace it, which is the key prompt for a
-provider that only takes keys and the same choice between the two for a provider
-that takes both, since the credential that failed is not necessarily the kind
-worth trying next. Running out of credit opens nothing, because a new credential
-buys nothing; that suggestion would send someone to replace a key that was working.
+provider that only takes keys and the full method picker for a provider with OAuth,
+since the credential that failed is not necessarily the kind worth trying next.
+Running out of credit opens nothing, because a new credential buys nothing; that
+suggestion would send someone to replace a key that was working.
 
 A failure that does not classify gets no advice at all. Inventing a next step for
 an unrecognised status is worse than silence, because it sends people to change
@@ -2229,15 +2275,23 @@ Keep these invariants stable as the codebase grows:
 * the client is given its settings and never reaches for them
 * changing a model is free, changing a connection invalidates it
 * a provider's model list is bounded before it is shown or cached
+* provider identity comes from the catalog entry, never from a model prefix
+* the wire model ID and its provider-qualified display ID are never conflated
+* a model-specific endpoint or transport override survives selection and restart
+* a configured provider overrides the directory by stable ID and never duplicates it
+* one provider's catalog failure never removes another provider's models
+* an unsupported provider SDK is hidden rather than advertised as compatible
 * a slash command is answered here, never sent to the model
 * the client consumes the credential protocol and never branches on credential kind
 * a remembered choice outranks the environment, a broken file outranks nothing
 * choosing a model without a usable credential starts the flow that provider
   supports, and never defers the failure to the next request
+* connecting chooses the provider before collecting its credential
 * a key entered in the interface outranks the environment and is never rendered
 * logout removes every stored credential for the current provider
 * the PKCE verifier never leaves the process
 * a displayed authorization URL carries the challenge, never the verifier
+* brokered OpenAI device authorization exchanges only the code and verifier it receives after approval
 * a callback with the wrong state is refused before its code is read
 * dismissing browser sign-in closes its callback listener
 * every stored credential is private on disk and stripped from child processes
