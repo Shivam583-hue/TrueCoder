@@ -1870,6 +1870,50 @@ state is the shape of a cross-site request forgery. The callback server binds
 loopback only; the first callback fixes the result, and closing or completing the
 flow releases the listener.
 
+A token that nobody renews is a token that works for an hour. The access token
+carries its own expiry and a refresh token, and the request path checks both
+before every turn: a credential inside the refresh margin is exchanged, adopted,
+and written back before the request goes out. One lock guards the exchange and the
+staleness check is repeated after acquiring it, so eight parallel turns produce one
+refresh rather than eight. A refresh that fails changes nothing; the request then
+fails on its own terms and is classified as a credential problem, which is a
+better outcome than a half-updated credential.
+
+Refreshing keeps what the exchange does not resend. Providers commonly omit the
+refresh token, the account claim, or both on a renewal, so each field falls back to
+the value already held rather than being cleared. Treating an omission as a
+deletion would work once and then log the user out.
+
+Not every credential is only a secret. A subscription token often has to say which
+account it speaks for, and often has to be sent somewhere other than the API host,
+because the subscription endpoint and the pay-as-you-go endpoint are different
+services behind the same brand. Both are therefore properties of the credential
+rather than of the provider: a credential can name headers it needs and an endpoint
+it belongs to, an API key names neither, and the client merges provider headers
+with credential headers and prefers a credential's endpoint over the provider's.
+The alternative, teaching the client about particular providers, puts a growing
+`if` ladder in the one place every request passes through.
+
+The account value is read from the token itself. The exchange response carries a
+JWT whose claims include it, so the configured claim name is looked up at exchange
+time, at the top level and one level down, and stored as a ready-to-send header.
+Nothing downstream needs to know which provider it came from. The JWT is decoded,
+not verified: it is our own token, read for a routing hint rather than trusted for
+authorisation, and it is bounded and failure-tolerant at every step because a
+malformed one must cost a header rather than the sign-in.
+
+The redirect port is configurable because registered clients demand it. An
+ephemeral port is the better default and is still the default, but a provider that
+registered `http://localhost:1455/auth/callback` accepts that URI and no other. A
+declared port that is already taken says so by number rather than quietly binding
+a different one, because silently succeeding here produces a redirect the provider
+will reject with an error that explains nothing.
+
+Providers are also allowed extra authorisation parameters, since real clients
+carry flags their own tooling sets. They are merged under the protocol's own
+parameters rather than over them, so a configuration file cannot replace the
+`client_id`, the challenge, or the state with something of its choosing.
+
 Tokens are stored per provider using the same permission discipline as the audit
 stores: mode `0600` on POSIX, and on Windows an explicit ACL granting the current
 user and LocalSystem, since mode bits express nothing there. The file is written
@@ -1904,6 +1948,17 @@ rather than holding a loopback port until it times out. The URL is safe to displ
 because the verifier is not in it; only the challenge travels, which is exactly the
 property PKCE was designed to give.
 
+A browser is not always reachable. Over SSH, in a container, or on a server there
+may be no handler to open and no way to receive a loopback redirect at all, and
+the copyable link does not help when the machine that would open it is not the
+machine running the flow. The device code grant answers that case: TrueCoder asks
+the provider for a short code, shows it with the page to enter it on, and polls
+until it is approved. The poll respects the interval the provider states, backs off
+further when told to slow down, and stops at the stated expiry rather than
+spinning; a declined request and an expired code are reported as the different
+things they are. It is offered only by providers that declare a device endpoint,
+because a third button that fails for everyone is worse than two that work.
+
 The link also lands in the transcript, not only in the dialog. A modal is the right
 place to wait and the wrong place to keep something: dismissing it, or finishing in
 the browser, takes the URL with it, and anyone who meant to open it on a different
@@ -1924,6 +1979,11 @@ that runs is the one that provider actually supports: a browser sign-in when an
 OAuth client is configured, and a prompt for an API key otherwise. Nothing is
 asked when a usable credential already exists, because a prompt that appears when
 it is not needed teaches people to dismiss prompts.
+
+Providers may also need headers of their own, so a provider can declare them and
+they are sent with every request. One header is refused: a configuration file
+cannot set `Authorization`, because that is the credential's to set and a file that
+could override it would be a quiet way to send requests as someone else.
 
 Configuring an OAuth client used to decide the question rather than widen it. The
 same providers that publish one also sell keys, and the two are not

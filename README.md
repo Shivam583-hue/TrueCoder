@@ -67,7 +67,8 @@ Coming soon...
 - **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit`, `/e` leaves `exit`, and `/mo` leaves `models` and `model`. Tab completes to the longest prefix the remaining matches share: `/q` becomes `/quit` outright, `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
 - **It asks for what the model needs** - pick a model whose provider you have no credential for and TrueCoder asks for it there and then, instead of accepting the choice and failing on your next message. A provider that accepts both a browser sign-in and an API key asks which you want, because one draws on a subscription and the other bills a key; a provider that accepts one goes straight there. A key is saved privately so you only type it once. A provider that will not list its models until you connect appears in `/models` as a row of its own, so connecting is something you can select rather than something you had to already know. `/login` opens the same choice, and `/logout` forgets both.
 - **Refusals you can act on** - when a provider turns a request down you get a sentence, not its wire format: what happened, the provider's own explanation, and the next step. A rejected credential opens the way to replace it, offering both ways again if the provider takes both; running out of credit offers neither, because a new credential does not buy anything. A failure that does not classify gets no invented advice.
-- **A sign-in you can complete anywhere** - the browser opens automatically, and the screen still shows the full link with a copy button (`c`) and an open-again button, so a headless box, a remote shell, or a machine with no default browser is not a dead end. The link is also written into the transcript, where it stays selectable after the dialog closes. The link is safe to show: only the PKCE challenge travels in it, never the verifier. Closing the screen cancels the attempt and releases the loopback port immediately.
+- **A sign-in you can complete anywhere** - the browser opens automatically, and the screen still shows the full link with a copy button (`c`) and an open-again button. Where no browser can be reached at all, a provider that offers a device code gets a third option: TrueCoder shows a short code and the page to enter it on, then polls at the interval the provider asks for. The link is also written into the transcript, where it stays selectable after the dialog closes. The link is safe to show: only the PKCE challenge travels in it, never the verifier. Closing the screen cancels the attempt and releases the loopback port immediately.
+- **Sessions that do not expire under you** - an OAuth token is renewed from its refresh token before the request that would have failed, once even when several turns notice at the same moment, and written back so a restart picks up the fresh one. A refresh that fails changes nothing rather than leaving a half-updated credential.
 - **Provider-aware authentication** - API keys can come from the environment or the masked prompt, while providers configured with OAuth use authorization code with PKCE. The verifier never leaves the process, the callback listens only on loopback, only the first callback determines the result, and a mismatched `state` is refused. Keys and tokens are written privately in your config directory, `0600` on POSIX and ACL-restricted to your user and LocalSystem on Windows. Stored credentials are never inserted into child environments, and inherited credential-shaped variables are stripped.
 - **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. With nobody watching, what may proceed is a configured decision rather than an accident: `--autonomy read-only|edit|full` sets a risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
 - **Scored, not vibed** - `truecoder --eval` runs a fixed set of tasks in throwaway workspaces and reports how many passed, so "did that change help?" has an answer. Each task asserts an outcome on disk rather than which calls were made.
@@ -166,6 +167,7 @@ TrueCoder/
 │   │   ├── configuration.py           # Strict providers.json, fail-closed
 │   │   ├── oauth.py                   # PKCE, the callback contract, and token lifetime
 │   │   ├── login.py                   # Loopback callback server and the browser round trip
+│   │   ├── device.py                  # Device code grant for machines with no browser
 │   │   ├── store.py                   # The remembered model selection
 │   │   ├── keys.py                    # Private API key storage, one entry per provider
 │   │   └── tokens.py                  # Private token storage, one entry per provider
@@ -397,11 +399,11 @@ Cross-platform behavior is exercised by the GitHub Actions matrix on Linux, macO
 
 | Signal                     |                                   Current value | Scope and interpretation                                                                                                                                     |
 | -------------------------- | ----------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Physical source lines      |                      **39,413** across 170 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
-| Execution subsystem share  |                    **19,435 lines**, 50% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 4,647, the agent is 2,889, providers are 1,698, MCP is 957, LSP is 951, checkpoints are 735, the client is 619, web is 655, sessions are 518, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
-| Test lines                 |                      **41,976** across 221 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.07 to 1.                                       |
-| Automated scenarios        |                      **2,382**, locally clean   | 2,056 unit, 235 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,372 pass and 13 Windows-only scenarios skip.                     |
-| Unit suite                 |                  **2,056 passing in 23.7 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
+| Physical source lines      |                      **40,018** across 171 files | Python under `src/truecoder`, excluding tests, the sandbox image, and generated packaging metadata.                                                           |
+| Execution subsystem share  |                    **19,435 lines**, 50% of src | The execution control plane, audit store, and platform backends. Tools are 4,188 lines, the TUI is 4,798, the agent is 2,889, providers are 2,107, MCP is 957, LSP is 951, checkpoints are 735, the client is 664, web is 655, sessions are 518, JSON-RPC is 424, memory is 407, hooks are 402, mutation is 281, evaluation is 245, the CLI is 184, and planning is 146. |
+| Test lines                 |                      **42,973** across 226 files | The complete Python test tree, including fakes and child-process helpers; a test-to-source ratio of roughly 1.07 to 1.                                       |
+| Automated scenarios        |                      **2,451**, locally clean   | 2,114 unit, 246 integration, 41 contract, 28 end-to-end, and 22 sandbox scenarios. On Linux, 2,441 pass and 13 Windows-only scenarios skip.                     |
+| Unit suite                 |                  **2,114 passing in 13.6 seconds** | Mostly pure logic with injected boundaries; platform-specific filesystem and native-boundary cases are explicitly scoped to their supported hosts.           |
 | Backend contract suite     |                      **41 scenarios**, 4 adapters | One reusable contract applied to fake, POSIX, container, and Windows Job Object backends. Linux runs 31 and skips the 10 Windows-host scenarios.              |
 | End-to-end suite           |                                 **28 passing** | A scripted model drives a real agent with real tools against a real workspace, asserting what changed on disk, which backend ran, and that results reached the model intact. |
 | Adversarial sandbox suite  |                                 **22 passing** | Run against real Docker: host secret unreadable, read-only enforcement, network denial, capability drop, memory, PID, and CPU limits, and no container or file leaks. |
@@ -737,11 +739,18 @@ comes from and, when the provider publishes one, how to sign in with a browser:
     {
       "name": "acme",
       "base_url": "https://api.acme.example/v1",
+      "headers": { "acme-beta": "long-context-2026" },
       "oauth": {
         "client_id": "your-registered-client-id",
         "authorize_url": "https://acme.example/oauth/authorize",
         "token_url": "https://acme.example/oauth/token",
-        "scopes": ["models.read", "chat"]
+        "device_url": "https://acme.example/oauth/device",
+        "scopes": ["models.read", "chat"],
+        "redirect_port": 1455,
+        "account_claim": "acme_account_id",
+        "account_header": "Acme-Account-Id",
+        "api_base_url": "https://subscription.acme.example/v1",
+        "extra_parameters": { "originator": "truecoder" }
       }
     }
   ]
@@ -775,6 +784,19 @@ that happens when you choose one of its models.
 If a provider later rejects the credential you already have, the same prompt
 opens with the reason on it, so a key that was rotated or revoked is replaced
 where you noticed the problem rather than by editing a file and restarting.
+
+Everything past `client_id`, `authorize_url`, and `token_url` is optional and
+exists because registered clients rarely fit the bare protocol. `redirect_port`
+pins the loopback port when the provider registered one exact redirect URI;
+leaving it out picks any free port, which is the better default when the provider
+allows it. `device_url` adds the code-entry option for machines with no browser.
+`account_claim` and `account_header` name a value inside the returned token and
+the header to send it as, for providers that route by account. `api_base_url`
+sends signed-in traffic to the subscription endpoint while API keys keep using
+`base_url`. `extra_parameters` adds flags to the authorization URL; they are
+merged underneath the protocol's own, so none of them can replace the `client_id`,
+the PKCE challenge, or the state. A provider's `headers` are sent with every
+request, and `Authorization` is refused there because the credential sets it.
 
 The `client_id` is yours to supply. TrueCoder ships no registered client for any
 provider, because whether a given provider permits a third-party client to use a
