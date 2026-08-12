@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)](#prerequisites)
 [![Ruff](https://img.shields.io/badge/ruff-check%20passing-2ea44f?style=flat-square&logo=ruff&logoColor=white)](#available-commands-and-scripts)
 [![Sandbox](https://img.shields.io/badge/sandbox-Linux%20%C2%B7%20Docker%20certified-2496ed?style=flat-square&logo=docker&logoColor=white)](#container-sandbox-image)
-[![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](#testing)
+[![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](CONTRIBUTING.md#tests-and-checks)
 
 TrueCoder is a terminal-native Python coding-agent runtime that reads, searches, edits, and runs code inside one project.
 It ships a Textual terminal interface, direct OpenAI access through the Responses API, native Anthropic Messages and Google Gemini transports, an OpenAI-compatible Chat Completions client, persistent SQLite sessions, fifteen approval-gated tools plus any MCP servers you configure, a task planner, language-server code intelligence, workspace checkpoints, durable memory, user-configured hooks, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
@@ -28,7 +28,6 @@ When a command must be isolated instead, the certified sandbox profile runs it i
 - [Environment variables](#environment-variables)
 - [Container sandbox image](#container-sandbox-image)
 - [Available commands and scripts](#available-commands-and-scripts)
-- [Testing](#testing)
 - [Runtime data and storage](#runtime-data-and-storage)
 - [Known limitations](#known-limitations)
 - [Contributing](#contributing)
@@ -109,6 +108,7 @@ TrueCoder/
 ├── .env.example                       # LLM provider template
 ├── .gitignore
 ├── AGENTS.md                          # Project instructions injected into the system prompt
+├── CONTRIBUTING.md                    # Development workflow and review expectations
 ├── README.md
 ├── pyproject.toml                     # Package metadata, dependencies, and the console script
 │
@@ -985,60 +985,6 @@ Update `container/image.lock` in the same commit, because discovery refuses an i
 | `ruff check src tests container`                     | Lint source, tests, and the image entrypoint                    |
 | `docker build -t truecoder-exec:1 container/`        | Build the execution sandbox image                               |
 
-## Testing
-
-The suite is written in plain `unittest` with `IsolatedAsyncioTestCase`, so no test runner beyond the standard library is required.
-
-```bash
-python -m unittest discover -s tests -t .
-```
-
-Current inventory: **2,520 scenarios**: 2,164 unit, 265 integration, 41
-contract, 28 end-to-end, and 22 sandbox. Host-specific cases skip only where
-their native boundary is unavailable; the Windows job runs the Job Object cases
-on `windows-latest`.
-
-The five suites prove different classes of guarantee, and they are kept separate on purpose.
-
-### Unit, 2,164 scenarios
-
-Mostly pure logic behind injected boundaries, plus narrowly scoped platform fixtures for filesystem and native-boundary behavior.
-`DiscoveryIO` is modeled rather than measured, so these scenarios describe Linux, macOS, Windows, and unknown hosts without depending on the machine running them.
-Coverage includes policy classification and limit tightening, environment allowlists and secret removal, bounded output with property-style chunk-boundary and Unicode-split variation, capability matching, lifecycle transitions, terminal claim arbitration, result conversion, audit models, codecs, permissions, recovery, every filesystem tool's security boundary, the shell adapter's argument contract, agent state, turn selection, and startup composition. Newer areas are covered the same way: unified diff generation and its bounds, URL and public-address policy with the SSRF refusals, JSON-RPC framing and the language-server client against a real child process, checkpoint capture and restore against real repositories, tool-result shortening, rolling compaction, and loop detection.
-
-### Contract, 41 scenarios
-
-One reusable backend contract applied to four adapters: fake, POSIX, container, and Windows Job Object.
-It encodes the invariants that make backend ownership safe, including exact resource identity on successful start, cleanup before raising on a failed registration, idempotent terminate and wait, a single output owner reaching end of stream, and nonzero exit treated as ordinary backend data.
-A backend must pass this suite before the execution service can register it.
-Host-specific adapters skip only when their operating-system boundary is unavailable; the CI matrix runs POSIX on Linux and macOS and the native Job Object contract on Windows.
-
-### Integration, 265 scenarios
-
-Real processes, real SQLite, and the real Textual application.
-This suite covers the POSIX supervisor's gate and lifetime pipe, termination escalation and first-reason preservation, environment filtering observed from inside a child, recovery against a live exact resource, audit routes for every terminal outcome, host discovery on the actual machine, OAuth loopback and credential flows, the session store and manager, the TUI, and the shell tool driven through the agent boundary including outer cancellation.
-On Windows it also exercises real Job Object descendant cleanup and process
-limits, plus a full timeout through the execution service and durable audit.
-It also covers the reviewable-mutation diff in an approval card, the evolving plan card, and the checkpoint browser and its restore confirmation. It also asserts the interface lifecycle gate: a card evolves only from typed stages, stop cancels one execution by id rather than the turn, a second stop does not cancel twice, a rapid completion never leaves a card running, and shutdown resolves an awaited approval and cancels every active execution.
-
-### End-to-end, 28 scenarios
-
-A scripted model drives a real agent with real tools against throwaway
-workspaces. These scenarios assert the outcome on disk, the backend that ran,
-and that tool results reached the model intact rather than coupling the score to
-one exact sequence of calls.
-
-### Sandbox, 22 scenarios
-
-Adversarial checks against real Docker.
-These are the claims the sandbox makes, tested rather than asserted: a host secret outside the workspace is unreadable, `workspace-read` cannot mutate the host tree, `workspace-write` is refused when the host denies it, the root filesystem is read-only, only approved tmpfs locations are writable, network denial blocks a real external canary, no runtime socket is visible, every capability is dropped, no-new-privileges is active, memory exhaustion normalizes to `memory_limit`, the PID limit blocks fork growth, a CPU-bound process is stopped at its aggregate budget, stdout and stderr stay separate and raw, the private environment file never survives the run, a signal-ignoring command is still removed, a registration failure removes the stopped container, the container is created stopped before registration, and recovery removes only the exact labeled container.
-
-This suite requires Docker and the locally built image whose digest matches `container/image.lock`.
-
-### Continuous integration
-
-`.github/workflows/tests.yml` runs lint plus the unit, contract, integration, and end-to-end suites on Linux; builds and locks the sandbox image before running the adversarial suite; and runs the same four non-sandbox suites on both `macos-latest` and `windows-latest`.
-
 ## Runtime data and storage
 
 TrueCoder keeps its state out of your repository, with one deliberate exception.
@@ -1117,16 +1063,8 @@ Empty sessions are temporary placeholders and are removed automatically when you
 
 ## Contributing
 
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the authoritative design reference.
-It ends with the invariant list this codebase is built to hold, and a change that breaks one of those invariants needs a deliberate argument rather than a passing test.
-
-The rules that matter most:
-
-- Dependencies point toward the core. Tools must not depend on the agent, client, or UI, and the UI must not contain agent logic.
-- Provider configuration, credentials, and model discovery stay in `providers`; wire-format translation stays in `client`.
-- A new backend must pass the shared contract suite before it can be registered.
-- Anything that changes what a command may do must be reflected in policy, the approval fingerprint, and the audit record together.
-- Rebuilding the sandbox image and updating `container/image.lock` belong in the same commit.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, architecture
+rules, test selection, sandbox verification, and pull request expectations.
 
 ## Security
 
