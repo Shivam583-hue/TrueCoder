@@ -10,9 +10,8 @@ testing the guarantee your change affects.
 
 ## Before you start
 
-- This repository does not currently include a license file. Default copyright
-  applies and no general reuse rights are granted; this contribution guide does
-  not change that. See the README's [license notice](README.md#license).
+- Contributions are accepted under the repository's [MIT License](LICENSE).
+  Submit only work you have the right to license under those terms.
 - Read the [architecture reference](docs/ARCHITECTURE.md), especially its
   invariant list, before changing execution, approval, audit, credential, or
   filesystem behavior. A change that breaks an invariant needs a deliberate

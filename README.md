@@ -1009,4 +1009,4 @@ The POSIX and Windows local backends are process-management boundaries, not isol
 
 ## License
 
-This repository does not currently include a license file, so default copyright applies and no usage rights are granted.
+TrueCoder is available under the [MIT License](LICENSE).
