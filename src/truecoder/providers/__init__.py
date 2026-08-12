@@ -87,6 +87,15 @@ from truecoder.providers.openai import (
     is_openai_provider,
     openai_provider,
 )
+from truecoder.providers.registry import (
+    CUSTOM_PROVIDER_DISPLAY_NAME,
+    CUSTOM_PROVIDER_NAME,
+    OPENROUTER_API_BASE_URL,
+    OPENROUTER_DISPLAY_NAME,
+    OPENROUTER_PROVIDER_NAME,
+    openrouter_provider,
+    provider_from_url,
+)
 from truecoder.providers.store import (
     SettingsError,
     StoredSelection,
@@ -108,6 +117,8 @@ from truecoder.providers.tokens import (
 
 __all__ = [
     "CACHE_TTL_SECONDS",
+    "CUSTOM_PROVIDER_DISPLAY_NAME",
+    "CUSTOM_PROVIDER_NAME",
     "DEFAULT_PROVIDER_NAME",
     "MAX_MODELS",
     "OPENAI_ACCOUNT_CLAIM",
@@ -124,6 +135,9 @@ __all__ = [
     "OPENAI_REDIRECT_PATH",
     "OPENAI_REDIRECT_PORT",
     "OPENAI_TOKEN_URL",
+    "OPENROUTER_API_BASE_URL",
+    "OPENROUTER_DISPLAY_NAME",
+    "OPENROUTER_PROVIDER_NAME",
     "ApiKey",
     "CallbackServer",
     "CatalogError",
@@ -172,6 +186,7 @@ __all__ = [
     "merge_models",
     "open_in_browser",
     "openai_provider",
+    "openrouter_provider",
     "parse_device_grant",
     "parse_keys",
     "parse_models",
@@ -180,6 +195,7 @@ __all__ = [
     "parse_token_response",
     "parse_tokens",
     "poll_device_grant",
+    "provider_from_url",
     "read_cache",
     "read_callback",
     "refresh_token",

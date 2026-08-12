@@ -11,10 +11,14 @@ MAX_MODEL_NAME_CHARACTERS: Final = 120
 DEFAULT_PROVIDER_NAME: Final = "default"
 MAX_DISPLAY_NAME_CHARACTERS: Final = 60
 MAX_HEADERS: Final = 16
+MAX_ENV_NAMES: Final = 16
 MAX_HEADER_NAME_CHARACTERS: Final = 64
 MAX_HEADER_VALUE_CHARACTERS: Final = 1024
 RESERVED_HEADERS: Final = frozenset({"authorization"})
 WIRE_APIS: Final = frozenset({"chat", "responses"})
+ADAPTERS: Final = frozenset(
+    {"anthropic", "google", "openai", "openai-compatible"}
+)
 
 
 class CredentialError(ValueError):
@@ -105,6 +109,8 @@ class Provider:
     header_pairs: tuple[tuple[str, str], ...] = ()
     display_name: str = ""
     wire_api: str = "chat"
+    adapter: str = "openai-compatible"
+    env_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -119,6 +125,17 @@ class Provider:
             raise CredentialError("oauth must be an OAuthClient or None")
         if self.wire_api not in WIRE_APIS:
             raise CredentialError(f"wire_api must be one of {sorted(WIRE_APIS)}")
+        if self.adapter not in ADAPTERS:
+            raise CredentialError(f"adapter must be one of {sorted(ADAPTERS)}")
+        if not isinstance(self.env_names, tuple):
+            raise CredentialError("env_names must be a tuple")
+        if len(self.env_names) > MAX_ENV_NAMES:
+            raise CredentialError(f"at most {MAX_ENV_NAMES} environment names are supported")
+        if any(
+            not isinstance(name, str) or not name.strip() or len(name) > 100
+            for name in self.env_names
+        ):
+            raise CredentialError("environment names must be short non-empty strings")
         validate_headers(self.header_pairs)
 
     @property
@@ -163,6 +180,12 @@ class ModelInfo:
     @property
     def label(self) -> str:
         return self.display_name or self.identifier
+
+    @property
+    def qualified_identifier(self) -> str:
+        if self.provider == DEFAULT_PROVIDER_NAME:
+            return self.identifier
+        return f"{self.provider}/{self.identifier}"
 
     @property
     def context_label(self) -> str:
@@ -239,14 +262,23 @@ def settings_from_environment(
     if not model:
         raise CredentialError("MODEL must be set in the environment or a .env file")
 
-    raw_key = os.getenv("API_KEY", "").strip()
     base_url = os.getenv("BASE_URL", "").strip() or None
     if base_url is None:
         from truecoder.providers.openai import openai_provider
 
         provider = openai_provider()
     else:
-        provider = Provider(name=DEFAULT_PROVIDER_NAME, base_url=base_url)
+        from truecoder.providers.registry import provider_from_url
+
+        provider = provider_from_url(base_url)
+    raw_key = next(
+        (
+            os.getenv(name, "").strip()
+            for name in (*provider.env_names, "API_KEY")
+            if os.getenv(name, "").strip()
+        ),
+        "",
+    )
     return SessionSettings(
         provider=provider,
         credential=ApiKey(raw_key) if raw_key else None,
@@ -280,7 +312,7 @@ def resolve_settings() -> SessionSettings:
         settings.provider = chosen
 
     remembered = stored_credential(settings.provider.name)
-    if remembered is None and settings.provider.name == "openai":
+    if remembered is None:
         from truecoder.providers.keys import load_keys
 
         remembered = load_keys().get(DEFAULT_PROVIDER_NAME)

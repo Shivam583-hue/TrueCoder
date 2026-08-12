@@ -169,6 +169,33 @@ class EnvironmentTests(unittest.TestCase):
 
         self.assertIsNone(settings.provider.oauth)
 
+    def test_an_openrouter_endpoint_gets_its_real_provider_identity(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "MODEL": "openai/gpt-5.2",
+                "BASE_URL": "https://openrouter.ai/api/v1",
+                "OPENROUTER_API_KEY": "or-key",
+            },
+            clear=True,
+        ):
+            settings = settings_from_environment()
+
+        self.assertEqual(settings.provider.name, "openrouter")
+        self.assertEqual(settings.provider.label, "OpenRouter")
+        self.assertEqual(settings.credential, ApiKey("or-key"))
+
+    def test_an_unknown_endpoint_is_visible_as_a_custom_provider(self):
+        with patch.dict(
+            "os.environ",
+            {"MODEL": "m", "BASE_URL": "https://router.invalid/v1"},
+            clear=True,
+        ):
+            settings = settings_from_environment()
+
+        self.assertEqual(settings.provider.name, "custom")
+        self.assertEqual(settings.provider.label, "Custom provider")
+
     def test_a_missing_model_is_refused_by_name(self):
         with (
             patch.dict("os.environ", {"API_KEY": "k"}, clear=True),
@@ -282,6 +309,14 @@ class MatchTests(unittest.TestCase):
 
     def test_an_empty_query_matches_everything(self):
         self.assertTrue(ModelInfo(identifier="x").matches("  "))
+
+    def test_a_model_has_an_unambiguous_provider_qualified_identity(self):
+        model = ModelInfo(identifier="openai/gpt-5.2", provider="openrouter")
+
+        self.assertEqual(
+            model.qualified_identifier,
+            "openrouter/openai/gpt-5.2",
+        )
 
 
 class CacheTests(unittest.TestCase):

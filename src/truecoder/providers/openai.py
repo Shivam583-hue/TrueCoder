@@ -49,6 +49,8 @@ def openai_provider(*, name: str = OPENAI_PROVIDER_NAME) -> Provider:
         oauth=OPENAI_OAUTH_CLIENT,
         header_pairs=(("originator", "truecoder"), ("version", "0.1.0")),
         wire_api="responses",
+        adapter="openai",
+        env_names=("OPENAI_API_KEY",),
     )
 
 
