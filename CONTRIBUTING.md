@@ -10,6 +10,8 @@ testing the guarantee your change affects.
 
 ## Before you start
 
+- Read and follow the project [Code of Conduct](CODE_OF_CONDUCT.md) in every
+  project space and interaction.
 - Contributions are accepted under the repository's [MIT License](LICENSE).
   Submit only work you have the right to license under those terms.
 - Read the [architecture reference](docs/ARCHITECTURE.md), especially its

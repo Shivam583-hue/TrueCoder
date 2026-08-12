@@ -34,6 +34,7 @@ When a command must be isolated instead, the certified sandbox profile runs it i
 - [Known limitations](#known-limitations)
 - [Changelog](#changelog)
 - [Contributing](#contributing)
+- [Code of Conduct](#code-of-conduct)
 - [Security](#security)
 - [License](#license)
 
@@ -998,6 +999,11 @@ future release notes.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, architecture
 rules, test selection, sandbox verification, and pull request expectations.
+
+## Code of Conduct
+
+Participation in TrueCoder is governed by the
+[Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Security
 
