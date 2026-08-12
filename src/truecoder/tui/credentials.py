@@ -55,8 +55,7 @@ class CredentialChoiceScreen(ModalScreen["str | None"]):
                     yield Button("Enter a code", id="choose-device")
                 yield Button("API key", id="choose-key")
             yield Static(
-                "Either one works. A browser sign-in uses your existing "
-                "subscription; a key bills the account it belongs to.",
+                self._method_note(),
                 classes="credential-note",
                 markup=False,
             )
@@ -69,7 +68,16 @@ class CredentialChoiceScreen(ModalScreen["str | None"]):
         who = provider_label(self.provider)
         if self.model:
             return f"{self.model} needs {who} connected. Choose how."
+        if self.device:
+            return f"{who} accepts browser, code, or API-key sign-in. Choose one."
         return f"{who} accepts a browser sign-in or an API key. Choose one."
+
+    def _method_note(self) -> str:
+        sign_in = "Browser and code sign-in use" if self.device else "Browser sign-in uses"
+        return (
+            f"{sign_in} your existing subscription; an API key bills "
+            "the account it belongs to."
+        )
 
     def on_mount(self) -> None:
         self.query_one("#choose-oauth", Button).focus()

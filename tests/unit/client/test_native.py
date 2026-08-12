@@ -6,8 +6,11 @@ from unittest.mock import patch
 
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.native import (
+    MAX_SSE_EVENT_CHARACTERS,
+    NativeProviderError,
     _anthropic_stream,
     _google_stream,
+    _sse,
     anthropic_request,
     google_request,
 )
@@ -86,6 +89,14 @@ class RequestTranslationTests(unittest.TestCase):
 
 
 class StreamTranslationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_an_oversized_stream_event_is_refused(self):
+        class Lines:
+            async def __aiter__(self):
+                yield "data: " + "x" * (MAX_SSE_EVENT_CHARACTERS + 1)
+
+        with self.assertRaises(NativeProviderError):
+            _ = [event async for event in _sse(Lines())]
+
     async def test_anthropic_streams_text_tools_and_usage(self):
         response = _Lines(
             [

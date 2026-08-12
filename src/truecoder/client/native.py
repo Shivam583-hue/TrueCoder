@@ -19,6 +19,8 @@ from truecoder.tools.base import ToolCall
 ANTHROPIC_VERSION: Final = "2023-06-01"
 ANTHROPIC_MAX_TOKENS: Final = 16384
 REQUEST_TIMEOUT_SECONDS: Final = 300.0
+MAX_NATIVE_RESPONSE_BYTES: Final = 4 * 1024 * 1024
+MAX_SSE_EVENT_CHARACTERS: Final = 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +33,8 @@ class NativeProviderError(RuntimeError):
             error = self.body.get("error")
             if isinstance(error, dict) and isinstance(error.get("message"), str):
                 return error["message"]
+        if isinstance(self.body, str) and self.body.strip():
+            return self.body[:1000]
         return f"provider returned {self.status_code}"
 
 
@@ -257,6 +261,8 @@ async def _sse(lines: AsyncIterator[str]) -> AsyncGenerator[dict[str, Any], None
         value = line[5:].strip()
         if not value or value == "[DONE]":
             continue
+        if len(value) > MAX_SSE_EVENT_CHARACTERS:
+            raise NativeProviderError(502, "the provider sent an oversized event")
         try:
             event = json.loads(value)
         except ValueError:
@@ -425,11 +431,29 @@ async def _google_stream(response) -> AsyncGenerator[StreamEvent, None]:
 
 async def _error(response) -> NativeProviderError:
     raw = await response.aread()
+    if len(raw) > MAX_NATIVE_RESPONSE_BYTES:
+        return NativeProviderError(
+            response.status_code,
+            "the provider returned an oversized error",
+        )
     try:
         body = json.loads(raw.decode("utf-8", errors="replace"))
     except ValueError:
         body = raw.decode("utf-8", errors="replace")
     return NativeProviderError(response.status_code, body)
+
+
+def _response_payload(response) -> dict[str, Any]:
+    raw = response.content
+    if len(raw) > MAX_NATIVE_RESPONSE_BYTES:
+        raise NativeProviderError(502, "the provider returned too much data")
+    try:
+        payload = json.loads(raw.decode("utf-8", errors="replace"))
+    except ValueError:
+        raise NativeProviderError(502, "the provider did not return JSON") from None
+    if not isinstance(payload, dict):
+        raise NativeProviderError(502, "the provider did not return an object")
+    return payload
 
 
 async def anthropic_completion(
@@ -467,8 +491,8 @@ async def anthropic_completion(
         response = await client.post(f"{root}/messages", headers=headers, json=request)
         if not response.is_success:
             raise await _error(response)
-        payload = response.json()
-        content = payload.get("content", []) if isinstance(payload, dict) else []
+        payload = _response_payload(response)
+        content = payload.get("content", [])
         text = "".join(
             item.get("text", "")
             for item in content
@@ -486,7 +510,7 @@ async def anthropic_completion(
             and isinstance(item.get("id"), str)
             and isinstance(item.get("name"), str)
         )
-        raw_usage = payload.get("usage", {}) if isinstance(payload, dict) else {}
+        raw_usage = payload.get("usage", {})
         yield StreamEvent(
             type=EventType.MESSAGE_COMPLETE,
             text_delta=TextDelta(text) if text else None,
@@ -538,7 +562,7 @@ async def google_completion(
         response = await client.post(url, headers=headers, json=request)
         if not response.is_success:
             raise await _error(response)
-        payload = response.json()
+        payload = _response_payload(response)
         parts, finish_reason = _google_parts(payload)
         text = "".join(
             part.get("text", "")
