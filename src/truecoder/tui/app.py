@@ -428,6 +428,7 @@ class TrueCoderApp(App[None]):
                 model_count=len(entry.models),
             )
             for entry in catalog.slices
+            if entry.provider.is_supported
         )
         self.push_screen(ProviderPickerScreen(choices), self._apply_provider_choice)
 
@@ -460,7 +461,8 @@ class TrueCoderApp(App[None]):
         slices = tuple(
             entry
             for entry in catalog.slices
-            if not provider_name or entry.provider.name == provider_name
+            if entry.provider.is_supported
+            and (not provider_name or entry.provider.name == provider_name)
         )
         credentials = catalog.credentials
         models = merge_models(slices)

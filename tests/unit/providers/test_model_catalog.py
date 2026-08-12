@@ -167,6 +167,38 @@ class ModelsDevTests(unittest.IsolatedAsyncioTestCase):
             ("OPENROUTER_API_KEY",),
         )
 
+    def test_native_providers_receive_their_standard_endpoints(self):
+        payload = {
+            "google": {
+                "name": "Google",
+                "npm": "@ai-sdk/google",
+                "env": ["GOOGLE_GENERATIVE_AI_API_KEY"],
+                "models": {},
+            }
+        }
+
+        provider = parse_models_dev(payload)[0].provider
+
+        self.assertEqual(provider.adapter, "google")
+        self.assertEqual(
+            provider.base_url,
+            "https://generativelanguage.googleapis.com/v1beta",
+        )
+
+    def test_cloud_sdk_providers_are_not_presented_as_compatible(self):
+        payload = {
+            "bedrock": {
+                "name": "Amazon Bedrock",
+                "npm": "@ai-sdk/amazon-bedrock",
+                "env": ["AWS_ACCESS_KEY_ID"],
+                "models": {},
+            }
+        }
+
+        provider = parse_models_dev(payload)[0].provider
+
+        self.assertFalse(provider.is_supported)
+
     def test_deprecated_models_are_not_offered(self):
         slices = parse_models_dev(MODELS_DEV)
         openai = next(item for item in slices if item.provider.name == "openai")

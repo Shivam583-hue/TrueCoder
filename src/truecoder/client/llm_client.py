@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from dotenv import load_dotenv
+from httpx import TimeoutException, TransportError
 from openai import (
     APIConnectionError,
     APIError,
@@ -21,6 +22,7 @@ from truecoder.client.failures import (
     timed_out,
     unreachable,
 )
+from truecoder.client.native import NativeProviderError, native_completion
 from truecoder.client.response import (
     EventType,
     StreamEvent,
@@ -162,9 +164,12 @@ class LLMClient:
         await self.refresh_credential()
         settings = self.settings
         model = settings.model
-        client = self.get_client()
+        native = settings.provider.adapter in {"anthropic", "google"}
+        client = None if native else self.get_client()
 
-        if settings.provider.wire_api == "responses":
+        if native:
+            request = {}
+        elif settings.provider.wire_api == "responses":
             request = responses_request(model, messages, tools)
         elif tools:
             request = {
@@ -182,7 +187,23 @@ class LLMClient:
             stream_started = False
 
             try:
-                if stream:
+                if native:
+                    assert settings.credential is not None
+                    async for event in native_completion(
+                        settings.provider,
+                        settings.credential,
+                        model,
+                        messages,
+                        tools,
+                        stream=stream,
+                    ):
+                        stream_started = (
+                            stream_started
+                            or event.type != EventType.MESSAGE_COMPLETE
+                        )
+                        yield event
+                elif stream:
+                    assert client is not None
                     events = (
                         stream_response(client, request)
                         if settings.provider.wire_api == "responses"
@@ -192,6 +213,7 @@ class LLMClient:
                         stream_started = True
                         yield event
                 else:
+                    assert client is not None
                     if settings.provider.wire_api == "responses":
                         yield await non_stream_response(client, request)
                     else:
@@ -203,6 +225,16 @@ class LLMClient:
                     continue
                 yield self._failure_event(error, partial=stream_started)
                 return
+            except NativeProviderError as error:
+                if (
+                    error.status_code == 429
+                    and not stream_started
+                    and attempt < self._max_retries
+                ):
+                    await asyncio.sleep(2**attempt)
+                    continue
+                yield self._failure_event(error, partial=stream_started)
+                return
             except APITimeoutError:
                 if not stream_started and attempt < self._max_retries:
                     await asyncio.sleep(2**attempt)
@@ -210,6 +242,26 @@ class LLMClient:
                 yield self._reported(timed_out(self._provider_name(), partial=stream_started))
                 return
             except APIConnectionError as error:
+                if not stream_started and attempt < self._max_retries:
+                    await asyncio.sleep(2**attempt)
+                    continue
+                yield self._reported(
+                    unreachable(
+                        self._provider_name(),
+                        str(error),
+                        partial=stream_started,
+                    )
+                )
+                return
+            except TimeoutException:
+                if not stream_started and attempt < self._max_retries:
+                    await asyncio.sleep(2**attempt)
+                    continue
+                yield self._reported(
+                    timed_out(self._provider_name(), partial=stream_started)
+                )
+                return
+            except TransportError as error:
                 if not stream_started and attempt < self._max_retries:
                     await asyncio.sleep(2**attempt)
                     continue

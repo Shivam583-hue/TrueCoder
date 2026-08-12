@@ -18,7 +18,7 @@ MAX_HEADER_VALUE_CHARACTERS: Final = 1024
 RESERVED_HEADERS: Final = frozenset({"authorization"})
 WIRE_APIS: Final = frozenset({"chat", "responses"})
 ADAPTERS: Final = frozenset(
-    {"anthropic", "google", "openai", "openai-compatible"}
+    {"anthropic", "google", "openai", "openai-compatible", "unsupported"}
 )
 
 
@@ -150,6 +150,10 @@ class Provider:
     @property
     def label(self) -> str:
         return self.display_name or self.name
+
+    @property
+    def is_supported(self) -> bool:
+        return self.adapter != "unsupported"
 
     @property
     def models_url(self) -> str:

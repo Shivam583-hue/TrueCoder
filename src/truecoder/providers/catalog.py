@@ -31,6 +31,32 @@ MAX_PROVIDERS: Final = 256
 EMPTY_CATALOG_REASON: Final = "the provider listed no models"
 MODELS_DEV_URL: Final = "https://models.opencode.ai/api.json"
 
+_DEFAULT_PROVIDER_ENDPOINTS: Final = {
+    "anthropic": "https://api.anthropic.com/v1",
+    "cerebras": "https://api.cerebras.ai/v1",
+    "deepinfra": "https://api.deepinfra.com/v1/openai",
+    "google": "https://generativelanguage.googleapis.com/v1beta",
+    "groq": "https://api.groq.com/openai/v1",
+    "mistral": "https://api.mistral.ai/v1",
+    "perplexity": "https://api.perplexity.ai",
+    "togetherai": "https://api.together.xyz/v1",
+    "venice": "https://api.venice.ai/api/v1",
+    "xai": "https://api.x.ai/v1",
+}
+_UNSUPPORTED_PACKAGES: Final = frozenset(
+    {
+        "@ai-sdk/amazon-bedrock",
+        "@ai-sdk/azure",
+        "@ai-sdk/gateway",
+        "@ai-sdk/google-vertex",
+        "@ai-sdk/google-vertex/anthropic",
+        "@ai-sdk/vercel",
+        "@jerome-benoit/sap-ai-provider-v2",
+        "ai-gateway-provider",
+        "gitlab-ai-provider",
+    }
+)
+
 _CONTEXT_KEYS: Final = (
     "context",
     "context_length",
@@ -94,6 +120,8 @@ def _models_dev_adapter(value: object) -> str:
         return "google"
     if package == "@ai-sdk/openai":
         return "openai"
+    if package in _UNSUPPORTED_PACKAGES:
+        return "unsupported"
     return "openai-compatible"
 
 
@@ -101,7 +129,9 @@ def _models_dev_provider(identifier: str, entry: dict[str, Any]) -> Provider:
     from truecoder.providers.openai import openai_provider
     from truecoder.providers.registry import openrouter_provider
 
-    api = _bounded(entry.get("api"), 2048) or None
+    api = _bounded(entry.get("api"), 2048) or _DEFAULT_PROVIDER_ENDPOINTS.get(
+        identifier
+    )
     env = entry.get("env")
     env_names = tuple(
         _bounded(name, 100)
