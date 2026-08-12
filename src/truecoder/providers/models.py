@@ -302,6 +302,32 @@ def stored_credential(provider: str) -> Credential | None:
     return load_keys().get(provider)
 
 
+def environment_credential(provider: Provider) -> Credential | None:
+    raw = next(
+        (
+            os.getenv(name, "").strip()
+            for name in provider.env_names
+            if os.getenv(name, "").strip()
+        ),
+        "",
+    )
+    return ApiKey(raw) if raw else None
+
+
+def credential_for_provider(
+    provider: Provider,
+    active: SessionSettings | None = None,
+) -> Credential | None:
+    if (
+        active is not None
+        and active.provider.name == provider.name
+        and active.credential is not None
+        and active.credential.is_usable
+    ):
+        return active.credential
+    return stored_credential(provider.name) or environment_credential(provider)
+
+
 def resolve_settings() -> SessionSettings:
     from truecoder.providers.configuration import selectable_providers
     from truecoder.providers.store import load_selection
@@ -314,10 +340,22 @@ def resolve_settings() -> SessionSettings:
         for provider in selectable_providers(settings.provider)
     }
     chosen = configured.get(stored.provider or settings.provider.name)
+    if chosen is None and stored.provider:
+        from truecoder.providers.catalog import models_dev_path, read_models_dev_cache
+
+        cached = read_models_dev_cache(models_dev_path(), allow_stale=True) or ()
+        chosen = next(
+            (
+                entry.provider
+                for entry in cached
+                if entry.provider.name == stored.provider
+            ),
+            None,
+        )
     if chosen is not None:
         settings.provider = chosen
 
-    remembered = stored_credential(settings.provider.name)
+    remembered = credential_for_provider(settings.provider)
     if remembered is None:
         from truecoder.providers.keys import load_keys
 

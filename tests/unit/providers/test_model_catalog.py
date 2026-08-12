@@ -17,6 +17,7 @@ from truecoder.providers import (
     catalog_path_for,
     catalog_problem,
     catalog_slug,
+    discover_catalog,
     fetch_models,
     load_catalog,
     load_models_dev,
@@ -191,6 +192,67 @@ class ModelsDevTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(slices)
         self.assertEqual(len(slices or ()), 3)
+
+    async def test_discovery_uses_directory_models_without_live_provider_calls(self):
+        settings = type(
+            "Settings",
+            (),
+            {
+                "provider": openai_provider(),
+                "credential": ApiKey("sk-openai"),
+            },
+        )()
+        directory = parse_models_dev(MODELS_DEV)
+
+        with (
+            patch(
+                "truecoder.providers.catalog.load_models_dev",
+                return_value=directory,
+            ),
+            patch(
+                "truecoder.providers.configuration.load_providers",
+                return_value=(),
+            ),
+            patch("truecoder.providers.catalog.load_catalog") as live,
+        ):
+            catalog = await discover_catalog(settings)
+
+        live.assert_not_called()
+        self.assertIn("openrouter", {item.provider.name for item in catalog.slices})
+
+    async def test_oauth_replaces_directory_models_with_its_live_catalog(self):
+        token = OAuthToken(access_token="at", provider="openai")
+        settings = type(
+            "Settings",
+            (),
+            {"provider": openai_provider(), "credential": token},
+        )()
+        directory = parse_models_dev(MODELS_DEV)
+        subscription = CatalogSlice(
+            openai_provider(),
+            (ModelInfo(identifier="gpt-subscription", provider="openai"),),
+        )
+
+        with (
+            patch(
+                "truecoder.providers.catalog.load_models_dev",
+                return_value=directory,
+            ),
+            patch(
+                "truecoder.providers.configuration.load_providers",
+                return_value=(),
+            ),
+            patch(
+                "truecoder.providers.catalog.load_catalog",
+                return_value=(subscription,),
+            ),
+        ):
+            catalog = await discover_catalog(settings)
+
+        openai = next(
+            entry for entry in catalog.slices if entry.provider.name == "openai"
+        )
+        self.assertEqual(openai.models[0].identifier, "gpt-subscription")
 
 
 class SlugTests(unittest.TestCase):

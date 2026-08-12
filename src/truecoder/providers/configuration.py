@@ -18,7 +18,16 @@ MAX_EXTRA_PARAMETERS: Final = 16
 
 _ROOT_FIELDS: Final = frozenset({"version", "providers"})
 _PROVIDER_FIELDS: Final = frozenset(
-    {"name", "base_url", "oauth", "headers", "display_name", "wire_api"}
+    {
+        "name",
+        "base_url",
+        "oauth",
+        "headers",
+        "display_name",
+        "wire_api",
+        "adapter",
+        "env",
+    }
 )
 _OAUTH_FIELDS: Final = frozenset(
     {
@@ -138,6 +147,10 @@ def _provider(entry: object) -> Provider:
                 f"provider {name!r} base_url must be an http or https URL"
             )
 
+    env = entry.get("env", [])
+    if not isinstance(env, list):
+        raise ProviderConfigError(f"provider {name!r} env must be a list")
+
     try:
         return Provider(
             name=name.strip(),
@@ -146,6 +159,8 @@ def _provider(entry: object) -> Provider:
             header_pairs=_headers(name, entry.get("headers")),
             display_name=str(entry.get("display_name", "")),
             wire_api=str(entry.get("wire_api", "chat")),
+            adapter=str(entry.get("adapter", "openai-compatible")),
+            env_names=tuple(str(item) for item in env),
         )
     except (CredentialError, OAuthError) as error:
         raise ProviderConfigError(f"provider {name!r} is unusable: {error}") from None

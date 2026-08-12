@@ -29,9 +29,10 @@ REQUEST_TIMEOUT_SECONDS: Final = 20.0
 MAX_SLUG_CHARACTERS: Final = 40
 MAX_PROVIDERS: Final = 256
 EMPTY_CATALOG_REASON: Final = "the provider listed no models"
-MODELS_DEV_URL: Final = "https://models.dev/api.json"
+MODELS_DEV_URL: Final = "https://models.opencode.ai/api.json"
 
 _CONTEXT_KEYS: Final = (
+    "context",
     "context_length",
     "context_window",
     "max_context_length",
@@ -153,7 +154,7 @@ def parse_models_dev(payload: object) -> tuple[CatalogSlice, ...]:
         for model_key, model_entry in list(listed.items())[:MAX_MODELS]:
             if not isinstance(model_key, str) or not isinstance(model_entry, dict):
                 continue
-            if model_entry.get("status") == "deprecated":
+            if model_entry.get("status") in {"alpha", "deprecated"}:
                 continue
             model_id = _bounded(
                 model_entry.get("id") or model_key,
@@ -486,6 +487,17 @@ class CatalogSlice:
     reason: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderCatalog:
+    slices: tuple[CatalogSlice, ...]
+    credentials: dict[str, Credential | None]
+    directory_reason: str | None = None
+
+    @property
+    def providers(self) -> tuple[Provider, ...]:
+        return tuple(entry.provider for entry in self.slices)
+
+
 async def _slice_for(
     provider: Provider,
     credential: Credential | None,
@@ -514,6 +526,63 @@ async def load_catalog(
         )
     )
     return tuple(gathered)
+
+
+async def discover_catalog(
+    settings,
+    *,
+    refresh: bool = False,
+) -> ProviderCatalog:
+    from truecoder.providers.configuration import selectable_providers
+    from truecoder.providers.models import credential_for_provider
+
+    configured = selectable_providers(settings.provider)
+    overrides = {provider.name: provider for provider in configured}
+
+    directory_reason: str | None = None
+    try:
+        directory = await load_models_dev(refresh=refresh)
+    except CatalogError as error:
+        directory = ()
+        directory_reason = str(error)
+
+    resolved: dict[str, CatalogSlice] = {}
+    for entry in directory:
+        provider = overrides.get(entry.provider.name, entry.provider)
+        resolved[provider.name] = CatalogSlice(provider, entry.models, entry.reason)
+
+    credentials = {
+        provider.name: credential_for_provider(provider, settings)
+        for provider in (*configured, *(entry.provider for entry in directory))
+    }
+    dynamic = tuple(
+        provider
+        for provider in configured
+        if provider.name not in resolved
+        or (
+            credentials.get(provider.name) is not None
+            and credentials[provider.name].kind == "oauth"
+            and provider.oauth is not None
+        )
+    )
+    if dynamic:
+        live = await load_catalog(dynamic, credentials, refresh=refresh)
+        for entry in live:
+            existing = resolved.get(entry.provider.name)
+            if entry.models or existing is None:
+                resolved[entry.provider.name] = entry
+
+    slices = tuple(
+        sorted(
+            resolved.values(),
+            key=lambda entry: entry.provider.label.casefold(),
+        )
+    )
+    credentials = {
+        entry.provider.name: credential_for_provider(entry.provider, settings)
+        for entry in slices
+    }
+    return ProviderCatalog(slices, credentials, directory_reason)
 
 
 def merge_models(slices: tuple[CatalogSlice, ...]) -> tuple[ModelInfo, ...]:
