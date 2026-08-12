@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Final
 
 from truecoder.providers.oauth import (
     CALLBACK_HOST,
+    CALLBACK_PATH,
     CALLBACK_TIMEOUT_SECONDS,
     FAILURE_BODY,
     MAX_CALLBACK_BYTES,
@@ -22,8 +22,6 @@ from truecoder.providers.oauth import (
     post_token,
     read_callback,
 )
-
-CALLBACK_PATH: Final = "/callback"
 
 
 def http_response(body: str, *, status: str = "200 OK") -> bytes:
@@ -46,13 +44,15 @@ def request_target(request_line: str) -> str:
 class CallbackServer:
     expected_state: str
     port: int = 0
+    redirect_host: str = CALLBACK_HOST
+    redirect_path: str = CALLBACK_PATH
     result: CallbackResult | None = None
     _server: asyncio.Server | None = None
     _done: asyncio.Event | None = None
 
     @property
     def redirect_uri(self) -> str:
-        return f"http://{CALLBACK_HOST}:{self.port}{CALLBACK_PATH}"
+        return f"http://{self.redirect_host}:{self.port}{self.redirect_path}"
 
     async def start(self) -> None:
         self._done = asyncio.Event()
@@ -77,7 +77,11 @@ class CallbackServer:
                 timeout=10.0,
             )
             line = raw[:MAX_CALLBACK_BYTES].decode("latin-1", errors="replace").strip()
-            outcome = read_callback(request_target(line), self.expected_state)
+            target = request_target(line)
+            if target.split("?", 1)[0] != self.redirect_path:
+                outcome = CallbackResult(error="the callback path did not match")
+            else:
+                outcome = read_callback(target, self.expected_state)
             if self.result is None:
                 self.result = outcome
             body = SUCCESS_BODY if outcome.error is None else FAILURE_BODY
@@ -153,7 +157,12 @@ async def begin_login(client: OAuthClient, *, provider: str = "") -> PendingLogi
 
     pkce = generate_pkce()
     state = generate_state()
-    server = CallbackServer(expected_state=state, port=client.redirect_port)
+    server = CallbackServer(
+        expected_state=state,
+        port=client.redirect_port,
+        redirect_host=client.redirect_host,
+        redirect_path=client.redirect_path,
+    )
     await server.start()
 
     try:

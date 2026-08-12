@@ -36,11 +36,21 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(providers[0].oauth)
 
     def test_an_oauth_client_parses(self):
-        provider = parse_providers(_config(oauth=OAUTH))[0]
+        provider = parse_providers(
+            _config(
+                oauth={
+                    **OAUTH,
+                    "redirect_host": "localhost",
+                    "redirect_path": "/auth/callback",
+                }
+            )
+        )[0]
 
         assert provider.oauth is not None
         self.assertEqual(provider.oauth.client_id, "cid")
         self.assertEqual(provider.oauth.scopes, ("read",))
+        self.assertEqual(provider.oauth.redirect_host, "localhost")
+        self.assertEqual(provider.oauth.redirect_path, "/auth/callback")
 
     def test_no_providers_is_valid(self):
         self.assertEqual(parse_providers(json.dumps({"version": 1})), ())

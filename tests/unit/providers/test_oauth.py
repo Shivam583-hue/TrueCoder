@@ -60,6 +60,25 @@ class OAuthClientTests(unittest.TestCase):
                 token_url="https://x.invalid/t",
             )
 
+    def test_the_redirect_host_is_loopback_only(self):
+        with self.assertRaises(OAuthError):
+            OAuthClient(
+                client_id="a",
+                authorize_url="https://x.invalid/a",
+                token_url="https://x.invalid/t",
+                redirect_host="example.com",
+            )
+
+    def test_the_redirect_path_is_absolute_and_has_no_query(self):
+        for path in ("callback", "/callback?x=1", "/callback#fragment"):
+            with self.subTest(path=path), self.assertRaises(OAuthError):
+                OAuthClient(
+                    client_id="a",
+                    authorize_url="https://x.invalid/a",
+                    token_url="https://x.invalid/t",
+                    redirect_path=path,
+                )
+
 
 class PkceTests(unittest.TestCase):
     def test_the_challenge_is_the_sha256_of_the_verifier(self):
@@ -166,6 +185,19 @@ class CallbackTests(unittest.TestCase):
 
     def test_a_malformed_request_line_yields_nothing(self):
         self.assertEqual(request_target("garbage"), "")
+
+    def test_a_callback_can_advertise_localhost_and_a_provider_path(self):
+        server = CallbackServer(
+            expected_state="s1",
+            port=1455,
+            redirect_host="localhost",
+            redirect_path="/auth/callback",
+        )
+
+        self.assertEqual(
+            server.redirect_uri,
+            "http://localhost:1455/auth/callback",
+        )
 
 
 class TokenResponseTests(unittest.TestCase):

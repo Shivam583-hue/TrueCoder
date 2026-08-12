@@ -23,15 +23,17 @@ GAP: Final = "  "
 class ProviderInvite:
     provider: str
     oauth: bool = False
+    display_name: str = ""
 
     @property
     def label(self) -> str:
         verb = "Connect to" if self.oauth else "Add a key for"
-        return f"  {verb} {self.provider} to list its models"
+        return f"  {verb} {self.display_name or self.provider} to list its models"
 
     def matches(self, query: str) -> bool:
         needle = query.strip().casefold()
-        return all(part in self.provider.casefold() for part in needle.split())
+        target = f"{self.provider} {self.display_name}".casefold()
+        return all(part in target for part in needle.split())
 
 
 class InviteListItem(ListItem):

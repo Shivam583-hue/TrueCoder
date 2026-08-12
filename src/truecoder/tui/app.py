@@ -440,6 +440,7 @@ class TrueCoderApp(App[None]):
             ProviderInvite(
                 entry.provider.name,
                 oauth=entry.provider.oauth is not None,
+                display_name=entry.provider.label,
             )
             for entry in missing
         )

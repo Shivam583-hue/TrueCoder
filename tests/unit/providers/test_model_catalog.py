@@ -153,21 +153,42 @@ class SelectableProviderTests(unittest.TestCase):
             "truecoder.providers.configuration.load_providers",
             return_value=(),
         ):
-            self.assertEqual(selectable_providers(ACME), (ACME,))
+            providers = selectable_providers(ACME)
+
+        self.assertEqual(providers[0], ACME)
+        self.assertEqual(providers[1].name, "openai")
 
     def test_the_active_provider_is_never_listed_twice(self):
         with patch(
             "truecoder.providers.configuration.load_providers",
             return_value=(ACME, BRIO),
         ):
-            self.assertEqual(selectable_providers(ACME), (ACME, BRIO))
+            providers = selectable_providers(ACME)
+
+        self.assertEqual(providers[:2], (ACME, BRIO))
+        self.assertEqual(providers[2].name, "openai")
 
     def test_an_unconfigured_active_provider_leads_the_list(self):
         with patch(
             "truecoder.providers.configuration.load_providers",
             return_value=(BRIO,),
         ):
-            self.assertEqual(selectable_providers(ACME), (ACME, BRIO))
+            providers = selectable_providers(ACME)
+
+        self.assertEqual(providers[:2], (ACME, BRIO))
+        self.assertEqual(providers[2].name, "openai")
+
+    def test_the_built_in_is_not_added_twice(self):
+        from truecoder.providers.openai import openai_provider
+
+        active = openai_provider()
+        with patch(
+            "truecoder.providers.configuration.load_providers",
+            return_value=(),
+        ):
+            providers = selectable_providers(active)
+
+        self.assertEqual(providers, (active,))
 
 
 if __name__ == "__main__":

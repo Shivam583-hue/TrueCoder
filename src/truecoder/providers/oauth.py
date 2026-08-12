@@ -19,6 +19,8 @@ REFRESH_MARGIN_SECONDS: Final = 60.0
 CALLBACK_TIMEOUT_SECONDS: Final = 300.0
 MAX_CALLBACK_BYTES: Final = 16 * 1024
 CALLBACK_HOST: Final = "127.0.0.1"
+CALLBACK_PATH: Final = "/callback"
+REDIRECT_HOSTS: Final = frozenset({"127.0.0.1", "localhost"})
 
 SUCCESS_BODY: Final = (
     "<!doctype html><title>TrueCoder</title>"
@@ -45,6 +47,8 @@ class OAuthClient:
     api_base_url: str = ""
     extra_parameters: tuple[tuple[str, str], ...] = ()
     redirect_port: int = 0
+    redirect_host: str = CALLBACK_HOST
+    redirect_path: str = CALLBACK_PATH
     device_url: str = ""
 
     def __post_init__(self) -> None:
@@ -70,6 +74,14 @@ class OAuthClient:
             raise OAuthError("redirect_port must be a whole number")
         if not 0 <= self.redirect_port <= MAX_PORT:
             raise OAuthError(f"redirect_port must be between 0 and {MAX_PORT}")
+        if self.redirect_host not in REDIRECT_HOSTS:
+            raise OAuthError("redirect_host must be localhost or 127.0.0.1")
+        if (
+            not self.redirect_path.startswith("/")
+            or "?" in self.redirect_path
+            or "#" in self.redirect_path
+        ):
+            raise OAuthError("redirect_path must be an absolute path without a query")
         if self.device_url and urlparse(self.device_url).scheme != "https":
             raise OAuthError("device_url must be an https URL")
 

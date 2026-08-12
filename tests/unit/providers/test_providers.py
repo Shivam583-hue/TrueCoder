@@ -123,6 +123,27 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(settings.provider.base_url, "https://x.invalid/v1")
         assert settings.credential is not None
 
+    def test_openai_is_the_direct_default_without_an_endpoint_override(self):
+        with patch.dict(
+            "os.environ",
+            {"MODEL": "gpt-5.2"},
+            clear=True,
+        ):
+            settings = settings_from_environment()
+
+        self.assertEqual(settings.provider.label, "OpenAI")
+        self.assertIsNotNone(settings.provider.oauth)
+
+    def test_a_custom_endpoint_remains_a_key_only_provider(self):
+        with patch.dict(
+            "os.environ",
+            {"MODEL": "openai/gpt-5.2", "BASE_URL": "https://router.invalid/v1"},
+            clear=True,
+        ):
+            settings = settings_from_environment()
+
+        self.assertIsNone(settings.provider.oauth)
+
     def test_a_missing_model_is_refused_by_name(self):
         with (
             patch.dict("os.environ", {"API_KEY": "k"}, clear=True),

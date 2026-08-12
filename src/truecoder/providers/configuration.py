@@ -31,6 +31,8 @@ _OAUTH_FIELDS: Final = frozenset(
         "api_base_url",
         "extra_parameters",
         "redirect_port",
+        "redirect_host",
+        "redirect_path",
         "device_url",
     }
 )
@@ -98,10 +100,20 @@ def selectable_providers(
     current: Provider,
     path: Path | None = None,
 ) -> tuple[Provider, ...]:
+    from truecoder.providers.openai import is_openai_provider, openai_provider
+
     configured = load_providers(path)
     if any(provider.name == current.name for provider in configured):
-        return configured
-    return (current, *configured)
+        providers = configured
+    else:
+        providers = (current, *configured)
+
+    if any(
+        provider.name == "openai" or is_openai_provider(provider)
+        for provider in providers
+    ):
+        return providers
+    return (*providers, openai_provider())
 
 
 def _provider(entry: object) -> Provider:
@@ -194,6 +206,8 @@ def _oauth(name: str, value: object) -> OAuthClient | None:
                 (str(key), str(item)) for key, item in sorted((extra or {}).items())
             ),
             redirect_port=port,
+            redirect_host=str(value.get("redirect_host", "127.0.0.1")),
+            redirect_path=str(value.get("redirect_path", "/callback")),
             device_url=str(value.get("device_url", "")),
         )
     except OAuthError as error:

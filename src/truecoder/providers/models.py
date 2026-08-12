@@ -227,8 +227,14 @@ def settings_from_environment(
 
     raw_key = os.getenv("API_KEY", "").strip()
     base_url = os.getenv("BASE_URL", "").strip() or None
+    if base_url is None:
+        from truecoder.providers.openai import default_openai_provider
+
+        provider = default_openai_provider()
+    else:
+        provider = Provider(name=DEFAULT_PROVIDER_NAME, base_url=base_url)
     return SessionSettings(
-        provider=Provider(name=DEFAULT_PROVIDER_NAME, base_url=base_url),
+        provider=provider,
         credential=ApiKey(raw_key) if raw_key else None,
         model=model,
     )
@@ -245,13 +251,16 @@ def stored_credential(provider: str) -> Credential | None:
 
 
 def resolve_settings() -> SessionSettings:
-    from truecoder.providers.configuration import load_providers
+    from truecoder.providers.configuration import selectable_providers
     from truecoder.providers.store import load_selection
 
     stored = load_selection()
     settings = settings_from_environment(stored_model=stored.model)
 
-    configured = {provider.name: provider for provider in load_providers()}
+    configured = {
+        provider.name: provider
+        for provider in selectable_providers(settings.provider)
+    }
     chosen = configured.get(stored.provider or settings.provider.name)
     if chosen is not None:
         settings.provider = chosen

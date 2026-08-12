@@ -12,8 +12,9 @@ from tests.helpers.tui import wait_until
 from tests.integration.tui.test_app import FixedTokenCounter, ScriptedLLMClient
 from truecoder.agent import Agent, ContextBuilder
 from truecoder.providers import ApiKey, ModelInfo, Provider, SessionSettings
+from truecoder.providers.openai import default_openai_provider
 from truecoder.tui.app import TrueCoderApp
-from truecoder.tui.credentials import ApiKeyScreen
+from truecoder.tui.credentials import ApiKeyScreen, CredentialChoiceScreen
 from truecoder.tui.model_picker import ModelPickerScreen
 from truecoder.tui.widgets import PromptInput
 
@@ -189,6 +190,73 @@ class KeyOnlyProviderTests(_Base):
                     for strip in app.screen._compositor.render_strips()
                 )
                 self.assertNotIn("no browser sign-in configured", rendered)
+
+
+class OpenAIConnectionTests(_Base):
+    async def test_the_direct_openai_invitation_opens_the_auth_choice(self):
+        app = self._app(ApiKey("sk-or-1"))
+
+        async def listing(provider, credential, *, refresh=False):
+            if provider.name == "default":
+                return ROUTED
+            return ()
+
+        with (
+            patch.dict(os.environ, {"MODEL": "openai/gpt-5.6-sol"}),
+            patch("truecoder.providers.catalog.load_models", side_effect=listing),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self._open_picker(app, pilot)
+                invitations = app.screen.invitations
+
+                self.assertEqual(len(invitations), 1)
+                self.assertEqual(
+                    invitations[0].label.strip(),
+                    "Connect to OpenAI to list its models",
+                )
+
+                app.screen.dismiss(invitations[0])
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, CredentialChoiceScreen),
+                    description="the OpenAI auth choice",
+                )
+                self.assertEqual(app.screen.provider, "OpenAI")
+
+                app.screen.dismiss(None)
+                await pilot.pause()
+
+    async def test_direct_openai_login_offers_browser_or_api_key(self):
+        settings = SessionSettings(
+            provider=default_openai_provider(),
+            credential=None,
+            model="gpt-5.2",
+        )
+        agent = Agent(
+            llm_client=_Client(settings),
+            context_builder=ContextBuilder(
+                system_prompt="test system",
+                max_input_tokens=1000,
+                token_counter=FixedTokenCounter(),
+            ),
+        )
+        app = TrueCoderApp(agent)
+
+        with patch.dict(os.environ, {"MODEL": "gpt-5.2"}):
+            async with app.run_test(size=(120, 40)) as pilot:
+                app.query_one(PromptInput).text = "/login"
+                await pilot.press("enter")
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, CredentialChoiceScreen),
+                    description="the OpenAI auth choice",
+                )
+
+                self.assertFalse(app.screen.device)
+                self.assertEqual(app.screen.provider, "OpenAI")
+
+                app.screen.dismiss(None)
+                await pilot.pause()
 
 
 if __name__ == "__main__":
