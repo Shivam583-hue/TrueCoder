@@ -1804,24 +1804,27 @@ wrote. Two providers may offer the same identifier, so the active row is the one
 whose provider matches as well; without that the marker lands on the wrong row the
 moment two catalogs overlap.
 
-Every list says who serves it. A model identifier looks like a provider and is not
-one: a gateway's catalog is full of names like `openai/gpt-5.6-sol` and
+A list says who serves it when there is something to say. A model identifier looks
+like a provider and is not one: a gateway's catalog is full of names like `openai/gpt-5.6-sol` and
 `anthropic/claude-opus-5`, all of them served by the gateway and reachable with the
 gateway's key. A list that shows those identifiers and nothing else invites the
 reader to conclude they have picked OpenAI, and then the absence of a sign-in
 prompt looks like a bug rather than the correct answer for a provider already
 connected. The column was originally hidden when only one provider contributed, on
 the theory that a repeated value is noise. It is not noise; it is the answer to the
-question the identifiers provoke. One provider is named once above the list, and
-several are named per row, which spends the width where it actually distinguishes
-something.
+question the identifiers provoke. A named provider appears once above the list when it is the
+only one and per row when there are several, which spends the width where it
+actually distinguishes something, and an unnamed provider stays invisible.
 
-A provider with no name of its own is shown by host rather than by the word
-`default`, so a configuration that came from `BASE_URL` reads as `openrouter.ai`
-instead of a placeholder that tells the reader nothing. The same label is used
-wherever a provider is mentioned to a person, while the name remains the key
-everything is stored under, because the two jobs are different and conflating them
-is how storage ends up keyed by a display string.
+Which provider is named is the product's decision, not the framework's. A provider
+carries a display name, and that is what people see; a provider with no name of its
+own is not mentioned at all rather than described by its host. Deriving the label
+from `BASE_URL` was a mistake worth stating plainly: it answered a developer's
+question by leaking an operational detail to every end user, and someone building
+on TrueCoder does not necessarily want the gateway they route through printed in
+their interface. The name remains the key everything is stored under, while the
+display name is only ever shown, because conflating the two is how storage ends up
+keyed by a string somebody rebrands later.
 
 Rows are padded to widths computed from the data rather than joined with fixed
 spacing, so identifiers, providers, and context windows line up down the list. A

@@ -63,7 +63,7 @@ Coming soon...
 - **Fingerprinted approvals** - approval covers canonical arguments, workspace identity, limits, backend, capabilities, risk, and policy version, so changing any of them requires approving again.
 - **Policy-evaluated execution** - ordered rules classify read-only, test, build, package, network, deletion, permission, Git, script, and unknown commands, and requested limits can only tighten the configured ceiling.
 - **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
-- **Switch models without restarting** - type `/models` to pick from everything your providers list, filtered as you type and annotated with context windows. The list always says who serves it, because a gateway's catalog is full of names like `openai/gpt-5.6-sol` that it serves with its own key: one provider is named above the list, several are named per row. Every configured provider is asked with its own credential and the results merge into one aligned list, so choosing a model also chooses where it comes from; a provider that is unreachable takes only its own rows with it. The lists come from each provider's own `/v1/models`, bounded like any other untrusted response, and cached per provider for six hours so they never cost a request at launch. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type, and `/quit` (or `/exit`) closes TrueCoder exactly as `ctrl+q` does. The status line always names the model that will actually answer, not whatever `MODEL` happens to say in your `.env`.
+- **Switch models without restarting** - type `/models` to pick from everything your providers list, filtered as you type and annotated with context windows. Providers you have named appear beside their models, one above the list or one per row, so a catalog full of names like `openai/gpt-5.6-sol` is not mistaken for a direct connection; a provider with no name of its own is never mentioned, so a gateway you route through stays yours. Every configured provider is asked with its own credential and the results merge into one aligned list, so choosing a model also chooses where it comes from; a provider that is unreachable takes only its own rows with it. The lists come from each provider's own `/v1/models`, bounded like any other untrusted response, and cached per provider for six hours so they never cost a request at launch. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/model` says what is answering now, `/help` lists what you can type, and `/quit` (or `/exit`) closes TrueCoder exactly as `ctrl+q` does. The status line always names the model that will actually answer, not whatever `MODEL` happens to say in your `.env`.
 - **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit`, `/e` leaves `exit`, and `/mo` leaves `models` and `model`. Tab completes to the longest prefix the remaining matches share: `/q` becomes `/quit` outright, `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
 - **It asks for what the model needs** - pick a model whose provider you have no credential for and TrueCoder asks for it there and then, instead of accepting the choice and failing on your next message. A provider that accepts both a browser sign-in and an API key asks which you want, because one draws on a subscription and the other bills a key; a provider that accepts one goes straight there and says why there was nothing to choose between. A key is saved privately so you only type it once. A provider that will not list its models until you connect appears in `/models` as a row of its own, so connecting is something you can select rather than something you had to already know. `/login` opens the same choice, and `/logout` forgets both.
 - **Refusals you can act on** - when a provider turns a request down you get a sentence, not its wire format: what happened, the provider's own explanation, and the next step. A rejected credential opens the way to replace it, offering both ways again if the provider takes both; running out of credit offers neither, because a new credential does not buy anything. A failure that does not classify gets no invented advice.
@@ -738,6 +738,7 @@ comes from and, when the provider publishes one, how to sign in with a browser:
   "providers": [
     {
       "name": "acme",
+      "display_name": "Acme Cloud",
       "base_url": "https://api.acme.example/v1",
       "headers": { "acme-beta": "long-context-2026" },
       "oauth": {
@@ -784,6 +785,11 @@ that happens when you choose one of its models.
 If a provider later rejects the credential you already have, the same prompt
 opens with the reason on it, so a key that was rotated or revoked is replaced
 where you noticed the problem rather than by editing a file and restarting.
+
+`display_name` is what people see. Without it a provider you named appears under
+that name and an unnamed one is not mentioned at all, so a gateway you route
+through never surfaces to your users; set it when you want the provider called
+something of your choosing.
 
 Everything past `client_id`, `authorize_url`, and `token_url` is optional and
 exists because registered clients rarely fit the bare protocol. `redirect_port`
