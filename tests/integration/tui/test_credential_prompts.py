@@ -358,6 +358,8 @@ class CrossProviderTests(_Base):
         async def listing(provider, credential, *, refresh=False):
             if provider.name == "brio":
                 raise CatalogError("the provider returned 401")
+            if provider.name == "openai":
+                return (ModelInfo(identifier="gpt", provider="openai"),)
             return (ModelInfo(identifier="acme/starter", provider="acme"),)
 
         with (
@@ -398,6 +400,8 @@ class CrossProviderTests(_Base):
                 if not signed_in:
                     raise CatalogError("the provider returned 401")
                 return (ModelInfo(identifier="brio/large", provider="brio"),)
+            if provider.name == "openai":
+                return (ModelInfo(identifier="gpt", provider="openai"),)
             return (ModelInfo(identifier="acme/starter", provider="acme"),)
 
         async def begin(client, *, provider=""):
@@ -452,6 +456,8 @@ class CrossProviderTests(_Base):
         async def listing(provider, credential, *, refresh=False):
             if provider.name == "brio":
                 raise CatalogError("the provider returned 401")
+            if provider.name == "openai":
+                return (ModelInfo(identifier="gpt", provider="openai"),)
             return (ModelInfo(identifier="acme/starter", provider="acme"),)
 
         async def begin(client, *, provider=""):
