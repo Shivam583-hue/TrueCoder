@@ -232,7 +232,7 @@ class OpenAIConnectionTests(_Base):
                 app.screen.dismiss(None)
                 await pilot.pause()
 
-    async def test_direct_openai_login_offers_browser_or_api_key(self):
+    async def test_direct_openai_login_offers_browser_device_or_api_key(self):
         settings = SessionSettings(
             provider=openai_provider(),
             credential=None,
@@ -258,7 +258,7 @@ class OpenAIConnectionTests(_Base):
                     description="the OpenAI auth choice",
                 )
 
-                self.assertFalse(app.screen.device)
+                self.assertTrue(app.screen.device)
                 self.assertEqual(app.screen.provider, "OpenAI")
 
                 app.screen.dismiss(None)

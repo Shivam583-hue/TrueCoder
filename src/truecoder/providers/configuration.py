@@ -44,6 +44,9 @@ _OAUTH_FIELDS: Final = frozenset(
         "redirect_host",
         "redirect_path",
         "device_url",
+        "device_token_url",
+        "device_verification_url",
+        "device_redirect_url",
     }
 )
 
@@ -227,6 +230,9 @@ def _oauth(name: str, value: object) -> OAuthClient | None:
             redirect_host=str(value.get("redirect_host", "127.0.0.1")),
             redirect_path=str(value.get("redirect_path", "/callback")),
             device_url=str(value.get("device_url", "")),
+            device_token_url=str(value.get("device_token_url", "")),
+            device_verification_url=str(value.get("device_verification_url", "")),
+            device_redirect_url=str(value.get("device_redirect_url", "")),
         )
     except OAuthError as error:
         raise ProviderConfigError(

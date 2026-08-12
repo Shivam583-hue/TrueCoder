@@ -15,6 +15,12 @@ OPENAI_CODEX_MODELS_URL: Final = (
 OPENAI_CODEX_CLIENT_ID: Final = "app_EMoamEEZ73f0CkXaXp7hrann"
 OPENAI_AUTHORIZE_URL: Final = "https://auth.openai.com/oauth/authorize"
 OPENAI_TOKEN_URL: Final = "https://auth.openai.com/oauth/token"
+OPENAI_DEVICE_URL: Final = "https://auth.openai.com/api/accounts/deviceauth/usercode"
+OPENAI_DEVICE_TOKEN_URL: Final = (
+    "https://auth.openai.com/api/accounts/deviceauth/token"
+)
+OPENAI_DEVICE_VERIFICATION_URL: Final = "https://auth.openai.com/codex/device"
+OPENAI_DEVICE_REDIRECT_URL: Final = "https://auth.openai.com/deviceauth/callback"
 OPENAI_REDIRECT_PORT: Final = 1455
 OPENAI_REDIRECT_HOST: Final = "localhost"
 OPENAI_REDIRECT_PATH: Final = "/auth/callback"
@@ -38,6 +44,10 @@ OPENAI_OAUTH_CLIENT: Final = OAuthClient(
     redirect_port=OPENAI_REDIRECT_PORT,
     redirect_host=OPENAI_REDIRECT_HOST,
     redirect_path=OPENAI_REDIRECT_PATH,
+    device_url=OPENAI_DEVICE_URL,
+    device_token_url=OPENAI_DEVICE_TOKEN_URL,
+    device_verification_url=OPENAI_DEVICE_VERIFICATION_URL,
+    device_redirect_url=OPENAI_DEVICE_REDIRECT_URL,
 )
 
 

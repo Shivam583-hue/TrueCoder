@@ -51,6 +51,9 @@ class OAuthClient:
     redirect_host: str = CALLBACK_HOST
     redirect_path: str = CALLBACK_PATH
     device_url: str = ""
+    device_token_url: str = ""
+    device_verification_url: str = ""
+    device_redirect_url: str = ""
 
     def __post_init__(self) -> None:
         for name in ("client_id", "authorize_url", "token_url"):
@@ -85,8 +88,22 @@ class OAuthClient:
             or "#" in self.redirect_path
         ):
             raise OAuthError("redirect_path must be an absolute path without a query")
-        if self.device_url and urlparse(self.device_url).scheme != "https":
-            raise OAuthError("device_url must be an https URL")
+        for name in (
+            "device_url",
+            "device_token_url",
+            "device_verification_url",
+            "device_redirect_url",
+        ):
+            value = getattr(self, name)
+            if value and urlparse(value).scheme != "https":
+                raise OAuthError(f"{name} must be an https URL")
+        brokered = (
+            self.device_token_url,
+            self.device_verification_url,
+            self.device_redirect_url,
+        )
+        if any(brokered) and not all((self.device_url, *brokered)):
+            raise OAuthError("brokered device authorization needs all device URLs")
 
     @property
     def carries_account(self) -> bool:
@@ -95,6 +112,10 @@ class OAuthClient:
     @property
     def supports_device_code(self) -> bool:
         return bool(self.device_url)
+
+    @property
+    def uses_brokered_device_code(self) -> bool:
+        return bool(self.device_token_url)
 
 
 @dataclass(frozen=True, slots=True)

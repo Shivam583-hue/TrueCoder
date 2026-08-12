@@ -11,6 +11,7 @@ from truecoder.providers.device import (
     MIN_INTERVAL_SECONDS,
     DeviceGrant,
     device_body,
+    parse_brokered_device_grant,
     parse_device_grant,
     poll_device_grant,
 )
@@ -21,6 +22,16 @@ CLIENT = OAuthClient(
     authorize_url="https://provider.invalid/oauth/authorize",
     token_url="https://provider.invalid/oauth/token",
     device_url="https://provider.invalid/oauth/device",
+)
+
+BROKERED_CLIENT = OAuthClient(
+    client_id="client-123",
+    authorize_url="https://provider.invalid/oauth/authorize",
+    token_url="https://provider.invalid/oauth/token",
+    device_url="https://provider.invalid/device/usercode",
+    device_token_url="https://provider.invalid/device/token",
+    device_verification_url="https://provider.invalid/device",
+    device_redirect_url="https://provider.invalid/device/callback",
 )
 
 GRANT = {
@@ -99,6 +110,21 @@ class GrantParsingTests(unittest.TestCase):
             body["grant_type"], "urn:ietf:params:oauth:grant-type:device_code"
         )
         self.assertEqual(body["device_code"], "dc-1")
+
+    def test_a_brokered_grant_uses_the_configured_verification_page(self):
+        grant = parse_brokered_device_grant(
+            {
+                "device_auth_id": "da-1",
+                "user_code": "ABCD-EFGH",
+                "interval": "7",
+            },
+            BROKERED_CLIENT,
+        )
+
+        self.assertEqual(grant.device_code, "da-1")
+        self.assertEqual(grant.user_code, "ABCD-EFGH")
+        self.assertEqual(grant.best_url, "https://provider.invalid/device")
+        self.assertEqual(grant.interval, 7)
 
 
 class PollingTests(unittest.IsolatedAsyncioTestCase):
@@ -215,6 +241,47 @@ class PollingTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(OAuthError):
             await request_device_grant(plain)
+
+    async def test_a_brokered_code_is_exchanged_after_approval(self):
+        grant = DeviceGrant(
+            device_code="da-1",
+            user_code="ABCD-EFGH",
+            verification_url="https://provider.invalid/device",
+            interval=2,
+        )
+        replies = [
+            (403, {"error": "pending"}),
+            (200, {"authorization_code": "code-1", "code_verifier": "pkce-1"}),
+        ]
+        exchanged: list[dict[str, str]] = []
+
+        async def post_device(url, body):
+            self.assertEqual(url, BROKERED_CLIENT.device_token_url)
+            return replies.pop(0)
+
+        async def post_token(client, body):
+            exchanged.append(body)
+            return {"access_token": "at-1", "refresh_token": "rt-1"}
+
+        with (
+            patch("truecoder.providers.device.post_device_json", side_effect=post_device),
+            patch("truecoder.providers.device.post_token", side_effect=post_token),
+        ):
+            token = await poll_device_grant(
+                BROKERED_CLIENT,
+                grant,
+                provider="openai",
+                sleep=self._sleep,
+            )
+
+        self.assertEqual(token.access_token, "at-1")
+        self.assertEqual(self.slept, [2])
+        self.assertEqual(exchanged[0]["grant_type"], "authorization_code")
+        self.assertEqual(exchanged[0]["code_verifier"], "pkce-1")
+        self.assertEqual(
+            exchanged[0]["redirect_uri"],
+            "https://provider.invalid/device/callback",
+        )
 
 
 if __name__ == "__main__":

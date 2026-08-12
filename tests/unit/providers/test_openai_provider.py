@@ -30,7 +30,12 @@ class OpenAIProviderTests(unittest.TestCase):
             ),
             ("localhost", "/auth/callback"),
         )
-        self.assertFalse(OPENAI_OAUTH_CLIENT.supports_device_code)
+        self.assertTrue(OPENAI_OAUTH_CLIENT.supports_device_code)
+        self.assertTrue(OPENAI_OAUTH_CLIENT.uses_brokered_device_code)
+        self.assertEqual(
+            OPENAI_OAUTH_CLIENT.device_verification_url,
+            "https://auth.openai.com/codex/device",
+        )
 
     def test_the_login_requests_an_offline_token_and_codex_flow(self):
         self.assertIn("offline_access", OPENAI_OAUTH_CLIENT.scopes)
