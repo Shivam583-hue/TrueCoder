@@ -14,12 +14,14 @@ from truecoder.agent.approval import (
 )
 from truecoder.agent.context import ContextBuilder, TiktokenTokenCounter
 from truecoder.agent.events import AgentEvent, AgentEventType
+from truecoder.agent.mode import AgentMode, mode_from_name
 from truecoder.agent.state import AgentState
 
 __all__ = [
     "Agent",
     "AgentEvent",
     "AgentEventType",
+    "AgentMode",
     "AgentState",
     "ApprovalDecision",
     "ApprovalHandler",
@@ -33,5 +35,6 @@ __all__ = [
     "RiskLevel",
     "TiktokenTokenCounter",
     "approve_all_tool_calls",
+    "mode_from_name",
     "reject_all_tool_calls",
 ]

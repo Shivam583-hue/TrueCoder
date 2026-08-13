@@ -20,6 +20,12 @@ from truecoder.agent.context import ContextBuilder
 from truecoder.agent.environment import collect_environment, describe_environment
 from truecoder.agent.events import AgentEvent, AgentEventType
 from truecoder.agent.messages import ModelMessage, create_system_message
+from truecoder.agent.mode import (
+    MODE_GUIDANCE,
+    AgentMode,
+    mode_allows_tool,
+    mode_auto_approves,
+)
 from truecoder.agent.progress import ProgressMonitor
 from truecoder.agent.project_instructions import (
     find_project_root,
@@ -117,6 +123,7 @@ class Agent:
         mutation_audit: MutationAudit | None = None,
         hooks: HookSuite | None = None,
         mcp_manager: McpManager | None = None,
+        mode: AgentMode = AgentMode.BUILD,
     ) -> None:
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
@@ -160,6 +167,8 @@ class Agent:
             raise TypeError("mutation_audit must be a MutationAudit.")
         if hooks is not None and not isinstance(hooks, HookSuite):
             raise TypeError("hooks must be a HookSuite.")
+        if not isinstance(mode, AgentMode):
+            raise TypeError("mode must be an AgentMode.")
 
         root = project_root or Path.cwd()
         try:
@@ -187,6 +196,8 @@ class Agent:
         self.memory_store = memory_store
         self.mutation_audit = mutation_audit
         self.hooks = hooks if hooks is not None else HookSuite()
+        self._mode = mode
+        self._active_mode: AgentMode | None = None
         self.hook_outcomes: tuple[HookOutcome, ...] = ()
         self._pre_authorised_calls: set[str] = set()
         self.turn_checkpoint: Checkpoint | None = None
@@ -243,6 +254,20 @@ class Agent:
             raise TypeError("approval_handler must be callable.")
         self._approval_handler = handler
         self.approval_service.handler = self._invoke_approval_handler
+
+    @property
+    def mode(self) -> AgentMode:
+        return self._mode
+
+    @mode.setter
+    def mode(self, mode: AgentMode) -> None:
+        if not isinstance(mode, AgentMode):
+            raise TypeError("mode must be an AgentMode.")
+        self._mode = mode
+
+    @property
+    def active_mode(self) -> AgentMode:
+        return self._active_mode or self._mode
 
     def set_approval_identity_provider(
         self,
@@ -344,33 +369,41 @@ class Agent:
             yield AgentEvent.agent_error("The prompt cannot be empty.")
             return
         await self.initialize_execution()
-        await self._capture_checkpoint(prompt)
-        await self._compact_if_needed()
-        await self._run_hooks("turn_start")
+        self._active_mode = self._mode
+        mode = self._active_mode
         try:
-            self.state.begin_turn(prompt)
-        except (ValueError, RuntimeError) as error:
-            yield AgentEvent.agent_error(
-                str(error),
-                details={"exception_type": type(error).__name__},
-            )
-            return
+            if mode is not AgentMode.PLAN:
+                await self._capture_checkpoint(prompt)
+            await self._compact_if_needed()
+            if mode is not AgentMode.PLAN:
+                await self._run_hooks("turn_start")
+            try:
+                self.state.begin_turn(prompt)
+            except (ValueError, RuntimeError) as error:
+                yield AgentEvent.agent_error(
+                    str(error),
+                    details={"exception_type": type(error).__name__},
+                )
+                return
 
-        yield AgentEvent.agent_start(prompt)
+            yield AgentEvent.agent_start(prompt)
 
-        try:
-            async for event in self._agentic_loop():
-                yield event
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:  # noqa: BLE001 - report unexpected agent failures
-            yield AgentEvent.agent_error(
-                str(error),
-                details={"exception_type": type(error).__name__},
-            )
+            try:
+                async for event in self._agentic_loop():
+                    yield event
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:  # noqa: BLE001 - report unexpected failures
+                yield AgentEvent.agent_error(
+                    str(error),
+                    details={"exception_type": type(error).__name__},
+                )
+            finally:
+                self.state.abort_turn()
+                if mode is not AgentMode.PLAN:
+                    await self._run_hooks("turn_end")
         finally:
-            self.state.abort_turn()
-            await self._run_hooks("turn_end")
+            self._active_mode = None
 
     async def _agentic_loop(self) -> AsyncGenerator[AgentEvent, None]:
         total_usage: TokenUsage | None = None
@@ -379,6 +412,12 @@ class Agent:
 
         for _ in range(self.max_iterations):
             request_messages = self.context_builder.build(self.state)
+            mode = self.active_mode
+            if mode is not AgentMode.BUILD:
+                system = request_messages[0]
+                request_messages[0] = create_system_message(
+                    f"{system['content']}\n\n{MODE_GUIDANCE[mode]}"
+                )
             if stall_notice is not None:
                 request_messages.append(create_system_message(stall_notice))
 
@@ -393,7 +432,7 @@ class Agent:
                 stream=True,
                 tools=None
                 if stall_notice is not None
-                else (self.tool_registry.definitions() or None),
+                else (self._tool_definitions(mode) or None),
             ):
                 if event.type == EventType.TEXT_DELTA and event.text_delta is not None:
                     response_parts.append(event.text_delta.content)
@@ -482,7 +521,16 @@ class Agent:
             yield AgentEvent.tool_call(call.call_id, call.name, call.arguments_json)
 
             rejected = False
-            prepared = self.tool_executor.prepare(call)
+            mode = self.active_mode
+            if mode_allows_tool(mode, call.name):
+                prepared = self.tool_executor.prepare(call)
+            else:
+                prepared = ToolResult.failure(
+                    call.call_id,
+                    call.name,
+                    f"{mode.label} mode cannot use the {call.name} tool.",
+                    "mode_restricted",
+                )
             if isinstance(prepared, ToolResult):
                 result = prepared
             else:
@@ -494,7 +542,11 @@ class Agent:
                         identity=self._approval_identity(),
                         mutation=await self._preview_mutation(prepared),
                     )
-                    response = self.approval_service.reusable_response(request)
+                    response = (
+                        ApprovalResponse.approve()
+                        if mode_auto_approves(mode, request.tool_name)
+                        else self.approval_service.reusable_response(request)
+                    )
                     if response is None:
                         yield AgentEvent.approval_requested(request)
                         response = await self.approval_service.authorize(request)
@@ -677,6 +729,8 @@ class Agent:
     ) -> ApprovalResponse:
         if request.call_id in self._pre_authorised_calls:
             return ApprovalResponse.approve(ApprovalScope.ONCE)
+        if mode_auto_approves(self.active_mode, request.tool_name):
+            return ApprovalResponse.approve(ApprovalScope.ONCE)
         response = await self._approval_handler(request)
         if isinstance(response, ApprovalResponse):
             return response
@@ -685,6 +739,13 @@ class Agent:
         if response is ApprovalDecision.REJECTED:
             return ApprovalResponse.reject()
         return response  # type: ignore[return-value]
+
+    def _tool_definitions(self, mode: AgentMode) -> list[dict]:
+        return [
+            tool.definition().to_chat_completion_schema()
+            for tool in self.tool_registry.all()
+            if mode_allows_tool(mode, tool.name)
+        ]
 
     def reset(self) -> None:
         self.turn_checkpoint = None

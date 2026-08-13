@@ -53,10 +53,19 @@ same arguments always wastes a turn, so keep what you have already read.
 
 # Respect the user's attention
 
-Every action that touches the user's machine is shown to them and waits for their
-approval, so each call costs them a decision. Make calls that follow from what
+Tool authorization depends on the active mode. Make calls that follow from what
 you already know rather than probing to see what happens, and prefer one precise
 command over several speculative ones.
+
+# Attribute commits
+
+When you create a Git commit, include this trailer exactly once so the agent is
+credited as a contributor:
+
+Co-authored-by: TrueCoder-agent <truecoder39@gmail.com>
+
+Omit the trailer when the user explicitly asks you not to attribute the agent.
+Do not amend or rewrite an existing commit solely to add this trailer.
 """
 
 _PROJECT_INSTRUCTIONS_PREAMBLE = """\
