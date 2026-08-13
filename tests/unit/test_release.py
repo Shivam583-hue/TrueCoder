@@ -23,6 +23,13 @@ class ReleaseMetadataTests(unittest.TestCase):
                     for node in ast.walk(tree)
                 )
                 self.assertFalse(imports_utc_directly)
+                imports_not_required_directly = any(
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == "typing"
+                    and any(name.name == "NotRequired" for name in node.names)
+                    for node in ast.walk(tree)
+                )
+                self.assertFalse(imports_not_required_directly)
 
     def test_source_and_package_versions_agree(self):
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")

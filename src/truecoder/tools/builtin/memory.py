@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import NotRequired, TypedDict
+from typing import TypedDict
 
 from pydantic import Field
+from typing_extensions import NotRequired
 
 from truecoder.memory import MAX_MEMORY_CHARACTERS, MemoryStore
 from truecoder.tools.base import (

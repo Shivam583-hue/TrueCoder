@@ -31,6 +31,7 @@ dependencies = [
     "tiktoken>=0.13,<1",
     "pydantic>=2,<3",
     "platformdirs>=4,<5",
+    "typing-extensions>=4.1,<5",
 ]
 
 [project.scripts]
