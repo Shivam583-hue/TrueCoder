@@ -8,6 +8,7 @@ from truecoder.jsonrpc.framing import (
     decode_body,
     encode_body,
 )
+from truecoder.version import package_version
 
 PROTOCOL_VERSION: Final = "2025-06-18"
 CLIENT_NAME: Final = "truecoder"
@@ -69,7 +70,7 @@ def initialize_params(capabilities: dict[str, Any] | None = None) -> dict[str, A
     return {
         "protocolVersion": PROTOCOL_VERSION,
         "capabilities": capabilities if capabilities is not None else {},
-        "clientInfo": {"name": CLIENT_NAME, "version": "0.1.0"},
+        "clientInfo": {"name": CLIENT_NAME, "version": package_version()},
     }
 
 

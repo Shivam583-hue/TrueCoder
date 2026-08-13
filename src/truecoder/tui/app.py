@@ -5,7 +5,6 @@ import json
 import os
 from contextlib import suppress
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Final
 
@@ -91,6 +90,7 @@ from truecoder.tui.widgets import (
     SystemNote,
     ToolCallCard,
 )
+from truecoder.version import package_version
 
 if TYPE_CHECKING:
     from truecoder.providers.models import ModelInfo
@@ -140,13 +140,6 @@ class _AppPreviewSink:
         text: str,
     ) -> None:
         self._app.post_message(ExecutionOutputMessage(execution_id, stream, text))
-
-
-def _package_version() -> str:
-    try:
-        return version("truecoder")
-    except PackageNotFoundError:
-        return "0.1.0"
 
 
 def _usable(credential) -> bool:
@@ -274,7 +267,7 @@ class TrueCoderApp(App[None]):
         yield StatusBar(
             workspace,
             branch=_git_branch(workspace),
-            version=_package_version(),
+            version=package_version(),
             max_input_tokens=self.agent.context_builder.max_input_tokens,
         )
 

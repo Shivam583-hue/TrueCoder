@@ -6,10 +6,27 @@ on:
   pull_request:
 
 jobs:
+  package-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install .
+      - run: truecoder --version
+      - run: python -c "from importlib.resources import files; assert (files('truecoder') / 'tui' / 'styles.tcss').is_file()"
+
   linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate POSIX installer syntax
+        run: sh -n scripts/install.sh
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -66,6 +83,18 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate PowerShell installer syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "scripts/install.ps1"),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          $errors | ForEach-Object { Write-Host $_ }
+          if ($errors.Count -gt 0) { exit 1 }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

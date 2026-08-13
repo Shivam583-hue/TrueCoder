@@ -29,6 +29,7 @@ from truecoder.tui.execution_view import (
     BoundedPreview,
     stage_presentation,
 )
+from truecoder.version import SOURCE_VERSION
 
 ASCII_LOGO = (
     "╺┳╸┏━┓╻ ╻┏━╸┏━╸┏━┓╺┳┓┏━╸┏━┓",
@@ -1164,7 +1165,7 @@ class StatusBar(Horizontal):
         workspace: str,
         *,
         branch: str | None = None,
-        version: str = "0.1.0",
+        version: str = SOURCE_VERSION,
         max_input_tokens: int = 0,
     ) -> None:
         self.workspace = workspace

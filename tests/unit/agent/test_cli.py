@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import AsyncMock, Mock, patch
 
 from truecoder.agent.autonomy import Autonomy, UnattendedApprovals
@@ -32,6 +33,15 @@ class _Agent:
 
 
 class ParserTests(unittest.TestCase):
+    def test_version_is_available_without_starting_the_agent(self):
+        output = io.StringIO()
+
+        with redirect_stdout(output), self.assertRaises(SystemExit) as stopped:
+            main(["--version"])
+
+        self.assertEqual(stopped.exception.code, EXIT_OK)
+        self.assertEqual(output.getvalue().strip(), "truecoder 1.0.0")
+
     def test_no_prompt_means_interactive(self):
         self.assertIsNone(build_parser().parse_args([]).prompt)
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version
 from typing import Final
 
 from truecoder.providers.models import Provider
 from truecoder.providers.oauth import OAuthClient
+from truecoder.version import package_version
 
 OPENAI_PROVIDER_NAME: Final = "openai"
 OPENAI_DISPLAY_NAME: Final = "OpenAI"
@@ -35,11 +35,7 @@ OPENAI_ACCOUNT_HEADER: Final = "ChatGPT-Account-Id"
 
 
 def _user_agent() -> str:
-    try:
-        package_version = version("truecoder")
-    except PackageNotFoundError:
-        package_version = "dev"
-    return f"truecoder/{package_version}"
+    return f"truecoder/{package_version()}"
 
 
 OPENAI_CODEX_USER_AGENT: Final = _user_agent()

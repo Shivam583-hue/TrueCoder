@@ -9,6 +9,7 @@ from typing import Final, TextIO
 from truecoder.agent.autonomy import Autonomy, UnattendedApprovals, autonomy_from_name
 from truecoder.agent.events import AgentEventType
 from truecoder.agent.mode import AgentMode, mode_from_name
+from truecoder.version import package_version
 
 EXIT_OK: Final = 0
 EXIT_FAILED: Final = 1
@@ -21,6 +22,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="truecoder",
         description="Run TrueCoder interactively, or once against a prompt.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {package_version()}",
     )
     parser.add_argument(
         "-p",

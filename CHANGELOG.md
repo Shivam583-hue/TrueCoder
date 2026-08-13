@@ -4,10 +4,10 @@ All notable changes to TrueCoder will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-The project has no tagged releases yet, so the current baseline remains under
-Unreleased until the first release is cut.
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-08-13
 
 ### Added
 
@@ -36,6 +36,9 @@ Unreleased until the first release is cut.
 - Contributor documentation covering setup, architecture boundaries, test
   selection, common change locations, sandbox verification, and review
   expectations.
+- Verified Linux/macOS and Windows user installers, a versioned CLI, and a
+  tag-driven GitHub Release pipeline that publishes wheel, source, installer,
+  and SHA-256 checksum assets.
 - MIT License.
 
 ### Changed
@@ -56,3 +59,6 @@ Unreleased until the first release is cut.
   picker, composer, and request transport.
 - Made deferred credential focus and approval interactions safe across slower
   Windows and macOS Textual event loops.
+
+[Unreleased]: https://github.com/Shivam583-hue/TrueCoder/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/Shivam583-hue/TrueCoder/releases/tag/v1.0.0

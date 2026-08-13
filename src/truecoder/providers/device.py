@@ -12,6 +12,7 @@ from truecoder.providers.oauth import (
     parse_token_response,
     post_token,
 )
+from truecoder.version import package_version
 
 DEVICE_GRANT: Final = "urn:ietf:params:oauth:grant-type:device_code"
 DEFAULT_INTERVAL_SECONDS: Final = 5.0
@@ -135,7 +136,7 @@ async def post_device_json(url: str, body: dict[str, str]) -> tuple[int, object]
                 json=body,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "truecoder/0.1.0",
+                    "User-Agent": f"truecoder/{package_version()}",
                 },
             )
     except Exception as error:  # noqa: BLE001 - provider transports fail uniformly

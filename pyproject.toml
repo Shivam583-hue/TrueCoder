@@ -4,11 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "truecoder"
-version = "0.1.0"
-description = "TrueCoder"
+version = "1.0.0"
+description = "A terminal coding agent with an auditable execution plane"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
+keywords = ["ai", "agent", "coding", "terminal", "developer-tools"]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development",
+]
 dependencies = [
     "httpx>=0.27,<1",
     "openai>=2.46",
@@ -21,6 +35,13 @@ dependencies = [
 
 [project.scripts]
 truecoder = "truecoder.cli:run"
+
+[project.urls]
+Homepage = "https://github.com/Shivam583-hue/TrueCoder"
+Documentation = "https://github.com/Shivam583-hue/TrueCoder#readme"
+Changelog = "https://github.com/Shivam583-hue/TrueCoder/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Shivam583-hue/TrueCoder/issues"
+Source = "https://github.com/Shivam583-hue/TrueCoder"
 
 [tool.setuptools.packages.find]
 where = ["src"]

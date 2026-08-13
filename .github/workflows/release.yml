@@ -1,0 +1,58 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  github-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          sh -n scripts/install.sh
+          package_version="$(PYTHONPATH=src python -c 'from truecoder.version import SOURCE_VERSION; print(SOURCE_VERSION)')"
+          test "$RELEASE_TAG" = "v$package_version"
+
+      - name: Build and validate distributions
+        run: |
+          python -m pip install --disable-pip-version-check build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Smoke-test the wheel
+        run: |
+          python -m venv release-smoke
+          release-smoke/bin/python -m pip install --disable-pip-version-check dist/*.whl
+          test "$(release-smoke/bin/truecoder --version)" = "truecoder ${GITHUB_REF_NAME#v}"
+
+      - name: Assemble release assets
+        run: |
+          mkdir release-assets
+          cp dist/* scripts/install.sh scripts/install.ps1 release-assets/
+          python scripts/release_checksums.py release-assets
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          release-assets/*
+          --repo "$GITHUB_REPOSITORY"
+          --verify-tag
+          --title "TrueCoder $GITHUB_REF_NAME"
+          --generate-notes

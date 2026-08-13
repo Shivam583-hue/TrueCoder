@@ -4,6 +4,7 @@
 
 [![Tests](https://github.com/Shivam583-hue/TrueCoder/actions/workflows/tests.yml/badge.svg)](https://github.com/Shivam583-hue/TrueCoder/actions/workflows/tests.yml)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)](#prerequisites)
+[![Release](https://img.shields.io/github/v/release/Shivam583-hue/TrueCoder?style=flat-square)](https://github.com/Shivam583-hue/TrueCoder/releases/latest)
 [![Ruff](https://img.shields.io/badge/ruff-check%20passing-2ea44f?style=flat-square&logo=ruff&logoColor=white)](CONTRIBUTING.md#tests-and-checks)
 [![Sandbox](https://img.shields.io/badge/sandbox-Linux%20%C2%B7%20Docker%20certified-2496ed?style=flat-square&logo=docker&logoColor=white)](#container-sandbox)
 [![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](CONTRIBUTING.md#tests-and-checks)
@@ -23,6 +24,7 @@ When a command must be isolated instead, the certified sandbox profile runs it i
 - [Technical highlights](#technical-highlights)
 - [Architecture overview and diagram](#architecture-overview-and-diagram)
 - [Technology stack](#technology-stack)
+- [Installation](#installation)
 - [Prerequisites](#prerequisites)
 - [Running TrueCoder](#running-truecoder)
 - [Terminal shortcuts](#terminal-shortcuts)
@@ -494,6 +496,45 @@ No route escapes audit.
 | Lint                | ruff 0.16                                   | Static checks over source, tests, and the image entrypoint             |
 | Tests               | unittest, `IsolatedAsyncioTestCase`         | Unit, contract, integration, end-to-end, and adversarial sandbox suites |
 
+## Installation
+
+On Linux or macOS, install the latest release with:
+
+```bash
+curl -fsSL https://github.com/Shivam583-hue/TrueCoder/releases/latest/download/install.sh | sh
+```
+
+The installer requires Python 3.10 or newer, verifies the release wheel against
+its published SHA-256 checksum, installs into an isolated environment under
+your user data directory, and links `truecoder` into `~/.local/bin`. It never
+uses `sudo`. If that directory is not already on `PATH`, the installer prints
+the one-line command needed for the current shell.
+
+To inspect the installer before running it:
+
+```bash
+curl -fsSLO https://github.com/Shivam583-hue/TrueCoder/releases/latest/download/install.sh
+less install.sh
+sh install.sh
+```
+
+On Windows PowerShell:
+
+```powershell
+irm https://github.com/Shivam583-hue/TrueCoder/releases/latest/download/install.ps1 | iex
+```
+
+The Windows installer creates a private virtual environment under
+`%LOCALAPPDATA%\TrueCoder` and adds its launcher directory to the user `PATH`.
+Open a new terminal after the first installation. Re-running either installer
+updates the same installation when a newer release is available.
+
+Verify the result with:
+
+```bash
+truecoder --version
+```
+
 ## Prerequisites
 
 - **Python 3.10 or newer.** The current development environment uses 3.14.3.
@@ -509,26 +550,19 @@ The container backend simply reports itself unavailable, and `shell` continues t
 
 ## Running TrueCoder
 
-Install the project from a source checkout using the
-[development setup](CONTRIBUTING.md#development-setup), then create your
-provider configuration:
-
-```bash
-cp .env.example .env
-```
-
-Fill in `MODEL`. You can also set a provider-specific key, or leave credentials
-empty and use `/models` in the interface. `BASE_URL` remains the compatibility
-path for OpenRouter or a custom endpoint. Direct OpenAI offers browser sign-in,
-headless device authorization, or an API key; a custom endpoint uses the
-authentication methods configured for it. Then
-launch:
+After [installing TrueCoder](#installation), open a terminal inside the Git
+repository you want it to work on and launch:
 
 ```bash
 truecoder
 ```
 
-`python -m truecoder` is equivalent.
+Use `/models` to connect a provider and select a model. Direct OpenAI offers
+ChatGPT browser sign-in, headless device authorization, or an API key. You can
+also configure provider credentials through environment variables or a local
+`.env`; see [Environment variables](#environment-variables). `python -m
+truecoder` is equivalent when the package is active in the current Python
+environment.
 
 TrueCoder resolves the project root from the current working directory, so launch it from inside the repository you want it to work on.
 Everything the filesystem tools can reach is rooted at that project root.
@@ -572,7 +606,10 @@ an explicit `--mode` option.
 ## Environment variables
 
 Configuration is read from `.env` in the launch directory, or from the real environment.
-Copy `.env.example` and never commit the filled-in file.
+You normally do not need this file because `/models` stores the selected model
+and credential outside the repository. If you prefer environment-based setup,
+create a local `.env` from the table below; source contributors can copy
+`.env.example`. Never commit a filled-in `.env`.
 
 | Variable           | Required | Purpose                                                                                                             |
 | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -882,6 +919,7 @@ who change or build the image should follow the
 | Command                                              | Description                                                     |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
 | `truecoder`                                          | Launch the terminal application in the current project          |
+| `truecoder --version`                                | Print the installed TrueCoder version and exit                   |
 | `python -m truecoder`                                | Equivalent module entry point                                   |
 | `truecoder -p "..."`                                 | Run one prompt without the interface                            |
 | `truecoder --mode plan`                              | Launch the interface in read-only Plan mode                     |
@@ -1037,8 +1075,7 @@ Empty sessions are temporary placeholders and are removed automatically when you
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for the current development baseline and all
-future release notes.
+See [CHANGELOG.md](CHANGELOG.md) for v1.0.0 and future release notes.
 
 ## Contributing
 

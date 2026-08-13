@@ -23,6 +23,7 @@ from truecoder.providers.models import (
     ModelInfo,
     Provider,
 )
+from truecoder.version import package_version
 
 MAX_MODELS: Final = 1000
 MAX_RESPONSE_BYTES: Final = 4 * 1024 * 1024
@@ -350,7 +351,7 @@ async def fetch_models_dev(
                 url,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "truecoder/0.1.0",
+                    "User-Agent": f"truecoder/{package_version()}",
                 },
             )
     except httpx.HTTPError as error:
