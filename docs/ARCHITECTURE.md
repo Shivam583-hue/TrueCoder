@@ -124,9 +124,15 @@ repository, naming continuous integration first because that is the command the
 project actually keeps working; it forbids installing anything to make a command
 succeed, because changing the user's environment is the user's decision; it says
 plainly that a shortened result means read a narrower range next and never the
-same range again; and it states that every action waits on a human approval, so a
-speculative call spends someone's attention.
+same range again; and it describes approval as mode-dependent, so the model does
+not assume either constant prompting or unrestricted execution.
 Each rule is there because its absence was observed costing a turn.
+
+The base prompt also asks an agent-created Git commit to include
+`Co-authored-by: TrueCoder-agent <truecoder39@gmail.com>` unless the user
+explicitly opts out. The trailer records authorship; it changes no execution or
+approval boundary and is not retrofitted by rewriting an otherwise complete
+commit.
 
 The prompt also carries an environment block gathered once at startup: working
 directory, operating system, the interpreter TrueCoder is running, and the
@@ -228,8 +234,8 @@ Model text is only committed once the response is complete. Request failures abo
 The detailed turn lifecycle is:
 
 1. The user sends a message.
-2. Execution is initialized if needed, the workspace is checkpointed, old
-   history is compacted when necessary, and `turn_start` hooks run.
+2. Execution is initialized if needed, old history is compacted when necessary,
+   and non-Plan turns capture a workspace checkpoint and run `turn_start` hooks.
 3. The agent starts an active turn and records the user message as pending.
 4. The context builder creates a model request.
 5. The model returns text, tool calls, or both.
@@ -238,8 +244,8 @@ The detailed turn lifecycle is:
 8. A final assistant response completes the pending turn.
 9. The complete pending message group is committed as one turn and active-turn
    state is cleared.
-10. `turn_end` hooks run, with `files_changed` decided against the pre-turn
-    checkpoint.
+10. Non-Plan turns run `turn_end` hooks, with `files_changed` decided against
+    the pre-turn checkpoint.
 
 ## Memory
 
@@ -247,8 +253,9 @@ Memory is what the agent knows about a project after the conversation ends.
 
 The risk it introduces is not storage, it is invisibility: a note recorded weeks
 ago changes behaviour today with no obvious cause. Three decisions answer that
-directly. Both tools require approval, because a durable change to future
-behaviour deserves the same gate as a durable change to a file. Every note is
+directly. Both tools require approval in Build, because a durable change to
+future behaviour deserves the same gate as a durable change to a file; they are
+absent from Plan and explicitly authorized in Full Access. Every note is
 projected into the request verbatim, so what the model is told is exactly what
 the user can read. And `ctrl+n` lists every note with the ability to delete any
 of them, which makes the store inspectable rather than merely bounded.
@@ -622,7 +629,8 @@ Retrieved text is untrusted third-party input. It is returned with an explicit
 notice and the prompt guidance says to treat it as data and never as
 instructions. That is mitigation, not a guarantee: a model can still be
 influenced by what it reads, which is the reason `web_fetch` requires approval
-and the reason its content is fenced rather than blended into the transcript.
+in Build and Plan and the reason its content is fenced rather than blended into
+the transcript. Full Access deliberately skips that interaction.
 
 ## Code intelligence
 
@@ -714,10 +722,11 @@ third-party data. The prompt guidance says the same thing in the same terms as
 a result that tries to redirect the agent as an attempted attack worth naming.
 Non-text content blocks are named but not inlined.
 
-Every server tool requires approval. Nothing about being configured makes a call
-pre-authorised, which is the opposite of the hook rule, because a hook is a
-command the user wrote and a server tool is a call the model invented against a
-schema a third party wrote.
+Every server tool requires approval in Build. Nothing about being configured
+makes a call pre-authorised, which is the opposite of the hook rule, because a
+hook is a command the user wrote and a server tool is a call the model invented
+against a schema a third party wrote. Plan withholds server tools; Full Access
+authorizes them without a prompt while retaining their schema and result bounds.
 
 Anything that accepts a workspace-relative path shares one containment rule.
 `Path.is_absolute` is platform-dependent and answers the wrong question here: on
@@ -819,9 +828,10 @@ across calls, which is exactly the thing models do unreliably. An invalid plan
 is rejected as a recoverable `invalid_plan` tool error and leaves the previous
 plan intact, so a bad call costs the model one turn rather than its plan.
 
-The tool is the only tool that does not require approval. It touches nothing
-outside memory, and gating it would put an approval prompt between the agent and
-every checklist update.
+At the tool-policy level it is the only tool that does not require approval. It
+touches nothing outside memory, and gating it would put an approval prompt
+between the agent and every checklist update. Plan separately auto-authorizes
+its local read allowlist as part of mode enforcement.
 
 The plan is deliberately not persisted. It is scratch for the task in flight,
 cleared by a new chat or a session switch. Because the store does not survive a
@@ -836,6 +846,42 @@ stream rather than through a published event. The transcript is an ordered log,
 and a queued message would be processed by the app's message pump while the
 turn worker keeps advancing, which would let a plan update land at the wrong
 position relative to the text and tool cards around it.
+
+## Agent modes
+
+`AgentMode` defines three workflows with one stable cycle: Build, Plan, and Full
+Access. The selected mode is snapshotted as the active mode when a turn starts.
+The TUI may select a different mode while that turn is running, but it applies
+only to the next turn; the current request, delegated work, and transcript
+footer keep the snapshot. This avoids one response changing its authorization
+rules halfway through a batch of tool calls.
+
+Build is the normal path. It advertises the complete registered toolset and
+routes every guarded operation through the existing approval service, including
+fingerprint reuse and nested execution approval.
+
+Plan is enforced at the capability boundary, not merely in prose. The request
+contains only a fixed allowlist of local reads, searches, diagnostics,
+`update_plan`, and `web_fetch`. A model that hallucinates a withheld tool still
+receives a `mode_restricted` result and the tool never runs. Local read-only
+calls proceed without prompting; public web access remains guarded because the
+page becomes untrusted model input. Plan skips turn hooks and checkpoints so a
+nominally read-only turn cannot trigger configured commands or write Git
+objects as a side effect.
+
+Full Access short-circuits TrueCoder approval requests at the agent boundary,
+including approval requests raised inside execution orchestration. It does not
+rewrite policy decisions or backend requirements. A denied command remains
+denied, a command needing isolation still needs a capable backend, project
+containment and resource limits remain enforced, and execution and mutation
+audits still record outcomes. Checkpoints and cancellation also remain active.
+
+`shift+tab` changes the selected mode in the TUI. The first interactive entry
+into Full Access is confirmed once per app launch with the surviving safeguards
+listed explicitly. Mode switching is refused while an approval is pending,
+because an existing request must be resolved under the rules that produced it.
+The composer shows the selected mode and every assistant footer shows the mode
+that governed that response.
 
 ## Approval
 
@@ -855,6 +901,11 @@ request-response handler: it presents the exact request, returns the selected
 decision and scope, and does not decide whether an earlier grant matches.
 
 Approval policy belongs to the tool. Orchestration belongs to the agent. Presentation belongs to the UI.
+
+The approval service is authoritative in Build. Plan auto-authorizes only its
+local read allowlist and still sends `web_fetch` through the service. Full
+Access bypasses the service interaction but never argument validation, project
+containment, or a hard execution-policy decision.
 
 Every request contains:
 
@@ -1057,9 +1108,10 @@ The shell tool consequently defaults to `filesystem_mode="host"` and
 `network_access=true`, so ordinary work reaches the machine the user is actually
 on, and asking for the container, a workspace filesystem mode, or no network is
 what opts into isolation.
-The approval gate is the authorization boundary for the default local path:
-every command is fingerprinted, previewed, and approved before it runs. The
-local backend remains a process-management boundary rather than an isolation
+In Build, the approval gate is the authorization boundary for the default local
+path: every command is fingerprinted, previewed, and approved before it runs.
+Full Access removes that interaction but not policy, backend selection, or audit.
+The local backend remains a process-management boundary rather than an isolation
 boundary.
 
 Policy keeps one lever over that default. A command whose risk reaches critical
@@ -1687,14 +1739,16 @@ a headless agent. Composition is therefore separate from presentation.
 returns them; `run_interactive` puts a Textual app in front of that, and the
 one-shot path drives the same object and renders events to a stream.
 
-The interesting problem is not plumbing, it is what approval means when nobody is
-there to give it. Refusing everything makes the mode useless and approving
-everything discards the execution platform, so an autonomy level names a risk
-ceiling and the existing classification decides the rest. `read-only` permits
+The agent mode and unattended autonomy are deliberately separate. `--mode`
+chooses Plan, Build, or Full Access and therefore controls which tools exist and
+whether approval interaction is used. In headless Build, `--autonomy` supplies
+the approval handler that no person is present to answer. `read-only` permits
 neither a file change nor a command, `edit` permits changes and commands up to
-medium risk, and `full` permits up to high; critical is denied by policy before
-autonomy is consulted. The default is the most restrictive one, because an
-operator who did not choose should get the safe answer.
+medium risk, and `full` permits up to high. Plan removes mutating capabilities
+before autonomy matters. Full Access bypasses the autonomy handler, but critical
+or otherwise denied execution is still refused by policy. The default remains
+Build with read-only autonomy, because an operator who chose neither should get
+the conservative answer.
 
 A refusal is stated rather than silent. Each one names the tool and the ceiling
 it exceeded, printed to standard error, so a run that did less than expected
@@ -1738,11 +1792,13 @@ optional error; it does not import the agent, because tools do not depend on
 outer layers. The composition root supplies a runner that drives a real agent and
 maps its event stream into that shape.
 
-Approval is inherited, not bypassed. The subagent uses the parent's approval
-handler, so a delegated command reaches the same person or the same autonomy
-ceiling as a direct one. Delegation moves work off the parent's context; it does
-not move it outside the gate. A subagent that fails returns an error the parent
-can read and react to, rather than a silence it has to interpret.
+Authorization is inherited, not reset. The subagent snapshots the parent's
+active mode and uses its approval handler, so a delegated Build command reaches
+the same person or autonomy ceiling as a direct one, while delegated Full Access
+does not unexpectedly reopen prompts. Plan never exposes `delegate` at all.
+Delegation moves work off the parent's context; it does not move it outside the
+active mode or execution policy. A subagent that fails returns an error the
+parent can read and react to, rather than a silence it has to interpret.
 
 ## Choosing a model
 
@@ -2209,6 +2265,10 @@ Keep these invariants stable as the codebase grows:
 * at most one plan step is in progress at a time
 * an invalid plan update leaves the previous plan intact
 * the plan is scratch: it never persists across a session switch or restart
+* a turn snapshots its agent mode, and changing the selected mode never rewrites it
+* Plan withholds mutating tools and rejects a withheld call even if the model invents it
+* Full Access bypasses approval interaction and never a hard policy denial
+* a pending approval is resolved under its original mode before mode switching
 * transcript order follows the agent event stream, not a queued message
 * text the user or the model produced is rendered as text, never as markup
 * a tool call the model gets wrong is reported to it, never raised at the user
@@ -2270,7 +2330,7 @@ Keep these invariants stable as the codebase grows:
 * one failed task never stops the suite
 * a subagent shares the workspace and nothing else
 * only a subagent's reply crosses back, never its transcript
-* a subagent cannot delegate, and inherits the approval it cannot bypass
+* a subagent cannot delegate, and inherits both the active mode and approval path
 * several edits to one file land together or not at all
 * the client is given its settings and never reaches for them
 * changing a model is free, changing a connection invalidates it

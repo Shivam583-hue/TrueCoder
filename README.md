@@ -1,6 +1,6 @@
 <h1 align="center">TrueCoder</h1>
 
-> A terminal coding agent with an auditable execution plane: every command it runs is policy-checked, approved, bounded, sandboxable, and durably recorded before a single byte of project code executes.
+> A terminal coding agent with an auditable execution plane: every command it runs is policy-checked, mode-authorized, bounded, sandboxable, and durably recorded before a single byte of project code executes.
 
 [![Tests](https://github.com/Shivam583-hue/TrueCoder/actions/workflows/tests.yml/badge.svg)](https://github.com/Shivam583-hue/TrueCoder/actions/workflows/tests.yml)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)](#prerequisites)
@@ -9,9 +9,9 @@
 [![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](CONTRIBUTING.md#tests-and-checks)
 
 TrueCoder is a terminal-native Python coding-agent runtime that reads, searches, edits, and runs code inside one project.
-It ships a Textual terminal interface, direct OpenAI access through the Responses API, native Anthropic Messages and Google Gemini transports, an OpenAI-compatible Chat Completions client, persistent SQLite sessions, fifteen approval-gated tools plus any MCP servers you configure, a task planner, language-server code intelligence, workspace checkpoints, durable memory, user-configured hooks, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
+It ships a Textual terminal interface, direct OpenAI access through the Responses API, native Anthropic Messages and Google Gemini transports, an OpenAI-compatible Chat Completions client, persistent SQLite sessions, fifteen mode-governed tools plus any MCP servers you configure, a task planner, language-server code intelligence, workspace checkpoints, durable memory, user-configured hooks, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
 Shell execution passes through policy evaluation, capability-based backend selection, an approval fingerprint, a durable audit admission, a resource launch gate, arbitrated terminal outcomes, and one immutable terminal audit record.
-Commands run on your machine by default, with the toolchain, virtual environments, and caches you already have, because the approval gate is the authorization boundary and an agent that cannot run your test suite is not useful.
+Commands run on your machine by default, with the toolchain, virtual environments, and caches you already have, because agent mode, execution policy, and the approval path form the authorization boundary and an agent that cannot run your test suite is not useful.
 When a command must be isolated instead, the certified sandbox profile runs it in a digest-pinned, non-root, read-only, network-denied, capability-dropped Docker container that is proven against real Docker rather than assumed safe.
 
 ## Table of contents
@@ -45,10 +45,10 @@ Coming soon...
 ## Key features
 
 - **Auditable execution** - every command is policy-classified, approval-gated when needed, bounded by explicit limits, and recorded with immutable execution evidence.
-- **Reviewable, undoable changes** - file mutations render as unified diffs, every turn starts from a git-backed checkpoint, and restores create their own safety checkpoint first.
+- **Reviewable, undoable changes** - file mutations render as unified diffs, every change-capable turn starts from a git-backed checkpoint, and restores create their own safety checkpoint first.
 - **Flexible model access** - one `/models` workflow connects direct OpenAI with ChatGPT or API credentials, uses native Anthropic and Google transports, and reaches every supported Models.dev provider.
 - **State that stays under your control** - project-scoped sessions, visible durable memory, rolling context compaction, and workspace-local instructions survive long-running work without silently crossing repositories.
-- **A complete coding toolkit** - fifteen built-in tools cover files, shell, web, code intelligence, planning, memory, and delegation; bounded MCP servers can add more without bypassing approvals.
+- **A complete coding toolkit** - fifteen built-in tools cover files, shell, web, code intelligence, planning, memory, and delegation; bounded MCP servers can add more without bypassing mode restrictions or execution policy.
 - **Cross-platform by design** - Linux and macOS use POSIX process supervision, Windows uses Job Objects, and an optional digest-pinned Docker sandbox supplies stronger isolation on supported Linux hosts.
 
 [Explore all features](#all-features).
@@ -533,21 +533,40 @@ truecoder
 TrueCoder resolves the project root from the current working directory, so launch it from inside the repository you want it to work on.
 Everything the filesystem tools can reach is rooted at that project root.
 
+### Choose how the agent works
+
+Press `shift+tab` to cycle through `Build → Plan → Full Access → Build`. The
+active mode is always shown beside the model in the composer, and each response
+keeps the mode it started with in its footer.
+
+| Mode | What it does |
+| --- | --- |
+| **Build** | The normal coding mode. TrueCoder can inspect, edit, run, remember, and delegate, pausing when an operation needs your approval. |
+| **Plan** | Read-only investigation. Only project reads, searches, diagnostics, public web access, and plan updates are available; mutations, commands, memory changes, MCP tools, and delegation are structurally unavailable. |
+| **Full Access** | Builds without TrueCoder approval prompts. Hard policy denials, project boundaries, isolation requirements, resource limits, checkpoints, audit records, and `escape` cancellation still apply. |
+
+The first interactive switch into Full Access asks for confirmation and names
+the remaining safeguards. Confirmation lasts only for that app launch. A mode
+change during a response applies to the next turn, and an open approval must be
+resolved before modes can change. New launches start in Build unless you pass
+an explicit `--mode` option.
+
 ## Terminal shortcuts
 
-| Key      | Action                                            |
-| -------- | ------------------------------------------------- |
-| `ctrl+q` | Quit, the same action `/quit` and `/exit` run       |
-| `/`      | List the commands, narrowing as you type           |
-| `tab`    | Complete the command being typed, otherwise move focus |
-| `ctrl+l` | Start a new chat                                  |
-| `ctrl+p` | Open the session browser                          |
-| `ctrl+a` | Show all providers inside `/models`; otherwise open the audit |
-| `ctrl+e` | Show execution and backend health                 |
-| `ctrl+r` | Browse and restore workspace checkpoints          |
-| `ctrl+d` | Review what this turn changed on disk             |
-| `ctrl+n` | Browse and forget what the agent remembers        |
-| `escape` | Cancel the in-flight response or running execution |
+| Key         | Action                                            |
+| ----------- | ------------------------------------------------- |
+| `shift+tab` | Cycle Build, Plan, and Full Access                  |
+| `ctrl+q`    | Quit, the same action `/quit` and `/exit` run       |
+| `/`         | List the commands, narrowing as you type           |
+| `tab`       | Complete the command being typed, otherwise move focus |
+| `ctrl+l`    | Start a new chat                                  |
+| `ctrl+p`    | Open the session browser                          |
+| `ctrl+a`    | Show all providers inside `/models`; otherwise open the audit |
+| `ctrl+e`    | Show execution and backend health                 |
+| `ctrl+r`    | Browse and restore workspace checkpoints          |
+| `ctrl+d`    | Review what this turn changed on disk             |
+| `ctrl+n`    | Browse and forget what the agent remembers        |
+| `escape`    | Cancel the in-flight response or running execution |
 
 ## Environment variables
 
@@ -815,8 +834,9 @@ trusted to be sensible. Results are size-capped and returned to the model with a
 standing note that they are third-party data and never instructions, matching how
 `web_fetch` already treats a fetched page.
 
-Every server tool requires approval, exactly like a built-in one, and goes
-through the same fingerprint and audit. Parsing is strict and fail-closed like
+Every server tool requires approval in Build, exactly like a guarded built-in,
+and goes through the same fingerprint and audit. Plan does not advertise MCP
+tools, while Full Access authorizes them without a prompt. Parsing is strict and fail-closed like
 `hooks.json`. A server that fails to start, times out, or points its working
 directory outside the workspace is reported in a startup notification and
 skipped; the other servers and the application start normally.
@@ -856,11 +876,20 @@ who change or build the image should follow the
 | `truecoder`                                          | Launch the terminal application in the current project          |
 | `python -m truecoder`                                | Equivalent module entry point                                   |
 | `truecoder -p "..."`                                 | Run one prompt without the interface                            |
+| `truecoder --mode plan`                              | Launch the interface in read-only Plan mode                     |
+| `truecoder -p "..." --mode full-access`             | Run one prompt without TrueCoder approval prompts               |
 | `truecoder -p "..." --autonomy edit`                 | Allow file changes and medium-risk commands unattended          |
 | `truecoder --eval`                                   | Score the agent on the shipped tasks                            |
 | `/models` in the composer                            | Choose or connect a provider, then select one of its models      |
 | `/login` in the composer                             | Reconnect the active provider using key, browser, or device auth |
 | `/logout` in the composer                            | Forget the current provider's stored key and OAuth token        |
+
+For a headless Build turn, `--autonomy read-only|edit|full` decides which
+approval-required operations may proceed without a person present. `--mode`
+controls the agent workflow itself: Plan removes mutating tools, Build uses the
+autonomy ceiling, and Full Access bypasses approval prompts while retaining
+hard execution policy. The two flags are separate so CI can keep Build's normal
+toolset while choosing a conservative unattended risk ceiling.
 
 ## Runtime data and storage
 
@@ -905,14 +934,15 @@ Empty sessions are temporary placeholders and are removed automatically when you
 ## All features
 
 - **Terminal-native agent** - a Textual TUI with streaming responses, live tool cards, inline approvals, cancellation, and token accounting.
+- **Three deliberate working modes** - `shift+tab` cycles Build, Plan, and Full Access with the active choice always visible. Plan removes mutating capabilities rather than merely asking the model to behave, while Full Access skips approval prompts without weakening hard policy, project containment, audit, checkpoints, resource limits, or cancellation.
 - **Turn-based conversation model** - only complete, valid turns enter history, so a tool call never survives without its result.
 - **Persistent project-scoped sessions** - completed turns are stored in SQLite outside the repository and restored transactionally, and one repository can never list or resume another repository's sessions.
-- **Fifteen approval-gated tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, `get_diagnostics`, `remember`, `forget`, and `delegate`, each with its own validated schema and approval policy. `edit_file` takes a list of edits applied together, so a multi-site change costs one call and one approval and either lands whole or not at all. A tool call the model gets wrong comes back as an error it can read and retry, so a bad argument costs one call rather than the turn.
+- **Fifteen mode-governed tools** - `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `shell`, `web_fetch`, `find_symbol`, `goto_definition`, `find_references`, `get_diagnostics`, `remember`, `forget`, and `delegate`, each with its own validated schema and approval policy. Build presents guarded calls for approval, Plan exposes only its read-only allowlist, and Full Access authorizes allowed calls without prompting. `edit_file` takes a list of edits applied together, so a multi-site change costs one call and one approval in Build and either lands whole or not at all. A tool call the model gets wrong comes back as an error it can read and retry, so a bad argument costs one call rather than the turn.
 - **A context budget that is actually enforced** - a single shell or fetch result can exceed the whole token budget, so oversized tool results are shortened where the request is assembled, into a valid envelope that says how much was dropped. The stored turn and session record keep the complete tool result; the execution and mutation audits retain their independent bounded evidence.
-- **Memory you can read, correct, and delete** - `remember` records a durable fact about the project and `forget` drops one, both approval-gated because they change behaviour in future sessions. A note that stops being true is corrected in one step with `replaces`, so a correction never leaves the old version contradicting the new one on every later turn. Notes are keyed case- and punctuation-insensitively so trivial variants cannot crowd out real facts, they are scoped to one workspace, projected into every request, and `ctrl+n` shows exactly what the model is being told.
+- **Memory you can read, correct, and delete** - `remember` records a durable fact about the project and `forget` drops one, both guarded in Build because they change behaviour in future sessions and unavailable in Plan. A note that stops being true is corrected in one step with `replaces`, so a correction never leaves the old version contradicting the new one on every later turn. Notes are keyed case- and punctuation-insensitively so trivial variants cannot crowd out real facts, they are scoped to one workspace, projected into every request, and `ctrl+n` shows exactly what the model is being told.
 - **Hooks that run inside the execution plane** - a versioned `hooks.json` can run your formatter or linter at turn start or after a turn that changed files. Because you wrote the config, a hook is pre-authorised rather than prompting, but it is still bounded, policy-checked, and written to the same durable audit as any other command.
 - **See what a turn actually changed** - `ctrl+d` diffs the workspace against the pre-turn checkpoint, so a turn's real effect on disk is visible even when files were changed by a shell command rather than by the reviewed edit tools. The mutation audit records what `write_file` and `edit_file` did; this records what happened.
-- **Undoable turns** - a checkpoint of the whole workspace is captured before every turn using git plumbing, so a turn can be reversed even when the agent changed files through `shell` rather than through the reviewed edit tools. Restoring first captures the current state, so a restore is itself undoable.
+- **Undoable turns** - a checkpoint of the whole workspace is captured before every Build or Full Access turn using git plumbing, so a turn can be reversed even when the agent changed files through `shell` rather than through the reviewed edit tools. Plan skips checkpoints to remain read-only. Restoring first captures the current state, so a restore is itself undoable.
 - **Loop detection, not just a cap** - identical tool calls returning identical results are recognised as a stall, the tools are withdrawn so the model must answer with what it has, and a model that ignores the withdrawal is stopped rather than allowed to keep spending. A stuck agent that previously burned 25 model requests and then failed the turn now costs 4 and still answers.
 - **Rolling compaction instead of silent forgetting** - when history outgrows the budget, the oldest turns are summarised into a running summary rather than dropped, and the summary is labelled as history so it is never mistaken for instructions.
 - **Language-server code intelligence** - `find_symbol`, `goto_definition`, `find_references`, and `get_diagnostics` resolve names the way a compiler does instead of by text match, over a real LSP session with server discovery, stdio JSON-RPC framing, document synchronisation, and lifecycle management. This first version is strictly read-only.
@@ -933,11 +963,11 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **A sign-in you can complete anywhere** - direct OpenAI offers ChatGPT browser sign-in, ChatGPT device authorization, and a manual API key. The browser opens automatically while the full link remains copyable; its authorization-code exchange uses PKCE and the fixed Codex CLI redirect. The headless path follows OpenAI's brokered device flow: request a short code, poll for approval, then exchange the returned authorization code and verifier. Other configured providers can use standard RFC 8628 device grants. Links also land in the transcript, and closing a dialog cancels its work and releases the callback listener.
 - **Sessions that do not expire under you** - an OAuth token is renewed from its refresh token before the request that would have failed, once even when several turns notice at the same moment, and written back so a restart picks up the fresh one. A refresh that fails changes nothing rather than leaving a half-updated credential.
 - **Provider-aware authentication** - credentials are stored and resolved by provider ID, never inferred from a model prefix. Models.dev supplies each provider's documented environment variable names and transport metadata; a typed key or token outranks the environment for that provider. Direct OpenAI's subscription token is scoped to its Codex endpoint and account header, while an OpenAI API key stays on the public API. Keys and tokens are written privately in your config directory, `0600` on POSIX and ACL-restricted to your user and LocalSystem on Windows. Stored credentials are never inserted into child environments, and inherited credential-shaped variables are stripped.
-- **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. With nobody watching, what may proceed is a configured decision rather than an accident: `--autonomy read-only|edit|full` sets a risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
+- **Runs without a terminal** - `truecoder -p "fix the failing tests"` runs one prompt, prints the reply, and exits nonzero if the turn failed, so the agent works in CI and in scripts. `--mode plan|build|full-access` selects the workflow; in Build, `--autonomy read-only|edit|full` sets the unattended risk ceiling, anything above it is refused with a stated reason, and read-only is the default.
 - **Scored, not vibed** - `truecoder --eval` runs a fixed set of tasks in throwaway workspaces and reports how many passed, so "did that change help?" has an answer. Each task asserts an outcome on disk rather than which calls were made.
-- **Delegation with a hard boundary** - `delegate` hands a self-contained subtask to a fresh agent that shares the workspace but starts with an empty conversation. Only its final reply crosses back, never its transcript, it cannot delegate again, and it is approval-gated like any other tool.
+- **Delegation with a hard boundary** - `delegate` hands a self-contained subtask to a fresh agent that shares the workspace but starts with an empty conversation. Only its final reply crosses back, never its transcript, it cannot delegate again, and it inherits the active mode and approval path.
 - **MCP servers, treated as untrusted** - configured servers contribute their tools through the same registry, approval fingerprint, and audit as everything else. Their schemas are bounded before the model ever sees them, their names are namespaced so nothing can shadow a built-in, and their output is labelled as third-party data the model must never take instructions from. A server that fails to start is reported and skipped; it never stops the others or the application.
-- **A system prompt that teaches the agent to work** - learn how the repository builds and tests itself before running anything, never install a tool to make a command succeed, treat a shortened result as an instruction to read a narrower range rather than the same one again, and remember that every call spends a human approval. Each rule is there because its absence was observed costing a turn.
+- **A system prompt that teaches the agent to work** - learn how the repository builds and tests itself before running anything, never install a tool to make a command succeed, treat a shortened result as an instruction to read a narrower range rather than the same one again, respect the active mode, and attribute agent-authored commits unless the user opts out. Each rule is there because its absence was observed costing a turn.
 - **The agent knows what machine it is on** - the working directory, operating system, interpreter, and any workspace virtual environment are gathered at startup and stated in the system prompt, so the model runs your test suite through the right interpreter instead of probing for it or guessing.
 - **Nothing is downloaded between typing `truecoder` and seeing it** - the token encoding that context budgeting needs is a 3.6 MB fetch, so it is loaded on first use rather than at construction, warmed on a background thread while the interface paints, and cached in your cache directory instead of the temporary directory that a reboot clears. If it cannot be fetched at all, counting falls back to an estimate that over-counts rather than under-counts, so an offline launch degrades instead of failing.
 - **Useful by default, isolated on request** - shell commands run locally so the project's dependencies are actually present; asking for the container, for a non-host filesystem mode, or for no network opts into the sandbox instead. A request no backend can satisfy names the backend that refused it and why, rather than failing as a generic infrastructure error.
@@ -984,7 +1014,7 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **Loop detection compares calls, not intent.** A model that varies its arguments trivially on every attempt keeps its tools until the `max_iterations` cap. The detector deliberately errs toward letting real work continue, because interrupting genuine progress is worse than paying for a few extra turns.
 - **Compaction is not persisted.** A rolling summary lives in memory for the running session. Resuming a stored session replays its turns and re-compacts from scratch rather than restoring the previous summary.
 - **`web_fetch` reaches only public addresses, on purpose.** Fetching `http://localhost:3000` from your own dev server is refused, because the same rule is what stops a redirect chain reaching cloud metadata. There is no opt-out; use `shell` with `curl` when you genuinely mean to reach a local service.
-- **Fetched pages are still model input.** The untrusted-content notice and prompt guidance reduce the risk that a page instructs the agent, they do not eliminate it. `web_fetch` requires approval for that reason, so you see the URL before it is read.
+- **Fetched pages are still model input.** The untrusted-content notice and prompt guidance reduce the risk that a page instructs the agent, they do not eliminate it. `web_fetch` requires approval in Build and Plan for that reason, so you see the URL before it is read; Full Access skips that prompt by design.
 - **`web_fetch` renders no JavaScript.** It returns the server's HTML as text, so single-page applications that assemble their content in the browser come back nearly empty.
 - **`edit_file` matches line endings literally.** `old_text` containing a newline will not match a CRLF file, which mostly affects Windows checkouts. This is existing behavior rather than a diff-rendering problem: the tool reports `text_not_found` instead of editing the wrong thing, and single-line replacements are unaffected.
 - **Mutation evidence has no retention policy yet.** The execution audit compacts expired terminal evidence on startup; the mutation store only grows. Records are small, but nothing prunes them.

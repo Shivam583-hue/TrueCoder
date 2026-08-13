@@ -27,6 +27,9 @@ Unreleased until the first release is cut.
   checkpoints, turn-level change review, and undoable restores.
 - Project-scoped durable memory, rolling context compaction, task planning,
   user-configured hooks, and approval-gated MCP tool servers.
+- Build, Plan, and Full Access agent modes, with `shift+tab` switching, visible
+  per-turn mode labels, structural read-only enforcement in Plan, a one-time
+  Full Access confirmation, and matching `--mode` support for headless runs.
 - Contributor documentation covering setup, architecture boundaries, test
   selection, common change locations, sandbox verification, and review
   expectations.
@@ -34,6 +37,9 @@ Unreleased until the first release is cut.
 
 ### Changed
 
+- Agent-authored Git commits now include
+  `Co-authored-by: TrueCoder-agent <truecoder39@gmail.com>` unless the user
+  explicitly opts out.
 - Unified provider connection and model selection under `/models`: the picker
   now shows connected models and popular providers together, opens the complete
   provider directory with `ctrl+a`, and waits until authentication and model

@@ -108,6 +108,7 @@ Additional expectations:
 | ------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------- |
 | Terminal UI, transcript, or approvals | `src/truecoder/tui`                               | `styles.tcss`, agent events, and the TUI integration tests             |
 | Agent loop or turn lifecycle          | `src/truecoder/agent/agent.py` and `state.py`     | Context builder, session codec, and unit agent tests                   |
+| Agent modes or approval bypass        | `src/truecoder/agent/mode.py` and `agent.py`      | TUI mode controls, CLI wiring, delegation, and mode enforcement tests  |
 | Providers, credentials, or models     | `src/truecoder/providers`                         | `client`, `tui/credentials.py`, and provider tests                     |
 | A new tool                            | `src/truecoder/tools/builtin`                     | `builtin/__init__.py`, registration in `agent.py`, and tool tests      |
 | Plan shape or invariants              | `src/truecoder/planning`                          | `builtin/plan.py`, `PlanCard`, plan projection in `context.py`         |
@@ -297,6 +298,11 @@ docs: clarify contributor workflow
 Use an imperative, concise subject and select the smallest useful scope. Keep
 generated files, credentials, local databases, virtual environments, and filled
 `.env` files out of commits.
+
+When TrueCoder creates a commit, its system guidance asks it to append
+`Co-authored-by: TrueCoder-agent <truecoder39@gmail.com>` so the agent's work is
+visible in repository history. A user may explicitly opt out; honor that choice
+and do not rewrite an existing commit solely to add the trailer.
 
 A pull request should include:
 
