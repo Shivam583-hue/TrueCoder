@@ -9,11 +9,19 @@
 [![Sandbox](https://img.shields.io/badge/sandbox-Linux%20%C2%B7%20Docker%20certified-2496ed?style=flat-square&logo=docker&logoColor=white)](#container-sandbox)
 [![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](CONTRIBUTING.md#tests-and-checks)
 
-TrueCoder is a terminal-native Python coding-agent runtime that reads, searches, edits, and runs code inside one project.
-It ships a Textual terminal interface, direct OpenAI access through the Responses API, native Anthropic Messages and Google Gemini transports, an OpenAI-compatible Chat Completions client, persistent SQLite sessions, fifteen mode-governed tools plus any MCP servers you configure, a task planner, language-server code intelligence, workspace checkpoints, durable memory, user-configured hooks, and an execution subsystem that treats running a command as a security event rather than a subprocess call.
-Shell execution passes through policy evaluation, capability-based backend selection, an approval fingerprint, a durable audit admission, a resource launch gate, arbitrated terminal outcomes, and one immutable terminal audit record.
-Commands run on your machine by default, with the toolchain, virtual environments, and caches you already have, because agent mode, execution policy, and the approval path form the authorization boundary and an agent that cannot run your test suite is not useful.
-When a command must be isolated instead, the certified sandbox profile runs it in a digest-pinned, non-root, read-only, network-denied, capability-dropped Docker container that is proven against real Docker rather than assumed safe.
+TrueCoder is a terminal-native coding agent that reads, searches, edits, and runs code inside your project. It combines flexible model access and a complete coding toolkit with persistent sessions, planning, code intelligence, checkpoints, memory, auditable execution, and optional Docker isolation.
+
+Install on Linux or macOS:
+
+```sh
+curl -fsSL https://github.com/Shivam583-hue/TrueCoder/releases/latest/download/install.sh | sh
+```
+
+Install on Windows with PowerShell:
+
+```powershell
+irm https://github.com/Shivam583-hue/TrueCoder/releases/latest/download/install.ps1 | iex
+```
 
 ## Table of contents
 
