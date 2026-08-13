@@ -317,13 +317,21 @@ class ContextBuilderTests(unittest.TestCase):
 
         self.assertEqual(builder.max_input_tokens, 64000)
 
-    def test_from_environment_rejects_missing_model(self):
+    def test_from_environment_uses_the_fallback_tokenizer_before_model_setup(self):
+        counter = Mock()
+
         with (
             patch("truecoder.agent.context.load_dotenv"),
             patch.dict(os.environ, {}, clear=True),
-            self.assertRaisesRegex(ValueError, "MODEL"),
+            patch(
+                "truecoder.agent.context.TiktokenTokenCounter",
+                return_value=counter,
+            ) as counter_type,
         ):
-            ContextBuilder.from_environment()
+            builder = ContextBuilder.from_environment()
+
+        self.assertIs(builder.token_counter, counter)
+        counter_type.assert_called_once_with("o200k_base")
 
     def test_from_environment_rejects_non_integer_limit(self):
         with (

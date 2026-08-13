@@ -280,14 +280,19 @@ class SessionSettings:
     def __post_init__(self) -> None:
         if not isinstance(self.provider, Provider):
             raise CredentialError("provider must be a Provider")
-        if not isinstance(self.model, str) or not self.model.strip():
-            raise CredentialError("a model identifier is required")
+        if not isinstance(self.model, str):
+            raise CredentialError("model must be text")
+        self.model = self.model.strip()
         self.reasoning_effort = validate_reasoning_effort(self.reasoning_effort)
         if not isinstance(self.reasoning_efforts, tuple):
             raise CredentialError("reasoning_efforts must be a tuple")
         for effort in self.reasoning_efforts:
             validate_reasoning_effort(effort)
         self._fit_reasoning_effort()
+
+    @property
+    def has_model(self) -> bool:
+        return bool(self.model)
 
     @property
     def available_reasoning_efforts(self) -> tuple[str, ...]:
@@ -376,8 +381,6 @@ def settings_from_environment(
     stored_reasoning_effort: str | None = None,
 ) -> SessionSettings:
     model = (stored_model or "").strip() or os.getenv("MODEL", "").strip()
-    if not model:
-        raise CredentialError("MODEL must be set in the environment or a .env file")
 
     base_url = os.getenv("BASE_URL", "").strip() or None
     if base_url is None:

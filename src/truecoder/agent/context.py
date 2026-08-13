@@ -21,7 +21,12 @@ from truecoder.agent.prompts import (
     add_web_fetch_tool_guidance,
     build_system_prompt,
 )
-from truecoder.agent.tokenizer import Encoding, approximate_tokens, load_encoding
+from truecoder.agent.tokenizer import (
+    FALLBACK_ENCODING,
+    Encoding,
+    approximate_tokens,
+    load_encoding,
+)
 from truecoder.memory import MemoryStore
 from truecoder.planning import PlanStore
 
@@ -184,9 +189,7 @@ class ContextBuilder:
     ) -> "ContextBuilder":
         load_dotenv()
 
-        model = os.getenv("MODEL")
-        if model is None or not model.strip():
-            raise ValueError("The MODEL environment variable is required.")
+        model = os.getenv("MODEL", "").strip() or FALLBACK_ENCODING
 
         raw_max_tokens = os.getenv("MAX_INPUT_TOKENS", str(DEFAULT_MAX_INPUT_TOKENS))
 
@@ -200,7 +203,7 @@ class ContextBuilder:
         return cls(
             system_prompt=build_system_prompt(project_instructions, environment),
             max_input_tokens=max_input_tokens,
-            token_counter=TiktokenTokenCounter(model.strip()),
+            token_counter=TiktokenTokenCounter(model),
             plan_store=plan_store,
         )
 

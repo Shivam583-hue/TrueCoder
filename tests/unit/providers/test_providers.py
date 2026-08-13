@@ -241,14 +241,12 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(settings.provider.name, "custom")
         self.assertEqual(settings.provider.label, "Custom provider")
 
-    def test_a_missing_model_is_refused_by_name(self):
-        with (
-            patch.dict("os.environ", {"API_KEY": "k"}, clear=True),
-            self.assertRaises(CredentialError) as caught,
-        ):
-            settings_from_environment()
+    def test_a_missing_model_is_a_valid_first_run_state(self):
+        with patch.dict("os.environ", {"API_KEY": "k"}, clear=True):
+            settings = settings_from_environment()
 
-        self.assertIn("MODEL", str(caught.exception))
+        self.assertEqual(settings.model, "")
+        self.assertFalse(settings.has_model)
 
     def test_a_missing_key_leaves_the_credential_unset(self):
         with patch.dict("os.environ", {"MODEL": "m"}, clear=True):

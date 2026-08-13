@@ -165,6 +165,50 @@ class ModelCommandTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(app.screen.active_model, "anthropic/claude-opus-5")
 
+    async def test_a_fresh_install_opens_before_a_model_is_selected(self):
+        client = LLMClient(
+            SessionSettings(
+                provider=openai_provider(),
+                credential=None,
+                model="",
+            )
+        )
+        app = TrueCoderApp(
+            Agent(
+                llm_client=client,
+                context_builder=ContextBuilder(
+                    system_prompt="test system",
+                    max_input_tokens=1000,
+                    token_counter=FixedTokenCounter(),
+                ),
+            )
+        )
+        directory = (
+            CatalogSlice(
+                openai_provider(),
+                (ModelInfo(identifier="gpt-5.6-sol", provider="openai"),),
+            ),
+        )
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "truecoder.providers.catalog.load_models_dev",
+                return_value=directory,
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                self.assertEqual(app._resolved_model_name(), "model not configured")
+
+                await self._type(app, pilot, "/models")
+                await wait_until(
+                    pilot,
+                    lambda: isinstance(app.screen, ModelPickerScreen),
+                    description="the first-run model picker",
+                )
+
+                self.assertEqual(app.screen.active_model, "")
+
     async def test_choosing_a_model_changes_what_the_agent_will_use(self):
         app = self._app()
 

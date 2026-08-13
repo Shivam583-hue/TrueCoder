@@ -204,6 +204,20 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "sign in or add an API key"):
             client.get_client()
 
+    async def test_a_missing_model_points_to_the_model_picker(self):
+        client = LLMClient(
+            SessionSettings(
+                provider=openai_provider(),
+                credential=None,
+                model="",
+            )
+        )
+
+        events = [event async for event in client.chat_completion([])]
+
+        self.assertEqual([event.type for event in events], [EventType.ERROR])
+        self.assertIn("Open /models", events[0].error)
+
     def test_a_missing_key_names_the_selected_provider(self):
         client = LLMClient(
             SessionSettings(
@@ -688,17 +702,17 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
         sdk_client.close.assert_awaited_once()
         self.assertIsNone(llm_client._LLMClient__client)
 
-    async def test_missing_model_is_a_configuration_error(self):
+    async def test_lazy_settings_report_a_missing_model_without_crashing(self):
         llm_client = LLMClient()
 
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            self.assertRaisesRegex(RuntimeError, "MODEL"),
-        ):
-            _ = [
+        with patch.dict(os.environ, {}, clear=True):
+            events = [
                 event
                 async for event in llm_client.chat_completion([], stream=False)
             ]
+
+        self.assertEqual([event.type for event in events], [EventType.ERROR])
+        self.assertIn("Open /models", events[0].error)
 
 
 if __name__ == "__main__":

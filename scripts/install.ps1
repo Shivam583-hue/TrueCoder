@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$Version = "1.0.0"
+$Version = "1.0.1"
 $Repository = "Shivam583-hue/TrueCoder"
 $Wheel = "truecoder-$Version-py3-none-any.whl"
 $DefaultReleaseBase = "https://github.com/$Repository/releases/download/v$Version"

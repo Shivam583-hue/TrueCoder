@@ -40,7 +40,7 @@ class ParserTests(unittest.TestCase):
             main(["--version"])
 
         self.assertEqual(stopped.exception.code, EXIT_OK)
-        self.assertEqual(output.getvalue().strip(), "truecoder 1.0.0")
+        self.assertEqual(output.getvalue().strip(), "truecoder 1.0.1")
 
     def test_no_prompt_means_interactive(self):
         self.assertIsNone(build_parser().parse_args([]).prompt)

@@ -7,6 +7,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-08-13
+
+### Fixed
+
+- Let fresh installations launch without a `MODEL` environment variable so
+  users can connect a provider and choose their first model through `/models`.
+- Show actionable model-picker guidance when a prompt is submitted before a
+  model has been selected, instead of terminating with a startup traceback.
+
 ## [1.0.0] - 2026-08-13
 
 ### Added
@@ -62,5 +71,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Made deferred credential focus and approval interactions safe across slower
   Windows and macOS Textual event loops.
 
-[Unreleased]: https://github.com/Shivam583-hue/TrueCoder/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/Shivam583-hue/TrueCoder/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/Shivam583-hue/TrueCoder/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/Shivam583-hue/TrueCoder/releases/tag/v1.0.0

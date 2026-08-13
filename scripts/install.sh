@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-VERSION="1.0.0"
+VERSION="1.0.1"
 REPOSITORY="Shivam583-hue/TrueCoder"
 WHEEL="truecoder-${VERSION}-py3-none-any.whl"
 DEFAULT_RELEASE_BASE="https://github.com/${REPOSITORY}/releases/download/v${VERSION}"

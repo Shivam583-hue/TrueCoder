@@ -54,11 +54,14 @@ python -m pip install ruff==0.16.0
 ```
 
 The editable install provides both `truecoder` and `python -m truecoder`. To
-exercise the interface manually, copy the provider template and fill in
-`MODEL`; credentials can remain empty if you intend to connect through
-`/models`:
+exercise the interface manually, launch it directly and use `/models` to
+connect a provider and choose a model. Copy the provider template only when
+you want to test environment-based configuration:
 
 ```bash
+truecoder
+
+# Optional environment-based setup:
 cp .env.example .env
 truecoder
 ```

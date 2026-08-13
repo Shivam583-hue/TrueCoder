@@ -46,6 +46,11 @@ from truecoder.tools.base import ToolCall
 
 load_dotenv()
 
+MODEL_REQUIRED_MESSAGE = (
+    "No model is configured. Open /models and choose a provider and model "
+    "before sending a message."
+)
+
 
 @dataclass(slots=True)
 class _ToolCallBuffer:
@@ -94,6 +99,8 @@ class LLMClient:
     def get_client(self) -> AsyncOpenAI:
         if self.__client is None:
             settings = self.settings
+            if not settings.has_model:
+                raise RuntimeError(MODEL_REQUIRED_MESSAGE)
             if settings.credential is None:
                 provider = settings.provider
                 name = provider.label if provider.is_named else "The model provider"
@@ -173,8 +180,12 @@ class LLMClient:
         *,
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncGenerator[StreamEvent, None]:
-        await self.refresh_credential()
         settings = self.settings
+        if not settings.has_model:
+            yield StreamEvent(type=EventType.ERROR, error=MODEL_REQUIRED_MESSAGE)
+            return
+
+        await self.refresh_credential()
         model = settings.model
         native = settings.provider.adapter in {"anthropic", "google"}
         client = None if native else self.get_client()

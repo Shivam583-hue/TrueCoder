@@ -624,7 +624,7 @@ create a local `.env` from the table below; source contributors can copy
 | `API_KEY`          | No       | Legacy initial key for the provider implied by `BASE_URL`, or direct OpenAI when `BASE_URL` is empty. A provider-specific variable or key saved through the interface is preferred. |
 | `OPENAI_API_KEY`   | No       | Direct OpenAI API key. A key saved through the interface outranks it.                                               |
 | `OPENROUTER_API_KEY` | No     | OpenRouter key. Models.dev supplies the equivalent environment names for other providers, such as `ANTHROPIC_API_KEY`. |
-| `MODEL`            | Until you pick one | Model to start with. A model chosen with `/models` is remembered and outranks this, so the TUI may correctly show a different one. Once a choice is stored, launching works with `MODEL` unset. |
+| `MODEL`            | No       | Optional model to start with. A model chosen with `/models` is remembered and outranks this, so the TUI may correctly show a different one. A fresh install opens normally without it and asks you to choose a model before the first request. |
 | `BASE_URL`         | No       | Compatibility endpoint. OpenRouter URLs resolve to the `openrouter` provider; another URL resolves to the explicit `custom` provider. Omit it to start on direct OpenAI. |
 | `MAX_INPUT_TOKENS` | No       | Context budget for the system prompt plus selected turns. Defaults to `64000`. Lower it if your model's window is smaller. |
 
@@ -1083,7 +1083,7 @@ Empty sessions are temporary placeholders and are removed automatically when you
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for v1.0.0 and future release notes.
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Contributing
 

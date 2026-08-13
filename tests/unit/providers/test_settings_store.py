@@ -125,6 +125,13 @@ class RoundTripTests(unittest.TestCase):
 
 
 class ResolutionTests(unittest.TestCase):
+    def test_a_fresh_install_can_resolve_before_a_model_is_selected(self):
+        with patch.dict("os.environ", {}, clear=True):
+            settings = settings_from_environment()
+
+        self.assertEqual(settings.model, "")
+        self.assertFalse(settings.has_model)
+
     def test_a_stored_model_wins_over_the_environment(self):
         with patch.dict(
             "os.environ", {"MODEL": "from-env", "API_KEY": "k"}, clear=True

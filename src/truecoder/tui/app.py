@@ -235,6 +235,8 @@ class TrueCoderApp(App[None]):
 
         try:
             settings = self.agent.llm_client.settings
+            if not settings.has_model:
+                return MODEL_NOT_CONFIGURED
             if settings.provider.name == "default":
                 return settings.model
             return f"{settings.provider.name}/{settings.model}"
@@ -247,6 +249,8 @@ class TrueCoderApp(App[None]):
         try:
             settings = self.agent.llm_client.settings
         except (RuntimeError, CredentialError):
+            return None
+        if not settings.has_model:
             return None
         return settings.reasoning_effort if settings.uses_reasoning_effort else None
 
