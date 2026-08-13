@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from tests.helpers.tui import click_when_ready, wait_until
-from truecoder.agent import Agent, ContextBuilder
+from truecoder.agent import Agent, AgentMode, ContextBuilder
 from truecoder.client.response import (
     EventType,
     StreamEvent,
@@ -17,6 +17,7 @@ from truecoder.providers import SessionSettings, settings_from_environment
 from truecoder.tools import ToolApproval, ToolArguments, ToolCall, ToolRegistry
 from truecoder.tools.base import BaseTool
 from truecoder.tui.app import TrueCoderApp
+from truecoder.tui.modes import FullAccessScreen
 from truecoder.tui.widgets import (
     ChatMessage,
     Composer,
@@ -173,6 +174,7 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                     "/ commands",
                     shortcuts,
                 )
+                self.assertIn("shift+tab mode", shortcuts)
                 self.assertIn(
                     "ctrl+p sessions",
                     shortcuts,
@@ -193,6 +195,71 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertTrue(client.closed)
+
+    async def test_shift_tab_cycles_modes_with_full_access_confirmation(self):
+        app = TrueCoderApp(make_agent(FakeLLMClient([])))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("shift+tab")
+            await pilot.pause()
+
+            self.assertIs(app.agent.mode, AgentMode.PLAN)
+            self.assertIn(
+                "Plan",
+                str(app.query_one("#composer-metadata").content),
+            )
+
+            await pilot.press("shift+tab")
+            await pilot.pause()
+
+            self.assertIs(app.agent.mode, AgentMode.PLAN)
+            self.assertIsInstance(app.screen, FullAccessScreen)
+            copy = " ".join(
+                str(widget.content)
+                for widget in app.screen.query(".session-delete-copy")
+            )
+            self.assertIn("stop asking", copy)
+            self.assertIn("Hard policy denials", copy)
+            await click_when_ready(
+                pilot,
+                app.screen.query_one("#full-access-confirm"),
+            )
+            await pilot.pause()
+
+            self.assertIs(app.agent.mode, AgentMode.FULL_ACCESS)
+            self.assertIn(
+                "Full Access",
+                str(app.query_one("#composer-metadata").content),
+            )
+
+            await pilot.press("shift+tab")
+            await pilot.pause()
+
+            self.assertIs(app.agent.mode, AgentMode.BUILD)
+
+            await pilot.press("shift+tab", "shift+tab")
+            await pilot.pause()
+
+            self.assertIs(app.agent.mode, AgentMode.FULL_ACCESS)
+            self.assertNotIsInstance(app.screen, FullAccessScreen)
+
+    async def test_escape_cancels_full_access_without_changing_mode(self):
+        app = TrueCoderApp(make_agent(FakeLLMClient([])))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("shift+tab", "shift+tab")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, FullAccessScreen)
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            self.assertIs(app.agent.mode, AgentMode.PLAN)
+            self.assertNotIsInstance(app.screen, FullAccessScreen)
+            self.assertIn(
+                "Plan",
+                str(app.query_one("#composer-metadata").content),
+            )
 
     async def test_enter_submits_and_streams_response(self):
         client = FakeLLMClient(
@@ -415,8 +482,66 @@ class TrueCoderAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(app.query_one(EmptyState).display)
             self.assertFalse(app.query_one(Composer).has_class("busy"))
 
+    async def test_mode_change_during_response_applies_to_the_next_turn(self):
+        client = BlockingLLMClient([])
+        app = TrueCoderApp(make_agent(client))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.query_one(PromptInput).text = "Long request"
+            await pilot.press("enter")
+            await wait_until(
+                pilot,
+                lambda: app.agent.active_mode is AgentMode.BUILD,
+                description="the build-mode turn to start",
+            )
+
+            await pilot.press("shift+tab")
+            await pilot.pause()
+
+            self.assertIs(app.agent.mode, AgentMode.PLAN)
+            self.assertIs(app.agent.active_mode, AgentMode.BUILD)
+            self.assertIn(
+                "Plan",
+                str(app.query_one("#composer-metadata").content),
+            )
+            assistant = list(app.query(ChatMessage))[-1]
+            self.assertIs(assistant.mode, AgentMode.BUILD)
+            self.assertIn(
+                "Build",
+                str(assistant.query_one(".message-footer").content),
+            )
+
+            await pilot.press("escape")
+            await app.workers.wait_for_complete()
+
 
 class TrueCoderAppApprovalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pending_approval_must_be_resolved_before_switching_modes(self):
+        tool = GuardedTool()
+        app = TrueCoderApp(make_agent(guarded_tool_call(), registry_with(tool)))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.query_one(PromptInput).text = "read it"
+            await pilot.press("enter")
+            await wait_until(
+                pilot,
+                lambda: app._pending_approval is not None,
+                description="the approval request",
+            )
+
+            await pilot.press("shift+tab")
+            await pilot.pause()
+
+            self.assertIs(app.agent.mode, AgentMode.BUILD)
+            self.assertIsNotNone(app._pending_approval)
+            self.assertIn(
+                "Build",
+                str(app.query_one("#composer-metadata").content),
+            )
+
+            await click_when_ready(pilot, app.query_one(".approval-reject"))
+            await app.workers.wait_for_complete()
+
     async def test_text_tool_and_final_response_keep_stream_order(self):
         tool = GuardedTool()
         client = ScriptedLLMClient(

@@ -27,6 +27,7 @@ from truecoder.agent.approval import (
 )
 from truecoder.agent.events import AgentEventType
 from truecoder.agent.messages import ModelMessage
+from truecoder.agent.mode import AgentMode
 from truecoder.client.response import TokenUsage
 from truecoder.execution.context import workspace_id_for
 from truecoder.execution.models import ExecutionLifecycleEvent
@@ -71,6 +72,7 @@ from truecoder.tui.model_picker import (
     ProviderInvite,
     ProviderPickerScreen,
 )
+from truecoder.tui.modes import FullAccessScreen
 from truecoder.tui.sessions import (
     DeleteSessionScreen,
     RenameSessionScreen,
@@ -187,6 +189,7 @@ class TrueCoderApp(App[None]):
         ),
         Binding("ctrl+d", "review_changes", "Changes", show=False, priority=True),
         Binding("ctrl+n", "manage_memory", "Memory", show=False, priority=True),
+        Binding("shift+tab", "cycle_mode", "Mode", show=False, priority=True),
         Binding("escape", "cancel_response", "Stop", show=False),
     ]
 
@@ -215,6 +218,7 @@ class TrueCoderApp(App[None]):
         self._active_worker: Worker[None] | None = None
         self._active_assistant: ChatMessage | None = None
         self._pending_approval: _PendingApproval | None = None
+        self._full_access_confirmed = False
         self._tool_cards: dict[str, ToolCallCard] = {}
         self._execution_cards: dict[str, ExecutionCard] = {}
         self._plan_card: PlanCard | None = None
@@ -251,7 +255,7 @@ class TrueCoderApp(App[None]):
             with VerticalScroll(id="transcript"):
                 yield EmptyState(id="empty-state")
 
-            yield Composer(self._model_name)
+            yield Composer(self._model_name, self.agent.mode)
 
         yield StatusBar(
             workspace,
@@ -1041,14 +1045,17 @@ class TrueCoderApp(App[None]):
         self.query_one("#empty-state", EmptyState).styles.display = "none"
         transcript = self.query_one("#transcript", VerticalScroll)
 
+        turn_mode = self.agent.mode
         user_message = ChatMessage(
             "user",
             prompt,
             model_name=self._model_name,
+            mode=turn_mode,
         )
         assistant_message = ChatMessage(
             "assistant",
             model_name=self._model_name,
+            mode=turn_mode,
         )
         await transcript.mount(user_message, assistant_message)
         self._active_assistant = assistant_message
@@ -1382,6 +1389,7 @@ class TrueCoderApp(App[None]):
         next_assistant = ChatMessage(
             "assistant",
             model_name=self._model_name,
+            mode=assistant_message.mode,
         )
         await transcript.mount(widget, next_assistant)
         self._active_assistant = next_assistant
@@ -1485,6 +1493,38 @@ class TrueCoderApp(App[None]):
             self.query_one(Composer).set_busy(busy)
         except NoMatches:
             return
+
+    def action_cycle_mode(self) -> None:
+        if len(self.screen_stack) > 1:
+            return
+        self._request_mode_change(self.agent.mode.next())
+
+    def _request_mode_change(self, requested: AgentMode) -> None:
+        if self._pending_approval is not None:
+            self.notify(
+                "Resolve the current approval before switching modes.",
+                severity="warning",
+            )
+            return
+        if requested is AgentMode.FULL_ACCESS and not self._full_access_confirmed:
+            self.push_screen(FullAccessScreen(), self._confirm_full_access)
+            return
+        self._apply_mode(requested)
+
+    def _confirm_full_access(self, confirmed: bool | None) -> None:
+        if not confirmed:
+            return
+        self._full_access_confirmed = True
+        self._apply_mode(AgentMode.FULL_ACCESS)
+
+    def _apply_mode(self, mode: AgentMode) -> None:
+        self.agent.mode = mode
+        try:
+            self.query_one(Composer).set_mode(mode)
+        except NoMatches:
+            pass
+        suffix = " for the next turn" if self._busy else ""
+        self.notify(f"{mode.label} mode{suffix}.")
 
     async def action_new_chat(self) -> None:
         active_worker = self._active_worker

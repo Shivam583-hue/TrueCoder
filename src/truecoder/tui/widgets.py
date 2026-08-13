@@ -13,6 +13,7 @@ from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Markdown, Static, TextArea
 
+from truecoder.agent.mode import AgentMode
 from truecoder.client.response import TokenUsage
 from truecoder.mutation import DIFF_LINE_PREFIXES, DiffLineKind, FileDiff
 from truecoder.planning import Plan, PlanStepStatus
@@ -51,6 +52,7 @@ def _logo_text() -> Text:
 def _session_metadata(
     model_name: str,
     *,
+    mode: AgentMode = AgentMode.BUILD,
     elapsed: float | None = None,
     state: str | None = None,
 ) -> Text:
@@ -63,7 +65,12 @@ def _session_metadata(
         }.get(state, "▣")
         color = "#ef6f78" if state in {"error", "stopped"} else "#4da3ff"
         metadata.append(f"{glyph}  ", style=color)
-    metadata.append("Build", style="bold #4da3ff")
+    mode_color = {
+        AgentMode.PLAN: "#b98cff",
+        AgentMode.BUILD: "#4da3ff",
+        AgentMode.FULL_ACCESS: "#f2a33a",
+    }[mode]
+    metadata.append(mode.label, style=f"bold {mode_color}")
     metadata.append("  ·  ", style="#666666")
     metadata.append(model_name, style="bold #d6d6d6")
     metadata.append("  ·  ", style="#666666")
@@ -78,6 +85,8 @@ def _launcher_shortcuts() -> Text:
     shortcuts = Text()
     shortcuts.append(COMMAND_PREFIX, style="#c8c8c8")
     shortcuts.append(" commands    ", style="#707070")
+    shortcuts.append("shift+tab", style="#c8c8c8")
+    shortcuts.append(" mode    ", style="#707070")
     shortcuts.append("ctrl+p", style="#c8c8c8")
     shortcuts.append(" sessions    ", style="#707070")
     shortcuts.append("ctrl+q", style="#c8c8c8")
@@ -251,8 +260,13 @@ class EmptyState(Vertical):
 class Composer(Vertical):
     """OpenCode-inspired prompt composer used in both layout states."""
 
-    def __init__(self, model_name: str) -> None:
+    def __init__(
+        self,
+        model_name: str,
+        mode: AgentMode = AgentMode.BUILD,
+    ) -> None:
         self.model_name = model_name
+        self.mode = mode
         super().__init__(id="composer")
 
     def compose(self) -> ComposeResult:
@@ -267,7 +281,7 @@ class Composer(Vertical):
                 compact=True,
             )
             yield Static(
-                _session_metadata(self.model_name),
+                _session_metadata(self.model_name, mode=self.mode),
                 id="composer-metadata",
                 markup=False,
             )
@@ -296,7 +310,18 @@ class Composer(Vertical):
             return
         try:
             self.query_one("#composer-metadata", Static).update(
-                _session_metadata(model_name)
+                _session_metadata(model_name, mode=self.mode)
+            )
+        except NoMatches:
+            return
+
+    def set_mode(self, mode: AgentMode) -> None:
+        self.mode = mode
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one("#composer-metadata", Static).update(
+                _session_metadata(self.model_name, mode=mode)
             )
         except NoMatches:
             return
@@ -311,10 +336,12 @@ class ChatMessage(Vertical):
         content: str = "",
         *,
         model_name: str = "model",
+        mode: AgentMode = AgentMode.BUILD,
     ) -> None:
         self.role = role
         self.content_text = content
         self.model_name = model_name
+        self.mode = mode
         self.started_at = monotonic()
         classes = f"chat-message {role}"
         super().__init__(classes=classes)
@@ -327,7 +354,11 @@ class ChatMessage(Vertical):
         yield Markdown(initial_content, classes="message-body")
         if self.role == "assistant":
             yield Static(
-                _session_metadata(self.model_name, state="running"),
+                _session_metadata(
+                    self.model_name,
+                    mode=self.mode,
+                    state="running",
+                ),
                 classes="message-footer",
                 markup=False,
             )
@@ -348,7 +379,11 @@ class ChatMessage(Vertical):
         self.remove_class("streaming")
         self.add_class("completed")
         self.query_one(".message-footer", Static).update(
-            _session_metadata(self.model_name, state="completed")
+            _session_metadata(
+                self.model_name,
+                mode=self.mode,
+                state="completed",
+            )
         )
 
     def finish(
@@ -362,6 +397,7 @@ class ChatMessage(Vertical):
         self.query_one(".message-footer", Static).update(
             _session_metadata(
                 self.model_name,
+                mode=self.mode,
                 elapsed=elapsed,
                 state="completed",
             )
@@ -374,7 +410,7 @@ class ChatMessage(Vertical):
         self.content_text = f"**Request failed**\n\n{safe_error}"
         await self.query_one(".message-body", Markdown).update(self.content_text)
         self.query_one(".message-footer", Static).update(
-            _session_metadata(self.model_name, state="error")
+            _session_metadata(self.model_name, mode=self.mode, state="error")
         )
 
     async def show_cancelled(self) -> None:
@@ -384,7 +420,7 @@ class ChatMessage(Vertical):
             self.content_text = "_Generation interrupted._"
             await self.query_one(".message-body", Markdown).update(self.content_text)
         self.query_one(".message-footer", Static).update(
-            _session_metadata(self.model_name, state="stopped")
+            _session_metadata(self.model_name, mode=self.mode, state="stopped")
         )
 
 
