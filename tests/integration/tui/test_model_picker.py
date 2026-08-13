@@ -458,6 +458,11 @@ class PickerLayoutTests(unittest.TestCase):
         )
         self.assertGreater(model_section, 1)
 
+    def test_mount_tolerates_children_detached_by_an_immediate_dismissal(self):
+        screen = ModelPickerScreen(CATALOG, "openai/gpt-5")
+
+        screen.on_mount()
+
     def test_a_million_token_window_is_not_written_as_thousands(self):
         self.assertEqual(
             ModelInfo(identifier="one", context_window=1000000).context_label,
@@ -502,6 +507,11 @@ class ProviderPickerTests(unittest.IsolatedAsyncioTestCase):
             ProviderChoice(openrouter_provider()).connection_hint,
             "API key",
         )
+
+    def test_mount_tolerates_children_detached_by_an_immediate_dismissal(self):
+        screen = ProviderPickerScreen((ProviderChoice(openai_provider()),))
+
+        screen.on_mount()
 
 
 class ConnectCommandTests(unittest.IsolatedAsyncioTestCase):

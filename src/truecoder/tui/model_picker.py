@@ -121,9 +121,10 @@ class ProviderPickerScreen(ModalScreen["ProviderChoice | None"]):
         return tuple(choice for choice in self.providers if choice.matches(query))
 
     def on_mount(self) -> None:
-        provider_list = self.query_one("#provider-list", ListView)
-        provider_list.index = 0 if self.providers else None
-        self.query_one("#provider-filter", Input).focus()
+        for provider_list in self.query("#provider-list"):
+            if isinstance(provider_list, ListView):
+                provider_list.index = 0 if self.providers else None
+        self.query("#provider-filter").focus()
 
     @on(Input.Changed, "#provider-filter")
     async def filter_providers(self, event: Input.Changed) -> None:
@@ -437,11 +438,12 @@ class ModelPickerScreen(
     def on_mount(self) -> None:
         if not self.has_list:
             return
-        model_list = self.query_one("#model-list", ListView)
-        model_list.index = self._selected_index(
-            self._items(self.models, self.invitations, self.providers)
-        )
-        self.query_one("#model-filter", Input).focus()
+        for model_list in self.query("#model-list"):
+            if isinstance(model_list, ListView):
+                model_list.index = self._selected_index(
+                    self._items(self.models, self.invitations, self.providers)
+                )
+        self.query("#model-filter").focus()
 
     def visible_models(self, query: str) -> tuple[ModelInfo, ...]:
         needle = query.strip().casefold()
@@ -492,10 +494,6 @@ class ModelPickerScreen(
         invitations = self.visible_invitations(event.value)
         if invitations:
             self.dismiss(invitations[0])
-            return
-        providers = self.visible_providers(event.value)
-        if providers:
-            self.dismiss(providers[0])
 
     @on(ListView.Selected)
     def choose_model(self, event: ListView.Selected) -> None:
