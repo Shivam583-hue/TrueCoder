@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import AsyncMock
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
 from truecoder.agent import Agent, AgentEventType, AgentMode, ContextBuilder
+from truecoder.agent.agent import subagent_runner
+from truecoder.agent.events import AgentEvent
 from truecoder.agent.mode import mode_allows_tool, mode_auto_approves, mode_from_name
 from truecoder.agent.prompts import DEFAULT_SYSTEM_PROMPT
 from truecoder.client.response import EventType, StreamEvent, TextDelta
@@ -115,6 +118,50 @@ class ModeModelTests(unittest.TestCase):
 
 
 class ModeEnforcementTests(unittest.IsolatedAsyncioTestCase):
+    async def test_delegated_agents_inherit_the_active_turn_mode(self):
+        parent = Mock()
+        parent.project_root = Path("/workspace")
+        parent.mode = AgentMode.BUILD
+        parent.active_mode = AgentMode.FULL_ACCESS
+        parent.approval_handler = AsyncMock()
+
+        child = Mock()
+
+        async def child_run(_task):
+            yield AgentEvent.agent_end("done", None, "stop")
+
+        child.run = child_run
+        child.close = AsyncMock()
+
+        with (
+            patch(
+                "truecoder.agent.agent.collect_environment",
+                return_value=Mock(),
+            ),
+            patch(
+                "truecoder.agent.agent.describe_environment",
+                return_value="environment",
+            ),
+            patch(
+                "truecoder.agent.agent.ContextBuilder.from_environment",
+                return_value=Mock(),
+            ),
+            patch(
+                "truecoder.agent.agent.subagent_registry",
+                return_value=Mock(),
+            ),
+            patch("truecoder.agent.agent.Agent", return_value=child) as build,
+        ):
+            outcome = await subagent_runner(parent, Mock())("task", 3)
+
+        self.assertEqual(outcome.reply, "done")
+        self.assertIs(
+            build.call_args.kwargs["mode"],
+            AgentMode.FULL_ACCESS,
+        )
+        self.assertIs(child.approval_handler, parent.approval_handler)
+        child.close.assert_awaited_once_with()
+
     async def test_plan_hides_and_rejects_a_mutating_tool(self):
         tool = _ProbeTool("write_file")
         agent, client = _agent(AgentMode.PLAN, tool)

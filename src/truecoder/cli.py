@@ -8,6 +8,7 @@ from typing import Final, TextIO
 
 from truecoder.agent.autonomy import Autonomy, UnattendedApprovals, autonomy_from_name
 from truecoder.agent.events import AgentEventType
+from truecoder.agent.mode import AgentMode, mode_from_name
 
 EXIT_OK: Final = 0
 EXIT_FAILED: Final = 1
@@ -25,6 +26,15 @@ def build_parser() -> argparse.ArgumentParser:
         "-p",
         "--prompt",
         help="Run this prompt without the interface and print the reply.",
+    )
+    parser.add_argument(
+        "--mode",
+        default=AgentMode.BUILD.value,
+        help=(
+            "How the agent should work: "
+            f"{', '.join(mode.value for mode in AgentMode)}. "
+            f"Defaults to {AgentMode.BUILD.value}."
+        ),
     )
     parser.add_argument(
         "--autonomy",
@@ -100,11 +110,15 @@ def _report_refusals(handler: UnattendedApprovals, stream: TextIO) -> None:
         print(f"refused {tool_name}: {reason}", file=stream)
 
 
-def _eval_agent_factory(autonomy: Autonomy):
+def _eval_agent_factory(autonomy: Autonomy, mode: AgentMode):
     from truecoder.agent.agent import build_eval_agent
 
     def build(root, task):
-        agent = build_eval_agent(root, max_iterations=task.max_iterations)
+        agent = build_eval_agent(
+            root,
+            max_iterations=task.max_iterations,
+            mode=mode,
+        )
         agent.approval_handler = UnattendedApprovals(autonomy)
         return agent
 
@@ -115,7 +129,8 @@ async def _evaluate(arguments, *, stream: TextIO) -> int:
     from truecoder.evaluation import DEFAULT_TASKS, run_suite
 
     autonomy = autonomy_from_name(arguments.autonomy)
-    report = await run_suite(DEFAULT_TASKS, _eval_agent_factory(autonomy))
+    mode = mode_from_name(arguments.mode)
+    report = await run_suite(DEFAULT_TASKS, _eval_agent_factory(autonomy, mode))
 
     for result in report.results:
         print(result.summary, file=stream)
@@ -127,8 +142,12 @@ async def _headless(arguments, *, stream: TextIO) -> int:
     from truecoder.agent.agent import build_session
 
     autonomy = autonomy_from_name(arguments.autonomy)
+    mode = mode_from_name(arguments.mode)
     handler = UnattendedApprovals(autonomy)
-    session = build_session(max_iterations=arguments.max_iterations)
+    session = build_session(
+        max_iterations=arguments.max_iterations,
+        mode=mode,
+    )
     agent = session.agent
     agent.approval_handler = handler
 
@@ -156,6 +175,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         autonomy_from_name(arguments.autonomy)
+        mode = mode_from_name(arguments.mode)
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
         return EXIT_USAGE
@@ -166,7 +186,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.prompt is None:
         from truecoder.agent.agent import run_interactive
 
-        run_interactive()
+        run_interactive(mode=mode)
         return EXIT_OK
 
     if not arguments.prompt.strip():

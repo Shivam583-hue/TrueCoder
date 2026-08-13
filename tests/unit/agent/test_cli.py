@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from truecoder.agent.autonomy import Autonomy, UnattendedApprovals
 from truecoder.agent.events import AgentEvent
+from truecoder.agent.mode import AgentMode
 from truecoder.cli import (
     EXIT_FAILED,
     EXIT_OK,
@@ -39,13 +40,29 @@ class ParserTests(unittest.TestCase):
 
         self.assertEqual(parsed.autonomy, Autonomy.READ_ONLY.value)
 
+    def test_the_default_mode_is_build(self):
+        parsed = build_parser().parse_args(["-p", "hello"])
+
+        self.assertEqual(parsed.mode, AgentMode.BUILD.value)
+
     def test_every_flag_parses(self):
         parsed = build_parser().parse_args(
-            ["-p", "hi", "--autonomy", "edit", "--max-iterations", "3", "--quiet"]
+            [
+                "-p",
+                "hi",
+                "--mode",
+                "plan",
+                "--autonomy",
+                "edit",
+                "--max-iterations",
+                "3",
+                "--quiet",
+            ]
         )
 
         self.assertEqual(parsed.prompt, "hi")
         self.assertEqual(parsed.autonomy, "edit")
+        self.assertEqual(parsed.mode, "plan")
         self.assertEqual(parsed.max_iterations, 3)
         self.assertTrue(parsed.quiet)
 
@@ -57,6 +74,9 @@ class UsageTests(unittest.TestCase):
     def test_an_unknown_autonomy_is_a_usage_error(self):
         self.assertEqual(main(["-p", "hi", "--autonomy", "yolo"]), EXIT_USAGE)
 
+    def test_an_unknown_mode_is_a_usage_error(self):
+        self.assertEqual(main(["-p", "hi", "--mode", "yolo"]), EXIT_USAGE)
+
     def test_a_zero_iteration_budget_is_a_usage_error(self):
         self.assertEqual(main(["-p", "hi", "--max-iterations", "0"]), EXIT_USAGE)
 
@@ -64,7 +84,7 @@ class UsageTests(unittest.TestCase):
         with patch("truecoder.agent.agent.run_interactive") as launch:
             code = main([])
 
-        launch.assert_called_once_with()
+        launch.assert_called_once_with(mode=AgentMode.BUILD)
         self.assertEqual(code, EXIT_OK)
 
 
@@ -155,6 +175,24 @@ class HeadlessExitTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             self.assertEqual(main(["-p", "hi", "--quiet"]), EXIT_OK)
+
+    def test_the_selected_mode_reaches_the_headless_agent(self):
+        agents: list = []
+
+        def build(**arguments):
+            agent_mode = arguments["mode"]
+            session = self._session(
+                [AgentEvent.agent_end("done", None, "stop")],
+                agents,
+            )
+            session.agent.mode = agent_mode
+            return session
+
+        with patch("truecoder.agent.agent.build_session", side_effect=build):
+            code = main(["-p", "hi", "--mode", "plan", "--quiet"])
+
+        self.assertEqual(code, EXIT_OK)
+        self.assertIs(agents[0].mode, AgentMode.PLAN)
 
     def test_a_failed_run_exits_nonzero(self):
         agents: list = []

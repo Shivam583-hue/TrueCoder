@@ -789,7 +789,11 @@ class AgentSession:
         self.session_manager.close()
 
 
-def build_session(*, max_iterations: int | None = None) -> AgentSession:
+def build_session(
+    *,
+    max_iterations: int | None = None,
+    mode: AgentMode = AgentMode.BUILD,
+) -> AgentSession:
     from truecoder.execution.configuration import load_execution_config
     from truecoder.mcp.configuration import load_mcp_servers
 
@@ -835,6 +839,7 @@ def build_session(*, max_iterations: int | None = None) -> AgentSession:
         mutation_audit=mutation_audit,
         hooks=load_hooks(),
         mcp_manager=McpManager(load_mcp_servers(), project_root),
+        mode=mode,
         **({} if max_iterations is None else {"max_iterations": max_iterations}),
     )
     agent.summarizer = TurnSummarizer(agent.llm_client)
@@ -873,6 +878,7 @@ def subagent_runner(parent: Agent, audit: MutationAudit):
             tool_registry=subagent_registry(parent.project_root, audit),
             project_root=parent.project_root,
             max_iterations=max_iterations,
+            mode=parent.active_mode or parent.mode,
         )
         subagent.approval_handler = parent.approval_handler
 
@@ -895,7 +901,12 @@ def subagent_runner(parent: Agent, audit: MutationAudit):
     return run
 
 
-def build_eval_agent(project_root: Path, *, max_iterations: int = 12) -> Agent:
+def build_eval_agent(
+    project_root: Path,
+    *,
+    max_iterations: int = 12,
+    mode: AgentMode = AgentMode.BUILD,
+) -> Agent:
     from truecoder.execution.configuration import load_execution_config
 
     mutation_audit = MutationAudit(project_root / ".truecoder-mutations.sqlite3")
@@ -916,14 +927,15 @@ def build_eval_agent(project_root: Path, *, max_iterations: int = 12) -> Agent:
         execution_bootstrap_config=load_execution_config(),
         mutation_audit=mutation_audit,
         max_iterations=max_iterations,
+        mode=mode,
     )
 
 
-def run_interactive() -> None:
+def run_interactive(*, mode: AgentMode = AgentMode.BUILD) -> None:
     from truecoder.agent.tokenizer import warm_tokenizer
     from truecoder.tui.app import TrueCoderApp
 
-    session = build_session()
+    session = build_session(mode=mode)
     warm_tokenizer(session.agent.context_builder.token_counter)
     TrueCoderApp(session.agent, session_manager=session.session_manager).run()
 
