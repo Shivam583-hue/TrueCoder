@@ -7,7 +7,7 @@ from typing import ClassVar, Final
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, ListItem, ListView, Static
 
@@ -314,11 +314,18 @@ class ModelPickerScreen(
     def compose(self) -> ComposeResult:
         served = self.served_by()
         with Vertical(id="model-picker-dialog"):
-            yield Static(
-                self.dialog_title,
-                classes="model-dialog-title",
-                markup=False,
-            )
+            with Horizontal(classes="model-dialog-heading"):
+                yield Static(
+                    self.dialog_title,
+                    classes="model-dialog-title",
+                    markup=False,
+                )
+                if self.allow_provider_browser:
+                    yield Static(
+                        "ctrl+a  all providers",
+                        classes="model-dialog-shortcut",
+                        markup=False,
+                    )
             if served:
                 yield Static(
                     f"Served by {served}",

@@ -1162,10 +1162,26 @@ ExecutionCard.expanded .execution-details {
     border: round $tc-border;
 }
 
+.model-dialog-heading {
+    width: 100%;
+    height: 2;
+    margin-bottom: 1;
+}
+
 .model-dialog-title {
+    width: 1fr;
     color: $tc-text;
     text-style: bold;
+}
+
+#provider-picker-dialog > .model-dialog-title {
     margin-bottom: 1;
+}
+
+.model-dialog-shortcut {
+    width: auto;
+    color: $tc-text-muted;
+    text-align: right;
 }
 
 #model-filter,

@@ -626,6 +626,12 @@ class ConnectCommandTests(unittest.IsolatedAsyncioTestCase):
                     description="the combined model picker",
                     timeout=20,
                 )
+                shortcut = app.screen.query_one(".model-dialog-shortcut")
+
+                self.assertEqual(
+                    str(shortcut.content),
+                    "ctrl+a  all providers",
+                )
 
                 await pilot.press("ctrl+a")
                 await wait_until(
