@@ -34,7 +34,12 @@ from truecoder.client.failures import (
 )
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType
-from truecoder.providers.models import settings_from_environment
+from truecoder.providers.models import (
+    Provider,
+    SessionSettings,
+    settings_from_environment,
+)
+from truecoder.providers.openai import openai_provider
 from truecoder.tools import ToolCall
 
 
@@ -185,6 +190,30 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
         )
         isolation.start()
         self.addCleanup(isolation.stop)
+
+    def test_a_missing_openai_credential_explains_both_connection_options(self):
+        client = LLMClient(
+            SessionSettings(
+                provider=openai_provider(),
+                credential=None,
+                model="gpt-5.6-sol",
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "sign in or add an API key"):
+            client.get_client()
+
+    def test_a_missing_key_names_the_selected_provider(self):
+        client = LLMClient(
+            SessionSettings(
+                provider=Provider(name="acme", display_name="Acme AI"),
+                credential=None,
+                model="starter",
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Acme AI doesn't have an API key"):
+            client.get_client()
 
     async def _collect_events(
         self,

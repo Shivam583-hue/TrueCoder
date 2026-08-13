@@ -12,9 +12,11 @@ from tests.helpers.tui import wait_until
 from tests.integration.tui.test_app import FixedTokenCounter, ScriptedLLMClient
 from truecoder.agent import Agent, ContextBuilder
 from truecoder.client.failures import classify
+from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType, StreamEvent
 from truecoder.providers import ApiKey, Provider, SessionSettings
 from truecoder.providers.oauth import OAuthClient
+from truecoder.providers.openai import openai_provider
 from truecoder.tui.app import TrueCoderApp
 from truecoder.tui.credentials import (
     KEY_CHOICE,
@@ -107,6 +109,32 @@ class _Base(unittest.IsolatedAsyncioTestCase):
 
 
 class FailedRequestTests(_Base):
+    async def test_a_missing_openai_connection_gives_an_actionable_next_step(self):
+        agent = Agent(
+            llm_client=LLMClient(
+                SessionSettings(
+                    provider=openai_provider(),
+                    credential=None,
+                    model="gpt-5.6-sol",
+                )
+            ),
+            context_builder=ContextBuilder(
+                system_prompt="test system",
+                max_input_tokens=1000,
+                token_counter=FixedTokenCounter(),
+            ),
+        )
+        app = TrueCoderApp(agent)
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            shown = (await self._send(app, pilot)).content_text
+
+        self.assertIn("OpenAI isn't connected", shown)
+        self.assertIn("Open /models", shown)
+        self.assertIn("sign in or add an API key", shown)
+        self.assertNotIn("API_KEY", shown)
+        self.assertNotIn(".env", shown)
+
     async def test_a_billing_refusal_reads_as_a_sentence(self):
         failure = classify(
             status=402,

@@ -95,7 +95,19 @@ class LLMClient:
         if self.__client is None:
             settings = self.settings
             if settings.credential is None:
-                raise RuntimeError("API_KEY must be set in the .env file")
+                provider = settings.provider
+                name = provider.label if provider.is_named else "The model provider"
+                if provider.oauth is not None:
+                    guidance = (
+                        f"{name} isn't connected. Open /models, then choose "
+                        f"{name} to sign in or add an API key."
+                    )
+                else:
+                    guidance = (
+                        f"{name} doesn't have an API key. Open /models, then "
+                        f"choose {name} to add one."
+                    )
+                raise RuntimeError(guidance)
 
             client_options: dict[str, Any] = {
                 **settings.credential.client_options(),
