@@ -54,6 +54,7 @@ class ParsedCommand:
 
 COMMANDS: Final = (
     SlashCommand("models", "Choose a provider and model"),
+    SlashCommand("effort", "Set how deeply the model reasons"),
     SlashCommand("model", "Show the model currently answering", visible=False),
     SlashCommand("connect", "Connect an AI provider", visible=False),
     SlashCommand("login", "Reconnect the current provider"),

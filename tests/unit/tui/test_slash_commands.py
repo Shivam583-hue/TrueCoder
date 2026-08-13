@@ -51,6 +51,12 @@ class ParseTests(unittest.TestCase):
         assert parsed is not None
         self.assertEqual(parsed.argument, "refresh")
 
+    def test_an_effort_value_is_carried(self):
+        parsed = parse_command("/effort high")
+
+        assert parsed is not None
+        self.assertEqual((parsed.name, parsed.argument), ("effort", "high"))
+
     def test_case_is_ignored(self):
         parsed = parse_command("/MODELS")
 
@@ -97,7 +103,8 @@ class FilterTests(unittest.TestCase):
 
     def test_a_letter_narrows_to_that_letter(self):
         self.assertEqual(_names("/q"), ["quit"])
-        self.assertEqual(_names("/e"), ["exit"])
+        self.assertEqual(_names("/e"), ["effort", "exit"])
+        self.assertEqual(_names("/ef"), ["effort"])
         self.assertEqual(_names("/m"), ["models"])
         self.assertEqual(_names("/l"), ["login", "logout"])
 

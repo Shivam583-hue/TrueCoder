@@ -79,6 +79,8 @@ def responses_request(
     model: str,
     messages: Sequence[Mapping[str, Any]],
     tools: list[dict[str, Any]] | None,
+    *,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     request: dict[str, Any] = {
         "model": model,
@@ -87,6 +89,8 @@ def responses_request(
     }
     if tools:
         request["tools"] = responses_tools(tools)
+    if reasoning_effort is not None:
+        request["reasoning"] = {"effort": reasoning_effort}
     return request
 
 

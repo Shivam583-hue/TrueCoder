@@ -55,6 +55,7 @@ from truecoder.tui.credentials import (
     CredentialChoiceScreen,
     DeviceCodeScreen,
 )
+from truecoder.tui.effort_picker import ReasoningEffortScreen
 from truecoder.tui.execution_health import (
     ExecutionHealthScreen,
     health_failure_message,
@@ -247,6 +248,15 @@ class TrueCoderApp(App[None]):
         except (RuntimeError, CredentialError):
             return MODEL_NOT_CONFIGURED
 
+    def _resolved_reasoning_effort(self) -> str | None:
+        from truecoder.providers.models import CredentialError
+
+        try:
+            settings = self.agent.llm_client.settings
+        except (RuntimeError, CredentialError):
+            return None
+        return settings.reasoning_effort if settings.uses_reasoning_effort else None
+
     def compose(self) -> ComposeResult:
         self._model_name = self._resolved_model_name()
         workspace = os.getcwd()
@@ -255,7 +265,11 @@ class TrueCoderApp(App[None]):
             with VerticalScroll(id="transcript"):
                 yield EmptyState(id="empty-state")
 
-            yield Composer(self._model_name, self.agent.mode)
+            yield Composer(
+                self._model_name,
+                self.agent.mode,
+                self._resolved_reasoning_effort(),
+            )
 
         yield StatusBar(
             workspace,
@@ -380,6 +394,13 @@ class TrueCoderApp(App[None]):
             self.notify(f"Answering with {self._resolved_model_name()}")
             return
 
+        if parsed.name == "effort":
+            self.run_worker(
+                self._effort_workflow(parsed.argument),
+                exclusive=False,
+            )
+            return
+
         if parsed.name == "models":
             self.run_worker(
                 self._model_workflow(refresh=parsed.argument == "refresh"),
@@ -404,6 +425,64 @@ class TrueCoderApp(App[None]):
 
         if parsed.name == "quit":
             await self.action_quit()
+
+    async def _effort_workflow(self, requested: str) -> None:
+        from truecoder.providers.models import CredentialError
+
+        settings = self.agent.llm_client.settings
+        available = settings.available_reasoning_efforts
+        if not available:
+            if settings.reasoning_efforts:
+                message = (
+                    f"{settings.provider.label} does not expose reasoning effort "
+                    "through its current TrueCoder transport."
+                )
+            else:
+                message = (
+                    f"{self._resolved_model_name()} does not advertise adjustable "
+                    "reasoning effort. Choose a reasoning model in /models."
+                )
+            self.notify(message, severity="warning", timeout=8)
+            return
+
+        choice = requested.strip().casefold()
+        if not choice:
+            picked = await self.push_screen_wait(
+                ReasoningEffortScreen(available, settings.reasoning_effort)
+            )
+            if picked is None:
+                return
+            choice = picked
+
+        try:
+            settings.select_reasoning_effort(choice)
+        except CredentialError as error:
+            self.notify(str(error), severity="warning", timeout=8)
+            return
+
+        self._persist_reasoning_effort()
+
+    def _persist_reasoning_effort(self) -> None:
+        from truecoder.providers.store import StoredSelection, save_selection
+
+        settings = self.agent.llm_client.settings
+        effort = settings.reasoning_effort
+        self.query_one(Composer).set_reasoning_effort(effort)
+        saved = save_selection(
+            StoredSelection(
+                model=settings.model,
+                provider=settings.provider.name,
+                reasoning_effort=effort,
+            )
+        )
+        message = f"Reasoning effort set to {effort} for future turns"
+        if saved:
+            self.notify(message)
+        else:
+            self.notify(
+                f"{message}, but the choice could not be saved.",
+                severity="warning",
+            )
 
     async def _catalog(self, *, refresh: bool = False):
         from truecoder.providers.catalog import discover_catalog
@@ -668,13 +747,24 @@ class TrueCoderApp(App[None]):
         settings.use(provider, credential)
 
         model = choice.identifier
-        settings.select_model(model)
+        settings.select_model(
+            model,
+            reasoning_efforts=choice.reasoning_efforts,
+        )
         display_model = choice.qualified_identifier
         self._model_name = display_model
-        self.query_one(Composer).set_model_name(display_model)
+        composer = self.query_one(Composer)
+        composer.set_model_name(display_model)
+        composer.set_reasoning_effort(self._resolved_reasoning_effort())
 
         arrival = f"Now answering with {display_model}"
-        if save_selection(StoredSelection(model=model, provider=provider.name)):
+        if save_selection(
+            StoredSelection(
+                model=model,
+                provider=provider.name,
+                reasoning_effort=settings.reasoning_effort,
+            )
+        ):
             self.notify(arrival)
         else:
             self.notify(
@@ -1046,16 +1136,19 @@ class TrueCoderApp(App[None]):
         transcript = self.query_one("#transcript", VerticalScroll)
 
         turn_mode = self.agent.mode
+        turn_effort = self._resolved_reasoning_effort()
         user_message = ChatMessage(
             "user",
             prompt,
             model_name=self._model_name,
             mode=turn_mode,
+            reasoning_effort=turn_effort,
         )
         assistant_message = ChatMessage(
             "assistant",
             model_name=self._model_name,
             mode=turn_mode,
+            reasoning_effort=turn_effort,
         )
         await transcript.mount(user_message, assistant_message)
         self._active_assistant = assistant_message
@@ -1390,6 +1483,7 @@ class TrueCoderApp(App[None]):
             "assistant",
             model_name=self._model_name,
             mode=assistant_message.mode,
+            reasoning_effort=assistant_message.reasoning_effort,
         )
         await transcript.mount(widget, next_assistant)
         self._active_assistant = next_assistant
@@ -1865,6 +1959,7 @@ class TrueCoderApp(App[None]):
                             "user",
                             message["content"],
                             model_name=self._model_name,
+                            reasoning_effort=self._resolved_reasoning_effort(),
                         )
                     )
                 elif role == "assistant" and "tool_calls" in message:
@@ -1873,6 +1968,7 @@ class TrueCoderApp(App[None]):
                             "assistant",
                             message["content"],
                             model_name=self._model_name,
+                            reasoning_effort=self._resolved_reasoning_effort(),
                         )
                         await transcript.mount(segment)
                         segment.finish_segment()
@@ -1907,6 +2003,7 @@ class TrueCoderApp(App[None]):
                         "assistant",
                         message["content"],
                         model_name=self._model_name,
+                        reasoning_effort=self._resolved_reasoning_effort(),
                     )
                     await transcript.mount(restored)
                     restored.restore()

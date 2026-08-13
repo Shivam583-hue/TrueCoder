@@ -1152,7 +1152,8 @@ ExecutionCard.expanded .execution-details {
 
 /* Model picker */
 #model-picker-dialog,
-#provider-picker-dialog {
+#provider-picker-dialog,
+#effort-picker-dialog {
     width: 78;
     max-width: 92%;
     height: auto;
@@ -1178,6 +1179,10 @@ ExecutionCard.expanded .execution-details {
     margin-bottom: 1;
 }
 
+#effort-picker-dialog > .model-dialog-title {
+    margin-bottom: 1;
+}
+
 .model-dialog-shortcut {
     width: auto;
     color: $tc-text-muted;
@@ -1194,10 +1199,31 @@ ExecutionCard.expanded .execution-details {
 }
 
 #model-list,
-#provider-list {
+#provider-list,
+#effort-list {
     height: auto;
     max-height: 24;
     background: transparent;
+}
+
+.effort-dialog-note {
+    color: $tc-text-muted;
+    margin-bottom: 1;
+}
+
+.effort-item {
+    padding: 0 1;
+    background: transparent;
+}
+
+.effort-item-line {
+    width: 100%;
+    color: $tc-text-secondary;
+}
+
+.effort-item.active .effort-item-line {
+    color: $tc-orange;
+    text-style: bold;
 }
 
 .model-item {

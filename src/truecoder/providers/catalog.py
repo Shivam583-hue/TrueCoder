@@ -5,7 +5,7 @@ import hashlib
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 from urllib.parse import urlparse
@@ -17,6 +17,7 @@ from truecoder.providers.models import (
     MAX_MODEL_ID_CHARACTERS,
     MAX_MODEL_NAME_CHARACTERS,
     MAX_RELEASE_DATE_CHARACTERS,
+    REASONING_EFFORTS,
     WIRE_APIS,
     Credential,
     ModelInfo,
@@ -121,6 +122,38 @@ def _context_window(entry: dict[str, Any]) -> int | None:
     if isinstance(top, dict):
         return _context_window(top)
     return None
+
+
+def _reasoning_efforts(entry: dict[str, Any]) -> tuple[str, ...]:
+    """Keep only explicit, provider-advertised effort values."""
+    values: object = entry.get("supported_reasoning_efforts")
+    if not isinstance(values, list):
+        values = entry.get("reasoning_efforts")
+    if not isinstance(values, list):
+        options = entry.get("reasoning_options")
+        values = (
+            next(
+                (
+                    option.get("values")
+                    for option in options
+                    if isinstance(option, dict) and option.get("type") == "effort"
+                ),
+                (),
+            )
+            if isinstance(options, list)
+            else ()
+        )
+    if not isinstance(values, (list, tuple)):
+        return ()
+
+    advertised: set[str] = set()
+    for value in values:
+        effort = "none" if value is None else value
+        if isinstance(effort, str) and effort in REASONING_EFFORTS:
+            advertised.add(effort)
+    return tuple(
+        effort for effort in REASONING_EFFORTS if effort in advertised
+    )
 
 
 def _models_dev_adapter(value: object) -> str:
@@ -240,6 +273,7 @@ def parse_models_dev(payload: object) -> tuple[CatalogSlice, ...]:
                     base_url=base_url,
                     adapter=adapter,
                     wire_api=wire_api,
+                    reasoning_efforts=_reasoning_efforts(model_entry),
                 )
             )
         slices.append(
@@ -386,6 +420,7 @@ def parse_models(payload: object, provider: str) -> tuple[ModelInfo, ...]:
                     MAX_MODEL_NAME_CHARACTERS,
                 ),
                 context_window=_context_window(entry),
+                reasoning_efforts=_reasoning_efforts(entry),
             )
         )
     return tuple(sorted(models, key=lambda model: model.identifier))
@@ -405,6 +440,7 @@ def encode_cache(models: tuple[ModelInfo, ...], *, fetched_at: float) -> str:
                     "base_url": model.base_url,
                     "adapter": model.adapter,
                     "wire_api": model.wire_api,
+                    "reasoning_efforts": list(model.reasoning_efforts),
                 }
                 for model in models
             ],
@@ -464,6 +500,7 @@ def decode_cache(
                     if _bounded(entry.get("wire_api"), 20) in WIRE_APIS
                     else ""
                 ),
+                reasoning_efforts=_reasoning_efforts(entry),
             )
         )
     return tuple(models)
@@ -620,6 +657,27 @@ async def load_catalog(
     return tuple(gathered)
 
 
+def _retain_directory_efforts(
+    live: CatalogSlice,
+    directory: CatalogSlice,
+) -> CatalogSlice:
+    known = {model.identifier: model for model in directory.models}
+    return CatalogSlice(
+        live.provider,
+        tuple(
+            replace(
+                model,
+                reasoning_efforts=(
+                    model.reasoning_efforts
+                    or known.get(model.identifier, model).reasoning_efforts
+                ),
+            )
+            for model in live.models
+        ),
+        live.reason,
+    )
+
+
 async def discover_catalog(
     settings,
     *,
@@ -670,6 +728,8 @@ async def discover_catalog(
         live = await load_catalog(dynamic, credentials, refresh=refresh)
         for entry in live:
             existing = resolved.get(entry.provider.name)
+            if entry.models and existing is not None:
+                entry = _retain_directory_efforts(entry, existing)
             if entry.models or existing is None:
                 resolved[entry.provider.name] = entry
 

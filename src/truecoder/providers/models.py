@@ -20,10 +20,31 @@ WIRE_APIS: Final = frozenset({"chat", "responses"})
 ADAPTERS: Final = frozenset(
     {"anthropic", "google", "openai", "openai-compatible", "unsupported"}
 )
+REASONING_EFFORTS: Final = (
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+)
+DEFAULT_REASONING_EFFORT: Final = "xhigh"
+_REASONING_EFFORT_SET: Final = frozenset(REASONING_EFFORTS)
 
 
 class CredentialError(ValueError):
     pass
+
+
+def validate_reasoning_effort(value: str) -> str:
+    if not isinstance(value, str):
+        raise CredentialError("reasoning effort must be text")
+    effort = value.strip().casefold()
+    if effort not in _REASONING_EFFORT_SET:
+        choices = ", ".join(REASONING_EFFORTS)
+        raise CredentialError(f"reasoning effort must be one of: {choices}")
+    return effort
 
 
 def validate_headers(pairs: tuple[tuple[str, str], ...]) -> None:
@@ -181,6 +202,7 @@ class ModelInfo:
     base_url: str = ""
     adapter: str = ""
     wire_api: str = ""
+    reasoning_efforts: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.identifier, str) or not self.identifier.strip():
@@ -197,6 +219,12 @@ class ModelInfo:
             raise CredentialError(
                 f"model wire_api must be one of {sorted(WIRE_APIS)}"
             )
+        if not isinstance(self.reasoning_efforts, tuple):
+            raise CredentialError("reasoning_efforts must be a tuple")
+        if len(set(self.reasoning_efforts)) != len(self.reasoning_efforts):
+            raise CredentialError("reasoning_efforts cannot repeat a value")
+        for effort in self.reasoning_efforts:
+            validate_reasoning_effort(effort)
 
     @property
     def label(self) -> str:
@@ -245,6 +273,8 @@ class SessionSettings:
     provider: Provider
     credential: Credential | None
     model: str
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT
+    reasoning_efforts: tuple[str, ...] = ()
     _listeners: list[Any] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
@@ -252,6 +282,26 @@ class SessionSettings:
             raise CredentialError("provider must be a Provider")
         if not isinstance(self.model, str) or not self.model.strip():
             raise CredentialError("a model identifier is required")
+        self.reasoning_effort = validate_reasoning_effort(self.reasoning_effort)
+        if not isinstance(self.reasoning_efforts, tuple):
+            raise CredentialError("reasoning_efforts must be a tuple")
+        for effort in self.reasoning_efforts:
+            validate_reasoning_effort(effort)
+        self._fit_reasoning_effort()
+
+    @property
+    def available_reasoning_efforts(self) -> tuple[str, ...]:
+        if not self.reasoning_efforts:
+            return ()
+        if self.provider.wire_api == "responses":
+            return self.reasoning_efforts
+        if self.provider.adapter in {"openai", "openai-compatible"}:
+            return self.reasoning_efforts
+        return ()
+
+    @property
+    def uses_reasoning_effort(self) -> bool:
+        return self.reasoning_effort in self.available_reasoning_efforts
 
     @property
     def fingerprint(self) -> tuple[str, str | None, str, str, str]:
@@ -268,10 +318,37 @@ class SessionSettings:
             raise TypeError("listener must be callable")
         self._listeners.append(listener)
 
-    def select_model(self, model: str) -> None:
+    def select_model(
+        self,
+        model: str,
+        *,
+        reasoning_efforts: tuple[str, ...] = (),
+    ) -> None:
         if not isinstance(model, str) or not model.strip():
             raise CredentialError("a model identifier is required")
         self.model = model.strip()
+        if not isinstance(reasoning_efforts, tuple):
+            raise CredentialError("reasoning_efforts must be a tuple")
+        for effort in reasoning_efforts:
+            validate_reasoning_effort(effort)
+        self.reasoning_efforts = reasoning_efforts
+        self._fit_reasoning_effort()
+
+    def select_reasoning_effort(self, effort: str) -> None:
+        selected = validate_reasoning_effort(effort)
+        available = self.available_reasoning_efforts
+        if selected not in available:
+            choices = ", ".join(available) or "none"
+            raise CredentialError(
+                f"{self.model} supports these reasoning efforts: {choices}"
+            )
+        self.reasoning_effort = selected
+
+    def _fit_reasoning_effort(self) -> None:
+        if not self.reasoning_efforts:
+            return
+        if self.reasoning_effort not in self.reasoning_efforts:
+            self.reasoning_effort = self.reasoning_efforts[-1]
 
     def use(self, provider: Provider, credential: Credential | None) -> None:
         if not isinstance(provider, Provider):
@@ -296,6 +373,7 @@ class SessionSettings:
 def settings_from_environment(
     *,
     stored_model: str | None = None,
+    stored_reasoning_effort: str | None = None,
 ) -> SessionSettings:
     model = (stored_model or "").strip() or os.getenv("MODEL", "").strip()
     if not model:
@@ -322,6 +400,7 @@ def settings_from_environment(
         provider=provider,
         credential=ApiKey(raw_key) if raw_key else None,
         model=model,
+        reasoning_effort=(stored_reasoning_effort or DEFAULT_REASONING_EFFORT),
     )
 
 
@@ -366,7 +445,10 @@ def resolve_settings() -> SessionSettings:
     from truecoder.providers.store import load_selection
 
     stored = load_selection()
-    settings = settings_from_environment(stored_model=stored.model)
+    settings = settings_from_environment(
+        stored_model=stored.model,
+        stored_reasoning_effort=stored.reasoning_effort,
+    )
 
     configured = {
         provider.name: provider
@@ -401,6 +483,10 @@ def resolve_settings() -> SessionSettings:
         )
         if selected is not None:
             chosen = selected.provider_config(chosen)
+            settings.select_model(
+                settings.model,
+                reasoning_efforts=selected.reasoning_efforts,
+            )
         settings.provider = chosen
 
     remembered = credential_for_provider(settings.provider)

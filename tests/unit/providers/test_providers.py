@@ -111,6 +111,37 @@ class SessionSettingsTests(unittest.TestCase):
 
         self.assertEqual(invalidations, [])
 
+    def test_selecting_reasoning_effort_updates_the_active_one(self):
+        settings = _settings(reasoning_efforts=("low", "medium", "high"))
+
+        settings.select_reasoning_effort(" medium ")
+
+        self.assertEqual(settings.reasoning_effort, "medium")
+
+    def test_an_unsupported_reasoning_effort_is_refused(self):
+        settings = _settings(reasoning_efforts=("low", "high"))
+
+        with self.assertRaises(CredentialError):
+            settings.select_reasoning_effort("medium")
+
+    def test_a_model_change_falls_back_to_its_strongest_effort(self):
+        settings = _settings(
+            reasoning_effort="xhigh",
+            reasoning_efforts=("low", "high", "xhigh"),
+        )
+
+        settings.select_model("smaller", reasoning_efforts=("low", "medium"))
+
+        self.assertEqual(settings.reasoning_effort, "medium")
+
+    def test_native_transports_do_not_claim_effort_support(self):
+        settings = _settings(
+            provider=Provider(name="anthropic", adapter="anthropic"),
+            reasoning_efforts=("low", "high"),
+        )
+
+        self.assertEqual(settings.available_reasoning_efforts, ())
+
     def test_changing_the_provider_invalidates_the_connection(self):
         settings = _settings()
         invalidations: list[int] = []
@@ -347,6 +378,7 @@ class CacheTests(unittest.TestCase):
                 base_url="https://gateway.invalid/anthropic/v1",
                 adapter="anthropic",
                 wire_api="chat",
+                reasoning_efforts=("low", "high"),
             ),
         )
 

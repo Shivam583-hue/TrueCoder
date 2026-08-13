@@ -53,6 +53,7 @@ def _session_metadata(
     model_name: str,
     *,
     mode: AgentMode = AgentMode.BUILD,
+    reasoning_effort: str | None = None,
     elapsed: float | None = None,
     state: str | None = None,
 ) -> Text:
@@ -73,8 +74,9 @@ def _session_metadata(
     metadata.append(mode.label, style=f"bold {mode_color}")
     metadata.append("  ·  ", style="#666666")
     metadata.append(model_name, style="bold #d6d6d6")
-    metadata.append("  ·  ", style="#666666")
-    metadata.append("xhigh", style="bold #f2a33a")
+    if reasoning_effort is not None:
+        metadata.append("  ·  ", style="#666666")
+        metadata.append(reasoning_effort, style="bold #f2a33a")
     if elapsed is not None:
         metadata.append("  ·  ", style="#666666")
         metadata.append(f"{elapsed:.1f}s", style="#777777")
@@ -264,9 +266,11 @@ class Composer(Vertical):
         self,
         model_name: str,
         mode: AgentMode = AgentMode.BUILD,
+        reasoning_effort: str | None = None,
     ) -> None:
         self.model_name = model_name
         self.mode = mode
+        self.reasoning_effort = reasoning_effort
         super().__init__(id="composer")
 
     def compose(self) -> ComposeResult:
@@ -281,7 +285,11 @@ class Composer(Vertical):
                 compact=True,
             )
             yield Static(
-                _session_metadata(self.model_name, mode=self.mode),
+                _session_metadata(
+                    self.model_name,
+                    mode=self.mode,
+                    reasoning_effort=self.reasoning_effort,
+                ),
                 id="composer-metadata",
                 markup=False,
             )
@@ -310,7 +318,11 @@ class Composer(Vertical):
             return
         try:
             self.query_one("#composer-metadata", Static).update(
-                _session_metadata(model_name, mode=self.mode)
+                _session_metadata(
+                    model_name,
+                    mode=self.mode,
+                    reasoning_effort=self.reasoning_effort,
+                )
             )
         except NoMatches:
             return
@@ -321,7 +333,26 @@ class Composer(Vertical):
             return
         try:
             self.query_one("#composer-metadata", Static).update(
-                _session_metadata(self.model_name, mode=mode)
+                _session_metadata(
+                    self.model_name,
+                    mode=mode,
+                    reasoning_effort=self.reasoning_effort,
+                )
+            )
+        except NoMatches:
+            return
+
+    def set_reasoning_effort(self, reasoning_effort: str | None) -> None:
+        self.reasoning_effort = reasoning_effort
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one("#composer-metadata", Static).update(
+                _session_metadata(
+                    self.model_name,
+                    mode=self.mode,
+                    reasoning_effort=reasoning_effort,
+                )
             )
         except NoMatches:
             return
@@ -337,11 +368,13 @@ class ChatMessage(Vertical):
         *,
         model_name: str = "model",
         mode: AgentMode = AgentMode.BUILD,
+        reasoning_effort: str | None = None,
     ) -> None:
         self.role = role
         self.content_text = content
         self.model_name = model_name
         self.mode = mode
+        self.reasoning_effort = reasoning_effort
         self.started_at = monotonic()
         classes = f"chat-message {role}"
         super().__init__(classes=classes)
@@ -357,6 +390,7 @@ class ChatMessage(Vertical):
                 _session_metadata(
                     self.model_name,
                     mode=self.mode,
+                    reasoning_effort=self.reasoning_effort,
                     state="running",
                 ),
                 classes="message-footer",
@@ -382,6 +416,7 @@ class ChatMessage(Vertical):
             _session_metadata(
                 self.model_name,
                 mode=self.mode,
+                reasoning_effort=self.reasoning_effort,
                 state="completed",
             )
         )
@@ -398,6 +433,7 @@ class ChatMessage(Vertical):
             _session_metadata(
                 self.model_name,
                 mode=self.mode,
+                reasoning_effort=self.reasoning_effort,
                 elapsed=elapsed,
                 state="completed",
             )
@@ -410,7 +446,12 @@ class ChatMessage(Vertical):
         self.content_text = f"**Request failed**\n\n{safe_error}"
         await self.query_one(".message-body", Markdown).update(self.content_text)
         self.query_one(".message-footer", Static).update(
-            _session_metadata(self.model_name, mode=self.mode, state="error")
+            _session_metadata(
+                self.model_name,
+                mode=self.mode,
+                reasoning_effort=self.reasoning_effort,
+                state="error",
+            )
         )
 
     async def show_cancelled(self) -> None:
@@ -420,7 +461,12 @@ class ChatMessage(Vertical):
             self.content_text = "_Generation interrupted._"
             await self.query_one(".message-body", Markdown).update(self.content_text)
         self.query_one(".message-footer", Static).update(
-            _session_metadata(self.model_name, mode=self.mode, state="stopped")
+            _session_metadata(
+                self.model_name,
+                mode=self.mode,
+                reasoning_effort=self.reasoning_effort,
+                state="stopped",
+            )
         )
 
 

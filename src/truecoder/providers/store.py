@@ -16,7 +16,7 @@ SETTINGS_VERSION: Final = 1
 MAX_SETTINGS_BYTES: Final = 64 * 1024
 MAX_VALUE_CHARACTERS: Final = 200
 
-_ROOT_FIELDS: Final = frozenset({"version", "model", "provider"})
+_ROOT_FIELDS: Final = frozenset({"version", "model", "provider", "reasoning_effort"})
 
 
 class SettingsError(ValueError):
@@ -27,10 +27,15 @@ class SettingsError(ValueError):
 class StoredSelection:
     model: str | None = None
     provider: str | None = None
+    reasoning_effort: str | None = None
 
     @property
     def is_empty(self) -> bool:
-        return self.model is None and self.provider is None
+        return (
+            self.model is None
+            and self.provider is None
+            and self.reasoning_effort is None
+        )
 
 
 def default_settings_path() -> Path:
@@ -48,6 +53,18 @@ def _text(value: object, field: str) -> str | None:
     if len(collapsed) > MAX_VALUE_CHARACTERS:
         raise SettingsError(f"{field} is longer than allowed")
     return collapsed
+
+
+def _reasoning_effort(value: object) -> str | None:
+    effort = _text(value, "reasoning_effort")
+    if effort is None:
+        return None
+    from truecoder.providers.models import CredentialError, validate_reasoning_effort
+
+    try:
+        return validate_reasoning_effort(effort)
+    except CredentialError as error:
+        raise SettingsError(str(error)) from None
 
 
 def parse_selection(raw: str) -> StoredSelection:
@@ -74,6 +91,7 @@ def parse_selection(raw: str) -> StoredSelection:
     return StoredSelection(
         model=_text(payload.get("model"), "model"),
         provider=_text(payload.get("provider"), "provider"),
+        reasoning_effort=_reasoning_effort(payload.get("reasoning_effort")),
     )
 
 
@@ -83,6 +101,8 @@ def encode_selection(selection: StoredSelection) -> str:
         payload["model"] = selection.model
     if selection.provider is not None:
         payload["provider"] = selection.provider
+    if selection.reasoning_effort is not None:
+        payload["reasoning_effort"] = selection.reasoning_effort
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 

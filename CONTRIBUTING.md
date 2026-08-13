@@ -109,7 +109,7 @@ Additional expectations:
 | Terminal UI, transcript, or approvals | `src/truecoder/tui`                               | `styles.tcss`, agent events, and the TUI integration tests             |
 | Agent loop or turn lifecycle          | `src/truecoder/agent/agent.py` and `state.py`     | Context builder, session codec, and unit agent tests                   |
 | Agent modes or approval bypass        | `src/truecoder/agent/mode.py` and `agent.py`      | TUI mode controls, CLI wiring, delegation, and mode enforcement tests  |
-| Providers, credentials, or models     | `src/truecoder/providers`                         | `client`, `tui/credentials.py`, and provider tests                     |
+| Providers, credentials, models, or reasoning effort | `src/truecoder/providers`              | `client`, `tui/credentials.py`, `tui/effort_picker.py`, and provider tests |
 | A new tool                            | `src/truecoder/tools/builtin`                     | `builtin/__init__.py`, registration in `agent.py`, and tool tests      |
 | Plan shape or invariants              | `src/truecoder/planning`                          | `builtin/plan.py`, `PlanCard`, plan projection in `context.py`         |
 | Code intelligence                     | `src/truecoder/lsp`                               | `builtin/code_intelligence.py` and the fake server in `tests/helpers`  |

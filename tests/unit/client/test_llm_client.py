@@ -35,6 +35,7 @@ from truecoder.client.failures import (
 from truecoder.client.llm_client import LLMClient
 from truecoder.client.response import EventType
 from truecoder.providers.models import (
+    ApiKey,
     Provider,
     SessionSettings,
     settings_from_environment,
@@ -436,6 +437,32 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
         create.assert_awaited_once_with(
             model="test-model",
             messages=messages,
+            stream=False,
+        )
+
+    async def test_openrouter_receives_its_nested_reasoning_effort(self):
+        sdk_client, create = make_client(make_completion())
+        settings = SessionSettings(
+            provider=Provider(
+                name="openrouter",
+                base_url="https://openrouter.ai/api/v1",
+            ),
+            credential=ApiKey("or-key"),
+            model="openai/gpt-5.6-sol",
+            reasoning_effort="high",
+            reasoning_efforts=("low", "medium", "high"),
+        )
+
+        await self._collect_events(
+            LLMClient(settings),
+            sdk_client,
+            stream=False,
+        )
+
+        create.assert_awaited_once_with(
+            model="openai/gpt-5.6-sol",
+            messages=[],
+            extra_body={"reasoning": {"effort": "high"}},
             stream=False,
         )
 

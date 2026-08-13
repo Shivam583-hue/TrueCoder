@@ -182,7 +182,16 @@ class LLMClient:
         if native:
             request = {}
         elif settings.provider.wire_api == "responses":
-            request = responses_request(model, messages, tools)
+            request = responses_request(
+                model,
+                messages,
+                tools,
+                reasoning_effort=(
+                    settings.reasoning_effort
+                    if settings.uses_reasoning_effort
+                    else None
+                ),
+            )
         elif tools:
             request = {
                 "model": model,
@@ -194,6 +203,18 @@ class LLMClient:
                 "model": model,
                 "messages": messages,
             }
+
+        if (
+            not native
+            and settings.provider.wire_api != "responses"
+            and settings.uses_reasoning_effort
+        ):
+            if settings.provider.name == "openrouter":
+                request["extra_body"] = {
+                    "reasoning": {"effort": settings.reasoning_effort}
+                }
+            else:
+                request["reasoning_effort"] = settings.reasoning_effort
 
         for attempt in range(self._max_retries + 1):
             stream_started = False

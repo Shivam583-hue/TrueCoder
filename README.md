@@ -46,7 +46,7 @@ Coming soon...
 
 - **Auditable execution** - every command is policy-classified, approval-gated when needed, bounded by explicit limits, and recorded with immutable execution evidence.
 - **Reviewable, undoable changes** - file mutations render as unified diffs, every change-capable turn starts from a git-backed checkpoint, and restores create their own safety checkpoint first.
-- **Flexible model access** - one `/models` workflow connects direct OpenAI with ChatGPT or API credentials, uses native Anthropic and Google transports, and reaches every supported Models.dev provider.
+- **Flexible model access** - one `/models` workflow connects direct OpenAI with ChatGPT or API credentials, uses native Anthropic and Google transports, and reaches every supported Models.dev provider; `/effort` exposes only the reasoning depths the active model supports.
 - **State that stays under your control** - project-scoped sessions, visible durable memory, rolling context compaction, and workspace-local instructions survive long-running work without silently crossing repositories.
 - **A complete coding toolkit** - fifteen built-in tools cover files, shell, web, code intelligence, planning, memory, and delegation; bounded MCP servers can add more without bypassing mode restrictions or execution policy.
 - **Cross-platform by design** - Linux and macOS use POSIX process supervision, Windows uses Job Objects, and an optional digest-pinned Docker sandbox supplies stronger isolation on supported Linux hosts.
@@ -558,6 +558,7 @@ an explicit `--mode` option.
 | `shift+tab` | Cycle Build, Plan, and Full Access                  |
 | `ctrl+q`    | Quit, the same action `/quit` and `/exit` run       |
 | `/`         | List the commands, narrowing as you type           |
+| `/effort`   | Choose the active model's reasoning effort         |
 | `tab`       | Complete the command being typed, otherwise move focus |
 | `ctrl+l`    | Start a new chat                                  |
 | `ctrl+p`    | Open the session browser                          |
@@ -699,6 +700,13 @@ inside the agent.
 An identifier such as `openai/gpt-5.6-sol` in a gateway catalog still belongs to
 that gateway. TrueCoder never infers the serving provider from a model prefix, so
 the gateway keeps its own credential and direct OpenAI remains a separate row.
+
+Type `/effort` to choose how deeply the active model reasons, or use a direct
+command such as `/effort high`. The picker contains only the effort levels that
+the model catalog advertises, remembers the choice across restarts, and applies
+it to future turns. When the current transport cannot express reasoning effort,
+TrueCoder hides the effort label and explains why the command is unavailable
+instead of displaying a setting that would not reach the provider.
 
 The same config directory may contain `providers.json` to override a directory
 provider or add a custom one. It names the provider's adapter and environment
@@ -881,6 +889,7 @@ who change or build the image should follow the
 | `truecoder -p "..." --autonomy edit`                 | Allow file changes and medium-risk commands unattended          |
 | `truecoder --eval`                                   | Score the agent on the shipped tasks                            |
 | `/models` in the composer                            | Choose or connect a provider, then select one of its models      |
+| `/effort` in the composer                            | Choose a supported reasoning effort for future turns             |
 | `/login` in the composer                             | Reconnect the active provider using key, browser, or device auth |
 | `/logout` in the composer                            | Forget the current provider's stored key and OAuth token        |
 
@@ -905,7 +914,7 @@ Checkpoints are git objects and refs, so they live inside `.git` where the conte
 | Hooks               | `<user config dir>/truecoder/hooks.json`                    | Optional user-configured commands, strict and versioned            |
 | MCP servers         | `<user config dir>/truecoder/mcp.json`                      | Optional third-party tool servers, strict and versioned            |
 | Providers           | Models.dev plus `<user config dir>/truecoder/providers.json` | Supported provider directory, explicit overrides, and custom OAuth clients |
-| Model selection     | `<user config dir>/truecoder/settings.json`                 | The model chosen with `/models`, remembered across restarts        |
+| Model selection     | `<user config dir>/truecoder/settings.json`                 | The model and reasoning effort chosen with `/models` and `/effort`, remembered across restarts |
 | Authorisation       | `<user config dir>/truecoder/tokens.json`                   | OAuth tokens, one per provider, private to your user               |
 | API keys            | `<user config dir>/truecoder/keys.json`                     | Keys typed into the interface, one per provider, private to your user |
 | Provider directory  | `<user cache dir>/truecoder/models.json`                    | Bounded Models.dev provider/model directory, fresh for five minutes |
@@ -957,7 +966,8 @@ Empty sessions are temporary placeholders and are removed automatically when you
 - **Policy-evaluated execution** - ordered rules classify read-only, test, build, package, network, deletion, permission, Git, script, and unknown commands, and requested limits can only tighten the configured ceiling.
 - **Capability-matched backends** - discovery measures the real host, and selection compares every capability requirement independently instead of trusting optimistic class constants.
 - **Switch models without restarting** - type `/models` to see models from connected providers and the popular OpenAI, Anthropic, Google, and OpenRouter connection options in one dialog; press `ctrl+a` there for the complete provider directory. Every row retains both its provider ID and wire model ID, so `openrouter/openai/gpt-5.6-sol` can never be mistaken for direct `openai/gpt-5.6-sol`. The five-minute directory cache falls back to its last valid copy offline; custom endpoints and authenticated subscription catalogs keep separate six-hour live caches, and one failing provider never hides the others. The choice is written to `settings.json` and survives a restart. `/models refresh` refetches, `/help` lists what you can type, and `/quit` (or `/exit`) closes TrueCoder exactly as `ctrl+q` does. The status line always names the model that will actually answer, not whatever `MODEL` happens to say in your `.env`.
-- **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit`, `/e` leaves `exit`, and `/mo` leaves the single `models` workflow. Tab completes a unique match outright; when several commands remain, it completes only their shared prefix, so `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
+- **Model-aware reasoning control** - `/effort` opens a keyboard-first picker containing only the active model's advertised reasoning levels, while `/effort low` changes it directly. The setting is persisted with the selected model, sent on compatible Responses and OpenAI-style transports, and omitted from both requests and transcript metadata when it cannot be honored.
+- **Commands you can find without knowing them** - typing `/` lists every command, and each further character narrows the list, so `/q` leaves `quit`, `/ef` leaves `effort`, and `/mo` leaves the single `models` workflow. Tab completes a unique match outright; when several commands remain, it completes only their shared prefix, so `/l` becomes `/log` and waits for the letter that decides between `login` and `logout`. The list closes once you start typing an argument, and tab still moves focus when you are not typing a command.
 - **It asks for what the model needs** - `/models` keeps provider connection and model choice in one flow. A connected provider goes straight to its models; a key-only provider goes to the masked prompt; and a provider with OAuth names the available subscription and API-key choices before refreshing its model catalog. Canceling leaves the active selection alone. `/login` reconnects the current provider, and `/logout` forgets its stored key and token.
 - **Refusals you can act on** - when a provider turns a request down you get a sentence, not its wire format: what happened, the provider's own explanation, and the next step. A rejected credential opens the way to replace it, offering every method that provider supports; running out of credit offers none, because a new credential does not buy anything. A failure that does not classify gets no invented advice.
 - **A sign-in you can complete anywhere** - direct OpenAI offers ChatGPT browser sign-in, ChatGPT device authorization, and a manual API key. The browser opens automatically while the full link remains copyable; its authorization-code exchange uses PKCE and the fixed Codex CLI redirect. The headless path follows OpenAI's brokered device flow: request a short code, poll for approval, then exchange the returned authorization code and verifier. Other configured providers can use standard RFC 8628 device grants. Links also land in the transcript, and closing a dialog cancels its work and releases the callback listener.

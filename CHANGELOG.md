@@ -30,6 +30,9 @@ Unreleased until the first release is cut.
 - Build, Plan, and Full Access agent modes, with `shift+tab` switching, visible
   per-turn mode labels, structural read-only enforcement in Plan, a one-time
   Full Access confirmation, and matching `--mode` support for headless runs.
+- Model-aware reasoning effort control through `/effort`, with direct command
+  arguments, persistence, supported-value filtering, and request transport
+  wiring for Responses and OpenAI-compatible providers.
 - Contributor documentation covering setup, architecture boundaries, test
   selection, common change locations, sandbox verification, and review
   expectations.

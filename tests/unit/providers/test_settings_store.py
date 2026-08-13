@@ -28,11 +28,19 @@ from truecoder.providers.store import (
 class ParseTests(unittest.TestCase):
     def test_a_stored_selection_parses(self):
         selection = parse_selection(
-            json.dumps({"version": 1, "model": "openai/gpt-5", "provider": "default"})
+            json.dumps(
+                {
+                    "version": 1,
+                    "model": "openai/gpt-5",
+                    "provider": "default",
+                    "reasoning_effort": "high",
+                }
+            )
         )
 
         self.assertEqual(selection.model, "openai/gpt-5")
         self.assertEqual(selection.provider, "default")
+        self.assertEqual(selection.reasoning_effort, "high")
 
     def test_an_empty_selection_is_valid(self):
         self.assertTrue(parse_selection(json.dumps({"version": 1})).is_empty)
@@ -57,6 +65,10 @@ class ParseTests(unittest.TestCase):
         with self.assertRaises(SettingsError):
             parse_selection(json.dumps({"version": 1, "model": 5}))
 
+    def test_an_unknown_reasoning_effort_is_refused(self):
+        with self.assertRaises(SettingsError):
+            parse_selection(json.dumps({"version": 1, "reasoning_effort": "turbo"}))
+
     def test_an_oversized_value_is_refused(self):
         with self.assertRaises(SettingsError):
             parse_selection(json.dumps({"version": 1, "model": "x" * 500}))
@@ -75,7 +87,11 @@ class RoundTripTests(unittest.TestCase):
         self.path = self.root / "settings.json"
 
     def test_a_selection_survives_a_write_and_read(self):
-        selection = StoredSelection(model="anthropic/claude-opus-5", provider="p")
+        selection = StoredSelection(
+            model="anthropic/claude-opus-5",
+            provider="p",
+            reasoning_effort="high",
+        )
 
         self.assertTrue(save_selection(selection, self.path))
 

@@ -258,6 +258,36 @@ class ResponsesClientTests(unittest.IsolatedAsyncioTestCase):
             stream=False,
         )
 
+    async def test_the_selected_reasoning_effort_reaches_the_responses_api(self):
+        response = SimpleNamespace(
+            status="completed",
+            output_text="Done",
+            output=[],
+            usage=usage(),
+        )
+        client, create = sdk_client(response)
+        active = settings()
+        active.select_model(
+            active.model,
+            reasoning_efforts=("low", "medium", "high", "xhigh"),
+        )
+        active.select_reasoning_effort("high")
+
+        await self.collect(
+            LLMClient(active),
+            client,
+            stream=False,
+            messages=({"role": "user", "content": "Think"},),
+        )
+
+        create.assert_awaited_once_with(
+            model="gpt-5.2",
+            input=[{"role": "user", "content": "Think"}],
+            store=False,
+            reasoning={"effort": "high"},
+            stream=False,
+        )
+
     async def test_a_failed_response_becomes_an_error_event(self):
         response = SimpleNamespace(
             status="failed",

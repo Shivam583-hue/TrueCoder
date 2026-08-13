@@ -107,6 +107,12 @@ MODELS_DEV = {
                 "id": "gpt-5.2",
                 "name": "GPT-5.2",
                 "release_date": "2025-12-11",
+                "reasoning_options": [
+                    {
+                        "type": "effort",
+                        "values": ["xhigh", "none", "high", "low"],
+                    }
+                ],
                 "limit": {"context": 400000, "output": 128000},
             },
             "retired": {
@@ -161,6 +167,10 @@ class ModelsDevTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             routed.qualified_identifier,
             "openrouter/openai/gpt-5.2",
+        )
+        self.assertEqual(
+            direct.reasoning_efforts,
+            ("none", "low", "high", "xhigh"),
         )
 
     def test_provider_metadata_selects_the_transport_and_environment(self):
@@ -376,6 +386,43 @@ class ModelsDevTests(unittest.IsolatedAsyncioTestCase):
             entry for entry in catalog.slices if entry.provider.name == "openai"
         )
         self.assertEqual(openai.models[0].identifier, "gpt-subscription")
+
+    async def test_oauth_models_retain_directory_reasoning_efforts(self):
+        token = OAuthToken(access_token="at", provider="openai")
+        settings = type(
+            "Settings",
+            (),
+            {"provider": openai_provider(), "credential": token},
+        )()
+        directory = parse_models_dev(MODELS_DEV)
+        subscription = CatalogSlice(
+            openai_provider(),
+            (ModelInfo(identifier="gpt-5.2", provider="openai"),),
+        )
+
+        with (
+            patch(
+                "truecoder.providers.catalog.load_models_dev",
+                return_value=directory,
+            ),
+            patch(
+                "truecoder.providers.configuration.load_providers",
+                return_value=(),
+            ),
+            patch(
+                "truecoder.providers.catalog.load_catalog",
+                return_value=(subscription,),
+            ),
+        ):
+            catalog = await discover_catalog(settings)
+
+        openai = next(
+            entry for entry in catalog.slices if entry.provider.name == "openai"
+        )
+        self.assertEqual(
+            openai.models[0].reasoning_efforts,
+            ("none", "low", "high", "xhigh"),
+        )
 
     async def test_a_session_credential_can_load_a_new_providers_live_catalog(self):
         token = OAuthToken(access_token="at", provider="openai")
