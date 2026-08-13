@@ -32,10 +32,10 @@ class DelegateContractTests(unittest.TestCase):
     def test_approval_is_required(self):
         self.assertIs(DelegateTool(_runner()).approval, ToolApproval.REQUIRED)
 
-    def test_the_task_is_the_only_required_argument(self):
+    def test_the_strict_schema_requires_every_declared_argument(self):
         parameters = DelegateTool(_runner()).definition().parameters
 
-        self.assertEqual(parameters["required"], ["task"])
+        self.assertEqual(parameters["required"], ["task", "max_iterations"])
         self.assertIn("max_iterations", parameters["properties"])
 
     def test_the_description_says_the_subagent_starts_fresh(self):

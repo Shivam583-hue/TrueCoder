@@ -55,11 +55,15 @@ class MemoryToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("replaced", result)
         self.assertEqual(result["stored"], 1)
 
-    async def test_replaces_is_optional(self):
+    async def test_replaces_is_nullable_in_the_strict_schema(self):
         definition = self.remember.definition()
 
-        self.assertEqual(definition.parameters["required"], ["note"])
+        self.assertEqual(definition.parameters["required"], ["note", "replaces"])
         self.assertIn("replaces", definition.parameters["properties"])
+        self.assertIn(
+            {"type": "null"},
+            definition.parameters["properties"]["replaces"]["anyOf"],
+        )
 
     async def test_the_description_tells_the_model_how_to_correct(self):
         self.assertIn("replaces", self.remember.description)

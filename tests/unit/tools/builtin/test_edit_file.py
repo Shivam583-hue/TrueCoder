@@ -68,6 +68,10 @@ class EditFileToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             set(edit["properties"]), {"old_text", "new_text", "replace_all"}
         )
+        self.assertEqual(
+            edit["required"],
+            ["old_text", "new_text", "replace_all"],
+        )
         self.assertFalse(edit["additionalProperties"])
         self.assertFalse(parameters["additionalProperties"])
         self.assertIs(self.tool.approval, ToolApproval.REQUIRED)

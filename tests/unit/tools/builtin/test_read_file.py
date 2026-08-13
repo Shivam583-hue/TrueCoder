@@ -97,7 +97,10 @@ class ReadFileToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(function_schema["name"], "read_file")
         self.assertTrue(function_schema["strict"])
-        self.assertEqual(parameters["required"], ["path"])
+        self.assertEqual(
+            parameters["required"],
+            ["path", "start_line", "line_count"],
+        )
         self.assertEqual(
             set(parameters["properties"]),
             {"path", "start_line", "line_count"},

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, ClassVar, Generic, Protocol, TypeVar, runtime_checkable
 
+from openai import pydantic_function_tool
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from truecoder.mutation import FileDiff
@@ -260,10 +261,19 @@ class BaseTool(ABC, Generic[ArgumentsT]):
         if not isinstance(self.approval, ToolApproval):
             raise TypeError("approval must be a ToolApproval.")
 
+        schema = pydantic_function_tool(
+            self.arguments_type,
+            name=self.name,
+            description=self.description,
+        )
+        parameters = schema["function"].get("parameters")
+        if not isinstance(parameters, dict):
+            raise TypeError("The strict tool schema must contain object parameters.")
+
         return ToolDefinition(
             name=self.name,
             description=self.description,
-            parameters=self.arguments_type.model_json_schema(),
+            parameters=parameters,
         )
 
     def parse_arguments(self, arguments_json: str) -> ArgumentsT:
