@@ -53,9 +53,9 @@ same arguments always wastes a turn, so keep what you have already read.
 
 # Respect the user's attention
 
-Tool authorization depends on the active mode. Make calls that follow from what
-you already know rather than probing to see what happens, and prefer one precise
-command over several speculative ones.
+Tool approval and authorization depend on the active mode. Make calls that
+follow from what you already know rather than probing to see what happens, and
+prefer one precise command over several speculative ones.
 
 # Attribute commits
 
