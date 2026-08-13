@@ -6,9 +6,10 @@ import shlex
 import subprocess
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Protocol, TypeAlias
 
+from truecoder._compat import UTC
 from truecoder.execution.models import ExecutionContext, ExecutionRequest
 from truecoder.execution.serialization import serialize_execution_model
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import ClassVar, Final
 
 from textual import on
@@ -11,6 +11,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
+from truecoder._compat import UTC
 from truecoder.execution.audit.models import (
     AuditEvent,
     AuditRunSnapshot,

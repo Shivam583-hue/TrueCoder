@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Protocol, runtime_checkable
+
+from truecoder._compat import UTC
 
 
 @runtime_checkable

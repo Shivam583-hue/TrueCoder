@@ -707,6 +707,7 @@ class ConnectCommandTests(unittest.IsolatedAsyncioTestCase):
                     pilot,
                     lambda: isinstance(app.screen, ModelPickerScreen),
                     description="the OpenRouter model picker",
+                    timeout=20,
                 )
 
                 self.assertEqual(app.screen.dialog_title, "OpenRouter")

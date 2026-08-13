@@ -5,7 +5,9 @@ import os
 import platform
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import datetime
+
+from truecoder._compat import UTC
 
 from ..audit.models import BackendResourceIdentifier
 from ..cancellation import CancellationRequested, CancellationToken

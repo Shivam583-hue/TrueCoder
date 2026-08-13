@@ -4,9 +4,10 @@ import hashlib
 import os
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
+from truecoder._compat import UTC
 from truecoder.execution.models import ExecutionContext
 
 ExecutionIdFactory = Callable[[], str]

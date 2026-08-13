@@ -55,6 +55,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Preserved the documented Python 3.10 baseline by using a compatible UTC
+  timezone definition throughout the runtime.
 - Kept provider identity and displayed model names consistent across the model
   picker, composer, and request transport.
 - Made deferred credential focus and approval interactions safe across slower

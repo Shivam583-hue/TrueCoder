@@ -7,10 +7,11 @@ import threading
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TypeAlias
 
+from truecoder._compat import UTC
 from truecoder.execution.errors import (
     AuditPersistenceError,
     AuditUnavailableError,

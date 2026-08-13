@@ -4,12 +4,13 @@ import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Final
 
 from platformdirs import user_data_path
 
+from truecoder._compat import UTC
 from truecoder.execution.audit.permissions import AuditPermissions
 from truecoder.execution.errors import AuditUnavailableError
 from truecoder.memory.models import (

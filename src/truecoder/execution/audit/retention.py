@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Final
+
+from truecoder._compat import UTC
 
 DEFAULT_RETENTION_DAYS: Final = 30
 MIN_RETENTION_DAYS: Final = 1
