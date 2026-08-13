@@ -2,12 +2,14 @@
 
 > A terminal coding agent with an auditable execution plane: every command it runs is policy-checked, mode-authorized, bounded, sandboxable, and durably recorded before a single byte of project code executes.
 
-[![Tests](https://github.com/Shivam583-hue/TrueCoder/actions/workflows/tests.yml/badge.svg)](https://github.com/Shivam583-hue/TrueCoder/actions/workflows/tests.yml)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)](#prerequisites)
-[![Release](https://img.shields.io/github/v/release/Shivam583-hue/TrueCoder?style=flat-square)](https://github.com/Shivam583-hue/TrueCoder/releases/latest)
-[![Ruff](https://img.shields.io/badge/ruff-check%20passing-2ea44f?style=flat-square&logo=ruff&logoColor=white)](CONTRIBUTING.md#tests-and-checks)
-[![Sandbox](https://img.shields.io/badge/sandbox-Linux%20%C2%B7%20Docker%20certified-2496ed?style=flat-square&logo=docker&logoColor=white)](#container-sandbox)
-[![CI](https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&logo=githubactions&logoColor=white)](CONTRIBUTING.md#tests-and-checks)
+<p align="center">
+  <a href="https://github.com/Shivam583-hue/TrueCoder/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/Shivam583-hue/TrueCoder/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="#prerequisites"><img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&amp;logo=python&amp;logoColor=white"></a>
+  <a href="https://github.com/Shivam583-hue/TrueCoder/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Shivam583-hue/TrueCoder?style=flat-square"></a>
+  <a href="CONTRIBUTING.md#tests-and-checks"><img alt="Ruff checks passing" src="https://img.shields.io/badge/ruff-check%20passing-2ea44f?style=flat-square&amp;logo=ruff&amp;logoColor=white"></a>
+  <a href="#container-sandbox"><img alt="Linux and Docker certified sandbox" src="https://img.shields.io/badge/sandbox-Linux%20%C2%B7%20Docker%20certified-2496ed?style=flat-square&amp;logo=docker&amp;logoColor=white"></a>
+  <a href="CONTRIBUTING.md#tests-and-checks"><img alt="CI on Linux, macOS, and Windows" src="https://img.shields.io/badge/CI-linux%20%C2%B7%20macos%20%C2%B7%20windows-blue?style=flat-square&amp;logo=githubactions&amp;logoColor=white"></a>
+</p>
 
 TrueCoder is a terminal-native coding agent that reads, searches, edits, and runs code inside your project. It combines flexible model access and a complete coding toolkit with persistent sessions, planning, code intelligence, checkpoints, memory, auditable execution, and optional Docker isolation.
 
