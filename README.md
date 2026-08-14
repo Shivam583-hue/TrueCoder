@@ -52,7 +52,12 @@ irm https://github.com/Shivam583-hue/TrueCoder/releases/latest/download/install.
 
 ## Demo
 
-Coming soon...
+https://github.com/user-attachments/assets/425f99f4-7aab-4029-9af2-1f757e102a2b
+
+
+
+
+
 
 ## Key features
 
